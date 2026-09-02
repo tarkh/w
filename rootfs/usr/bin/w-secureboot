@@ -1,0 +1,303 @@
+#!/usr/bin/env bash
+# w-secureboot — W Linux Secure Boot control (sbctl + Limine config-hash)
+#
+# W's Secure Boot model (no per-kernel signing): the firmware verifies the SIGNED
+# Limine EFI binary (sbctl own keys), and Limine verifies a BLAKE2B hash of every
+# file it loads (kernel/initramfs) plus its own config, whose hash is enrolled into
+# the signed binary. So the whole chain is tamper-evident via one signed loader.
+#   setup    — one-time: create+enroll sbctl keys (firmware must be in Setup Mode),
+#              then sign Limine and enroll the config hash.
+#   reenroll — refresh the enrolled config hash after limine.conf changed (called by
+#              the w-style 'limine' axis after a system-theme render, and by
+#              limine-snapper-sync around snapshot entry changes).
+#   enable/disable — the Hub-facing on/off toggle. The LUKS TPM2 auto-unlock (w-crypt)
+#              is sealed to PCR7, which measures the Secure Boot policy — so enrolling
+#              or resetting SB keys invalidates it. `disable` removes the TPM2 factor
+#              first (`w-crypt wipe-tpm`, deterministic — the passphrase prompt returns
+#              immediately, not via incidental PCR mismatch) and then resets the SB
+#              keys (`sbctl reset` → back to Setup Mode). `enable` is two-phase and
+#              CANNOT be one shot: PCR7 is measured by the firmware/bootloader chain at
+#              boot and does not change while the OS is running, so resealing TPM2 in
+#              the same session as enrolling the keys would seal against the PRE-change
+#              PCR7 — silently producing a token that fails on every future boot (found
+#              live: enrolled, rebooted, disk still asked for its passphrase). Phase 1
+#              enrolls the keys and stops, marking a reboot as required
+#              ($PENDING_MARKER, keyed on the boot ID so a re-run can tell whether that
+#              reboot actually happened); phase 2 (a later `enable` call, after reboot)
+#              re-seals TPM2 against the now-current PCR7 and clears the marker. Secure
+#              Boot only exists on the encrypted+Limine install path (package-limine.md),
+#              so calling into w-crypt here is safe by construction.
+# A hash-free fallback Limine (EFI/BOOT/BOOTX64.EFI, ENABLE_LIMINE_FALLBACK=yes) stays
+# signed so a stale-hash block is always recoverable. See package-limine.md / security.md.
+
+set -euo pipefail
+
+# Sentinel for the enable two-phase handoff (see header): contains the boot ID that
+# was current when SB keys were enrolled, so a later call can tell whether an actual
+# reboot happened since (PCR7 only updates then) rather than just trusting the user.
+PENDING_MARKER="/var/lib/w/secureboot-tpm-pending"
+
+err()       { echo "w-secureboot: $*" >&2; }
+need_root() { [[ $EUID -eq 0 ]] || { err "this command requires root"; exit 1; }; }
+have()      { command -v "$1" &>/dev/null; }
+
+esp_path() {
+  local p="/boot/efi"
+  [[ -f /etc/default/limine ]] && p="$(awk -F'"' '/^ESP_PATH=/{print $2}' /etc/default/limine)"
+  echo "${p:-/boot/efi}"
+}
+
+usage() {
+  cat <<EOF
+Usage: w-secureboot <command>
+
+Info: Set up and manage Secure Boot (sbctl keys + Limine hash).
+
+Commands:
+  status [--porcelain]   Show sbctl setup-mode/enroll state and signed files
+  enable                 Turn Secure Boot on: enroll keys + sign Limine. Two-phase — the
+                          first call enrolls and asks for a reboot; run it again after
+                          rebooting to re-seal the TPM2 disk auto-unlock (PCR7 only
+                          updates on that reboot, not live)
+  disable                Turn Secure Boot off: drop TPM2 disk unlock + reset keys (back to Setup Mode)
+  setup                  One-time enable: create+enroll keys (Setup Mode) + sign Limine + enroll hash
+  sign                   Re-sign all sbctl-tracked binaries (after a Limine update)
+  reenroll               Re-enroll the Limine config hash (after limine.conf changed)
+  help                   Show this help
+
+Exit codes:
+  0 Success   1 Runtime error   2 Usage error
+
+Examples:
+  sudo w-secureboot enable
+  w-secureboot status --porcelain
+EOF
+}
+
+require_sbctl() { have sbctl || { err "sbctl not installed"; exit 1; }; }
+
+# Read one boolean field out of `sbctl status --json` as yes/no, or "err" if the
+# command failed outright — the real-world case being firmware that doesn't expose
+# Secure Boot EFI variables at all: found live on real Apple EFI hardware (Secure
+# Boot is a PC-firmware concept Macs don't implement), where sbctl exits non-zero
+# with "system is not booted with UEFI" even though it demonstrably is. `|| true`
+# on the left side of the pipe is load-bearing: under `pipefail`, sbctl's real exit
+# code would otherwise propagate through this pipe and trip `set -e` at the call
+# site BEFORE the try/except below ever gets a chance to turn the failure into the
+# "err" string every caller already checks for.
+sb_json_field() {
+  local field="$1"
+  { sbctl status --json 2>/dev/null || true; } | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print('yes' if d.get('$field') else 'no')
+except Exception:
+    print('err')
+"
+}
+
+cmd_status() {
+  if [[ "${1:-}" == "--porcelain" ]]; then
+    require_sbctl
+    local setup sb state pending="no"
+    setup="$(sb_json_field setup_mode)"
+    sb="$(sb_json_field secure_boot)"
+    if [[ "$setup" == "err" ]]; then
+      state="unsupported"
+    elif [[ "$setup" == "yes" ]]; then
+      state="off"
+    else
+      state="on"
+    fi
+    if [[ -f "$PENDING_MARKER" ]]; then
+      if [[ "$(cat "$PENDING_MARKER" 2>/dev/null)" == "$(cat /proc/sys/kernel/random/boot_id)" ]]; then
+        pending="reboot_needed"
+      else
+        pending="ready"
+      fi
+    fi
+    printf 'state\tsecure_boot\tsetup_mode\ttpm_pending\n%s\t%s\t%s\t%s\n' "$state" "$sb" "$setup" "$pending"
+    return
+  fi
+  require_sbctl
+  sbctl status || true
+  echo
+  sbctl list-files 2>/dev/null | sed 's/^/  /' || true
+}
+
+# Enroll the Limine config hash into the signed binary. Prefer the AUR helper
+# (limine-enroll-config, driven by /etc/default/limine ENABLE_ENROLL_LIMINE_CONFIG);
+# fall back to a direct sbctl sign when the helper isn't installed.
+enroll_config() {
+  if have limine-enroll-config; then
+    limine-reset-enroll 2>/dev/null || true
+    limine-enroll-config
+  else
+    local esp; esp="$(esp_path)"
+    sbctl sign -s "$esp/EFI/limine/limine_x64.efi" 2>/dev/null || true
+    err "limine-enroll-config not found — signed the binary but skipped hash enroll"
+  fi
+}
+
+cmd_setup() {
+  need_root
+  require_sbctl
+  # Setup Mode is required to enroll our own Platform Key. Guard against bricking.
+  if ! sbctl status 2>/dev/null | grep -qi 'setup mode.*enabled\|setup mode.*✓'; then
+    err "firmware is not in Setup Mode. Clear the existing Secure Boot keys in the"
+    err "UEFI setup (Restore Factory Keys → Clear/Delete PK) and re-run 'w-secureboot setup'."
+    exit 1
+  fi
+  # efivarfs marks Secure Boot variables immutable by default (a kernel safety net
+  # against accidental `rm`); after a prior `sbctl reset` the kernel keeps re-exposing
+  # the leftover (now-empty) KEK/db/dbx nodes with that flag still set on every later
+  # boot, and `sbctl enroll-keys` does not strip it itself — it just fails with "File
+  # is immutable". Found live re-enrolling on a VM that had been through a prior
+  # enable→disable cycle. A fresh install with none of these files yet is a no-op.
+  chattr -i /sys/firmware/efi/efivars/{PK,KEK,db,dbx}-* 2>/dev/null || true
+  echo "Creating sbctl keys..."
+  sbctl create-keys
+  echo "Enrolling keys (including Microsoft keys for firmware/option-ROM compatibility)..."
+  sbctl enroll-keys --microsoft
+
+  # Turn on config-hash enrollment for the Limine tooling, then regenerate/sign.
+  if [[ -f /etc/default/limine ]]; then
+    sed -i 's/^ENABLE_ENROLL_LIMINE_CONFIG=.*/ENABLE_ENROLL_LIMINE_CONFIG=yes/' /etc/default/limine
+  fi
+  if have limine-update; then
+    echo "Regenerating + signing Limine (limine-update)..."
+    limine-update
+  else
+    local esp; esp="$(esp_path)"
+    sbctl sign -s "$esp/EFI/limine/limine_x64.efi"
+    sbctl sign -s "$esp/EFI/BOOT/BOOTX64.EFI"
+    enroll_config
+  fi
+  echo
+  sbctl verify || true
+  echo "w-secureboot: setup complete. Enable Secure Boot in the firmware and reboot."
+}
+
+cmd_sign() {
+  need_root
+  require_sbctl
+  sbctl sign-all
+  sbctl verify || true
+}
+
+cmd_reenroll() {
+  need_root
+  enroll_config
+  echo "w-secureboot: Limine config hash re-enrolled."
+}
+
+# True if the encrypted install's LUKS device already carries a TPM2 auto-unlock
+# token. Captures w-crypt's output before grepping it, instead of piping straight
+# into `grep -q`: grep exits the instant it matches, and the still-writing process
+# upstream then dies of SIGPIPE (exit 141) — which `pipefail` reports as the whole
+# pipeline failing even though the match was real. Found live: `w-secureboot disable`
+# silently skipped the TPM2 wipe on a real VM because of exactly this race.
+# The match itself has to be the "<slot> tpm2" row of the enrolled-tokens table, NOT
+# a bare `tpm2` substring — `w-crypt status` always prints a "TPM2 PCRs : 7" header
+# line regardless of enrollment, which a loose match found live on the same VM run.
+crypt_has_tpm2() {
+  cryptsetup status cryptroot &>/dev/null || return 1
+  local out; out="$(w-crypt status 2>/dev/null)" || true
+  grep -qiE '^[[:space:]]*[0-9]+[[:space:]]+tpm2[[:space:]]*$' <<<"$out"
+}
+
+# Re-seal (or newly enroll) the LUKS TPM2 auto-unlock factor to the current boot
+# chain. A no-op off the encrypted+Limine path (nothing to reseal) — Secure Boot only
+# exists there anyway (package-limine.md), so this is safe to always call from enable.
+reseal_tpm() {
+  have w-crypt || return 0
+  cryptsetup status cryptroot &>/dev/null || return 0
+  if crypt_has_tpm2; then
+    echo "Re-sealing TPM2 disk auto-unlock to the new Secure Boot state..."
+    w-crypt reenroll-tpm
+  else
+    echo "Enrolling TPM2 disk auto-unlock (enter the current LUKS passphrase once)..."
+    w-crypt enroll-tpm
+  fi
+}
+
+cmd_enable() {
+  need_root
+  require_sbctl
+  local setup_mode; setup_mode="$(sb_json_field setup_mode)"
+  if [[ "$setup_mode" == "err" ]]; then
+    err "firmware does not expose Secure Boot EFI variables (legacy boot, or unsupported by this machine)"
+    exit 1
+  fi
+
+  if [[ "$setup_mode" == "yes" ]]; then
+    # Phase 1: fresh enrollment. Do NOT touch the TPM2 seal here — PCR7 still reflects
+    # the pre-enrollment boot chain and will only change on the next actual reboot;
+    # resealing now would silently seal against the wrong value (see header).
+    cmd_setup
+    mkdir -p "$(dirname "$PENDING_MARKER")"
+    cat /proc/sys/kernel/random/boot_id > "$PENDING_MARKER"
+    echo
+    echo "w-secureboot: keys enrolled. The disk's TPM2 auto-unlock can only be re-sealed"
+    echo "AFTER a reboot (PCR7 doesn't update until then) — reboot now, then run"
+    echo "'w-secureboot enable' again (or toggle Security in the Hub) to finish. Until"
+    echo "then the disk will keep asking for its passphrase at boot."
+    return 0
+  fi
+
+  # Keys already enrolled. If a reseal is pending, only proceed once a reboot has
+  # actually happened since enrollment — otherwise PCR7 is still the pre-enrollment
+  # value and resealing now would reproduce the exact bug phase 1 avoids.
+  if [[ -f "$PENDING_MARKER" ]]; then
+    if [[ "$(cat "$PENDING_MARKER" 2>/dev/null)" == "$(cat /proc/sys/kernel/random/boot_id)" ]]; then
+      err "reboot required before the disk auto-unlock can be re-sealed (PCR7 only"
+      err "updates on the next boot). Reboot, then run 'w-secureboot enable' again."
+      exit 1
+    fi
+  fi
+
+  echo "Secure Boot keys already enrolled — refreshing signature and config hash..."
+  cmd_sign
+  if [[ -f /etc/default/limine ]]; then
+    sed -i 's/^ENABLE_ENROLL_LIMINE_CONFIG=.*/ENABLE_ENROLL_LIMINE_CONFIG=yes/' /etc/default/limine
+  fi
+  enroll_config
+  reseal_tpm
+  rm -f "$PENDING_MARKER"
+  echo "w-secureboot: Secure Boot is on."
+}
+
+cmd_disable() {
+  need_root
+  require_sbctl
+  # A pending reseal (see cmd_enable) is moot once the keys are being torn down.
+  rm -f "$PENDING_MARKER"
+  if have w-crypt && crypt_has_tpm2; then
+    echo "Removing TPM2 disk auto-unlock (the passphrase prompt returns at boot)..."
+    w-crypt wipe-tpm
+  fi
+  if [[ -f /etc/default/limine ]]; then
+    sed -i 's/^ENABLE_ENROLL_LIMINE_CONFIG=.*/ENABLE_ENROLL_LIMINE_CONFIG=no/' /etc/default/limine
+  fi
+  if [[ "$(sb_json_field setup_mode)" == "yes" ]]; then
+    echo "w-secureboot: Secure Boot keys already cleared."
+  else
+    echo "Resetting Secure Boot keys (firmware returns to Setup Mode)..."
+    sbctl reset
+    have limine-update && limine-update
+  fi
+  echo "w-secureboot: Secure Boot is off."
+}
+
+case "${1:-}" in
+  status)         shift; cmd_status "$@" ;;
+  enable)         cmd_enable    ;;
+  disable)        cmd_disable   ;;
+  setup)          cmd_setup     ;;
+  sign)           cmd_sign      ;;
+  reenroll)       cmd_reenroll  ;;
+  help|-h|--help) usage         ;;
+  "")             usage; exit 2 ;;
+  *)              err "unknown command: $1"; usage; exit 2 ;;
+esac

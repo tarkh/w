@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# w-session-exit — graceful logout / reboot / shutdown for the W power menu.
+#
+# Two steps, both of which belong to `w-session` and neither of which is
+# implemented here:
+#
+#   w-session save    Snapshot the session while the window list is still WHOLE.
+#                     This is the last instant that is true, and it is why a
+#                     graceful exit restores exactly rather than up to
+#                     AUTOSAVE_SEC stale like the background daemon does.
+#   w-session close   Ask every window to close — the window's own X button — so
+#                     an editor with unsaved work pops its "Save changes?" dialog
+#                     and the dialog stays fully reachable. This is the part
+#                     hyprshutdown gets wrong: it triggers the same dialogs and
+#                     then paints its full-screen overlay (layer 3) over them,
+#                     leaving them unclickable. We paint nothing.
+#
+# The close mechanic used to live in this file. It moved because the layouts
+# panel needs exactly the same thing before it swaps in a saved arrangement, and
+# "ask, wait, abort if anything stayed" is a policy — two copies of it would drift
+# the first time one was tuned. See w-session.md.
+#
+# A window still open after the wait means a save dialog was cancelled: the user
+# chose to keep working, so nothing is forced and the exit is abandoned.
+#
+# Usage: w-session-exit <logout|reboot|shutdown>
+set -uo pipefail
+
+action=${1:-}
+case "$action" in
+  logout|reboot|shutdown) ;;
+  *) echo "Usage: w-session-exit <logout|reboot|shutdown>" >&2; exit 2 ;;
+esac
+
+# Detached by construction, because the terminal this may have been typed in is
+# one of the windows it is about to close. `setsid` ALONE DOES NOT BUY THAT: the
+# child is a session leader still holding the pty on stdin, so it takes that pty
+# as its CONTROLLING terminal, and closing the window hangs it up — measured on
+# the VM, SIGHUP 79 ms in, in the middle of `w-session save`, before a single
+# window had been asked to close. That is where the reboot at the end of
+# `w-update` went for six weeks. All three descriptors have to go, exactly as
+# w-session's own detach() has always done it for `layout apply` — which is why
+# that one survives closing its own terminal and this one did not.
+if [[ -z "${W_SESSION_EXIT_DETACHED:-}" ]] && command -v setsid >/dev/null 2>&1; then
+  W_SESSION_EXIT_DETACHED=1 setsid -f "$0" "$action" </dev/null >/dev/null 2>&1 && exit 0
+fi
+
+# Best-effort by construction: `w-session save` is a no-op when the feature is
+# off, and a failure here must never delay or abort a logout the user asked for.
+w-session save >/dev/null 2>&1 || true
+
+# Aborts (and notifies) on its own if anything stayed open.
+w-session close || exit 1
+
+case "$action" in
+  logout)   exec uwsm stop ;;
+  reboot)   exec systemctl reboot ;;
+  shutdown) exec systemctl poweroff ;;
+esac

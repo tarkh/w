@@ -1,0 +1,17 @@
+# W Linux — periodic update check (drives the bar's `updates` block).
+# Enabled for every user via `systemctl --global enable` (modules/update.sh).
+# Change the period with `w-update interval <minutes>` (writes a user drop-in).
+# OnStartupSec is short on purpose: it refreshes the bar right after every login/
+# reboot, so a stale count and — crucially — a now-satisfied reboot flag clear on
+# their own (rebootPending is a local, network-free check). Between sessions the
+# alpm hook 95-w-update-refresh keeps the indicator live after external upgrades.
+[Unit]
+Description=W Linux — periodic package-update check
+
+[Timer]
+OnStartupSec=10s
+OnUnitActiveSec=60min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

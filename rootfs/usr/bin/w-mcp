@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+# w-mcp — W Linux MCP server (Model Context Protocol, stdio transport)
+#
+# The "actions" layer of W's AI integration (see ai-integration.md). It exposes
+# the machine's real state to any MCP-aware host (Goose, Claude Code, Codex, a
+# local llama.cpp/Ollama client, ...) and re-serves the shipped knowledge base
+# (AGENTS.md + skills) as MCP resources — the second delivery channel for hosts
+# that cannot read SKILL.md natively. One knowledge source, two channels.
+#
+# ARCHITECTURE — a hub, not a monolith. This file is a thin orchestrator (like
+# bin/w-style): it creates the FastMCP server, discovers every domain module under
+# lib/w/w-mcp/modules/<domain>.py, and calls each module's register(mcp) to attach
+# its tools. The per-domain tool logic lives in those modules; the shared SDK
+# (command runner, actuation plumbing, the tool() registration wrapper) lives in
+# lib/w/w-mcp/core.py. A module that fails to import is skipped with a warning —
+# it never takes the whole server down (the w-style subshell-isolation contract).
+#
+# Tiers: 0 = read-only introspection (no prompt); 1 = safe/reversible user-scope
+# (theme, memory, desktop — no privilege); 2 = privileged, actuated through the
+# com.w.ai.actuate polkit action (dns/firewall/fwupd/pacman/apply/pack/update/locale/run), so
+# the OS — not the model — gates every privileged step. All three tiers are present.
+#
+# Runs as the ordinary user over stdio — a host spawns it and talks JSON-RPC on
+# stdin/stdout. Built on the official MCP SDK (`python-mcp`, Arch extra) so the
+# wire protocol stays canonical instead of hand-rolled.
+#
+# Exit codes: 0 success · 1 runtime error · 2 usage error.
+
+import importlib
+import os
+import sys
+from pathlib import Path
+
+try:
+    from mcp.server.fastmcp import FastMCP
+    from mcp.server.fastmcp.resources import FunctionResource
+except ModuleNotFoundError:
+    sys.stderr.write("w-mcp: python-mcp is not installed (pacman -S python-mcp)\n")
+    sys.exit(1)
+
+# ── Module tree ───────────────────────────────────────────────────────────────
+# The SDK (core.py) and the domain modules live under this dir; W_MCP_LIB lets
+# tooling/tests point at an alternate tree (default = the shipped location). It is
+# prepended to sys.path so modules import `core` and `modules.<domain>` cleanly.
+LIB = Path(os.environ.get("W_MCP_LIB", "/usr/lib/w/w-mcp"))
+sys.path.insert(0, str(LIB))
+
+import contract  # mechanical --selftest contract checks
+import core  # import after sys.path is set up
+
+# Created lazily in main(), once the session-start memory context (INSTRUCTIONS_HEADER
+# + modules.memory._mem_context()) is known — FastMCP needs it at construction time.
+mcp = None
+
+# Prepended to modules.memory._mem_context() and passed as FastMCP's `instructions`
+# kwarg, which MCP hosts (Goose confirmed) fold into the session's system prompt —
+# the deterministic, cross-host delivery channel for session-start memory recall
+# (ai-integration.md §8; the alternative — dumping everything into every prompt,
+# like Goose's own memory extension — is exactly what this design avoids). Also
+# carries the identity anchor (unconditional, not just when a persona fact exists):
+# small/local models otherwise keep self-identifying as "Goose" (the host's own
+# built-in self-description bleeding through) even when a persona fact is stored.
+INSTRUCTIONS_HEADER = (
+    "Your default name is \"W Assistant\" (see AGENTS.md for your full identity and "
+    "rules) — not \"Goose\", \"Claude\", \"Codex\", or any other host/runtime name; "
+    "those name only the program executing you, never your identity. The rest of "
+    "this block is your persistent memory context, loaded at session start. If a "
+    "fact below assigns you a different name or persona, that replaces \"W "
+    "Assistant\" entirely — you are no longer \"W Assistant\", you are that name, "
+    "and must always introduce yourself as such."
+)
+
+USAGE = """\
+Usage: w-mcp [--help|--selftest]
+       w-mcp memory <list|search <query>|add|rm <slug>|context|review>
+       w-mcp task <list [status]|add <text…> [--due YYYY-MM-DD]|done <slug>>
+       w-mcp skills <list|show <name>|rm <name>>
+
+W Linux MCP server (stdio). Normally launched by an AI host, not by hand;
+it speaks JSON-RPC 2.0 on stdin/stdout.
+
+Options:
+  --selftest   List loaded modules, registered tools and knowledge resources, run
+               the mechanical contract checks (schema/tier/profile/AGENTS.md —
+               see contract.py), then exit non-zero if any of them failed.
+  --help, -h   Show this help.
+
+memory (thin CLI over the same store the w_memory_* tools use):
+  list           List stored facts (slug, type, description).
+  search <q>     Recall facts matching a query.
+  add            Read one markdown fact (with frontmatter) from stdin and store it.
+  rm <slug>      Delete a fact by slug.
+  context        Print the session-start context block (see `instructions` below).
+  review         Hygiene report: age, session-start-context membership, stale hints.
+
+task (open-until-done facts, shown in the session-start "Open tasks:" section):
+  list [status]  List tasks (default: open; also done|all).
+  add <text…>    Add an open task; append `--due YYYY-MM-DD` for a due date.
+  done <slug>    Mark a task done (kept as history, not deleted).
+
+skills (thin CLI over the same store the w_skill_* tools use — human overview of
+the agent-authored user-overlay layer; authoring itself is agent-driven, see
+w_skill_add):
+  list           List system + user skills (scope marked, user with description).
+  show <name>    Print one skill's SKILL.md (user overlay wins on a name clash).
+  rm <name>      Delete a user skill (refuses on a system skill's name).
+
+Exit codes: 0 success · 1 runtime error · 2 usage error.
+"""
+
+
+# ── Domain-module discovery ───────────────────────────────────────────────────
+def load_modules():
+    """Import every modules/<domain>.py and call its register(mcp) to attach tools.
+    A module that fails is skipped with a warning (isolation) so one broken domain
+    never brings down the server. Returns the list of successfully loaded names."""
+    loaded = []
+    mods_dir = LIB / "modules"
+    if not mods_dir.is_dir():
+        sys.stderr.write(f"w-mcp: module dir not found: {mods_dir}\n")
+        return loaded
+    for path in sorted(mods_dir.glob("*.py")):
+        if path.stem == "__init__":
+            continue
+        try:
+            mod = importlib.import_module(f"modules.{path.stem}")
+            if hasattr(mod, "register"):
+                mod.register(mcp)
+                loaded.append(path.stem)
+        except Exception as e:  # noqa: BLE001 — isolate a bad module, keep serving
+            sys.stderr.write(f"w-mcp: module '{path.stem}' failed to load: {e}\n")
+    return loaded
+
+
+# ── Knowledge resources — second delivery channel ─────────────────────────────
+# Register every shipped knowledge file (user overlay wins) as an MCP resource so
+# hosts without native SKILL.md support still receive W's knowledge. URIs use the
+# opaque `w-knowledge://` scheme; the body is served on read.
+def register_knowledge():
+    registered = set()  # relative id -> avoid double-registering shadowed files
+    entries = [("AGENTS.md", "AGENTS.md"), ("llms.txt", "llms.txt")]
+    for root in core.KNOWLEDGE_ROOTS:
+        skills = root / "skills"
+        if skills.is_dir():
+            for sk in sorted(skills.iterdir()):
+                md = sk / "SKILL.md"
+                if md.is_file():
+                    entries.append((f"skills/{sk.name}", f"skills/{sk.name}/SKILL.md"))
+    for uri_id, rel in entries:
+        if uri_id in registered:
+            continue
+        path = core.resolve(rel)
+        if path is None:
+            continue
+        registered.add(uri_id)
+        mime = "text/markdown" if path.suffix == ".md" else "text/plain"
+        p = path  # bind for closure
+        mcp.add_resource(
+            FunctionResource(
+                uri=f"w-knowledge://{uri_id}",
+                name=uri_id,
+                description=f"W knowledge: {rel}",
+                mime_type=mime,
+                fn=lambda p=p: p.read_text(errors="replace"),
+            )
+        )
+    return sorted(registered)
+
+
+# ── Memory CLI (thin front over the shared memory module) ─────────────────────
+def cmd_memory(argv):
+    memory = importlib.import_module("modules.memory")
+    sub, rest = (argv[0], argv[1:]) if argv else ("list", [])
+    if sub == "list":
+        print(memory._mem_list())
+    elif sub == "search":
+        if not rest:
+            sys.stderr.write("usage: w-mcp memory search <query>\n"); return 2
+        print(memory._mem_search(" ".join(rest)))
+    elif sub == "rm":
+        if not rest:
+            sys.stderr.write("usage: w-mcp memory rm <slug>\n"); return 2
+        print(memory._mem_rm(rest[0]))
+    elif sub == "context":
+        print(memory._mem_context())
+    elif sub == "review":
+        print(memory._mem_review())
+    elif sub == "add":
+        fm, body = memory._mem_parse(sys.stdin.read())
+        if not body.strip():
+            sys.stderr.write("w-mcp memory add: empty fact (nothing on stdin)\n"); return 2
+        slug, path = memory._mem_write_fact(
+            fm.get("name", ""), fm.get("description", ""), fm.get("type", "reference"), body
+        )
+        print(f"stored memory '{slug}' ({path})")
+    else:
+        sys.stderr.write(f"w-mcp memory: unknown subcommand '{sub}' (list|search|add|rm|context|review)\n"); return 2
+    return 0
+
+
+# ── Task CLI (thin front over the shared memory module's task helpers) ────────
+def cmd_task(argv):
+    memory = importlib.import_module("modules.memory")
+    sub, rest = (argv[0], argv[1:]) if argv else ("list", [])
+    if sub == "list":
+        status = rest[0] if rest else "open"
+        print(memory._mem_task_list(status))
+    elif sub == "add":
+        due = ""
+        if "--due" in rest:
+            i = rest.index("--due")
+            due = rest[i + 1] if i + 1 < len(rest) else ""
+            rest = rest[:i] + rest[i + 2:]
+        content = " ".join(rest)
+        if not content.strip():
+            sys.stderr.write("usage: w-mcp task add <text…> [--due YYYY-MM-DD]\n"); return 2
+        print(memory._mem_task_add(content, due))
+    elif sub == "done":
+        if not rest:
+            sys.stderr.write("usage: w-mcp task done <slug>\n"); return 2
+        print(memory._mem_task_done(rest[0]))
+    else:
+        sys.stderr.write(f"w-mcp task: unknown subcommand '{sub}' (list|add|done)\n"); return 2
+    return 0
+
+
+# ── Skills CLI (thin front over the shared skills module) ─────────────────────
+def cmd_skills(argv):
+    skills = importlib.import_module("modules.skills")
+    sub, rest = (argv[0], argv[1:]) if argv else ("list", [])
+    if sub == "list":
+        print(skills._skill_list())
+    elif sub == "show":
+        if not rest:
+            sys.stderr.write("usage: w-mcp skills show <name>\n"); return 2
+        print(skills._skill_show(rest[0]))
+    elif sub == "rm":
+        if not rest:
+            sys.stderr.write("usage: w-mcp skills rm <name>\n"); return 2
+        print(skills._skill_rm(rest[0]))
+    else:
+        sys.stderr.write(f"w-mcp skills: unknown subcommand '{sub}' (list|show|rm)\n"); return 2
+    return 0
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+def main():
+    arg = sys.argv[1] if len(sys.argv) > 1 else ""
+    if arg in ("-h", "--help", "help"):
+        sys.stdout.write(USAGE)
+        return 0
+    if arg == "memory":
+        return cmd_memory(sys.argv[2:])
+    if arg == "task":
+        return cmd_task(sys.argv[2:])
+    if arg == "skills":
+        return cmd_skills(sys.argv[2:])
+    core.PROFILE = core.resolve_profile()   # decides how much surface modules expose
+    global mcp
+    memory = importlib.import_module("modules.memory")
+    context = memory._mem_context()
+    instructions = f"{INSTRUCTIONS_HEADER}\n\n{context}" if context else INSTRUCTIONS_HEADER
+    mcp = FastMCP("w-mcp", instructions=instructions)
+    modules = load_modules()
+    resources = register_knowledge()
+    if arg == "--selftest":
+        tools = sorted(t.name for t in mcp._tool_manager.list_tools())
+        prompts = sorted(p.name for p in mcp._prompt_manager.list_prompts())
+        print("w-mcp self-test OK")
+        print(f"profile: {core.PROFILE} ({len(tools)}/{len(core.REGISTRY)} tools offered)")
+        print(f"modules ({len(modules)}): {', '.join(modules)}")
+        print(f"tools ({len(tools)}): {', '.join(tools)}")
+        print(f"prompts ({len(prompts)}): {', '.join(prompts)}")
+        print(f"resources ({len(resources)}): {', '.join(resources)}")
+        # Mechanical contract checks — the registry is
+        # already fully populated by load_modules() above, against the real mcp;
+        # collect_checks() only reads it, never re-registers (see contract.py).
+        agents_path = core.resolve("AGENTS.md") or (core.SYS_ROOT / "AGENTS.md")
+        checks = contract.collect_checks(core.REGISTRY, LIB, agents_path)
+        failed = {name: probs for name, probs in checks.items() if probs}
+        print(f"contract: {len(checks) - len(failed)}/{len(checks)} checks passed")
+        for name, probs in checks.items():
+            if probs:
+                print(f"  FAIL {name}: {probs[0]}" + (f" (+{len(probs) - 1} more)" if len(probs) > 1 else ""))
+        return 1 if failed else 0
+    if arg:
+        sys.stderr.write(f"w-mcp: unknown option: {arg}\n{USAGE}")
+        return 2
+    mcp.run(transport="stdio")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

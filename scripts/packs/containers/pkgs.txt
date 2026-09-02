@@ -1,0 +1,11 @@
+# containers bundle — packages (all in the official extra repo).
+# One per line; '#' comments and blank lines ignored. Installed by w-pack via yay
+# (repo + AUR in one pass) as the build user; pacman fallback if yay is absent.
+
+podman              # daemonless, rootless container engine
+netavark            # container network backend (nftables-native, coexists with firewalld)
+aardvark-dns        # container name resolution for netavark
+podman-docker       # `docker` CLI shim + man pages (docker-compat)
+docker-compose      # compose provider (preferred over podman-compose)
+fuse-overlayfs      # rootless overlay fallback (native overlay preferred on btrfs)
+lazydocker          # container management TUI (Docker-API client, works via podman.sock)

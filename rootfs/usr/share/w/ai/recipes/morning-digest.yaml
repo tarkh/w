@@ -1,0 +1,27 @@
+# W AI recipe: morning-digest — see ai-integration.md (Этап 4) / w-automation skill.
+# Run unattended via `w-ai run-recipe morning-digest` (a systemd user timer, see
+# `w-ai schedule`). No `extensions:` block on purpose — the recipe inherits
+# whatever goose already has configured (the pinned w-mcp extension included),
+# instead of redeclaring it here.
+version: "1.0.0"
+title: "Morning digest"
+description: >-
+  Daily heads-up: pending updates, failed services, free disk, and open tasks —
+  delivered as a single desktop notification.
+prompt: |
+  Compile a short daily digest and deliver it as exactly ONE desktop notification.
+  This runs unattended (no human to answer a tool-approval prompt): use ONLY
+  read-only tools plus w_notify. Do not attempt anything privileged, and do not
+  call any tool more than the sequence below requires.
+
+  1. Call w_updates_check — note pending repo/AUR update counts.
+  2. Call w_service_status (no `unit` argument) — note any failed systemd units.
+  3. Call w_system_status — note free disk space on / and whether a reboot is
+     required.
+  4. Call w_task_list (default: open) — note open tasks, if any.
+  5. Compose ONE compact summary (a handful of short lines, not a report) from the
+     above. Skip a line entirely if it has nothing to report (e.g. no failed units,
+     no open tasks) — do not pad the notification with "all clear" filler for every
+     section.
+  6. Call w_notify(summary="Morning digest", body=<the summary>) exactly once, then
+     stop. Do not take any other action.

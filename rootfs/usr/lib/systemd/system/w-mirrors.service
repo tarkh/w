@@ -1,0 +1,23 @@
+[Unit]
+# Periodic mirrorlist refresh — layer 3 of the package-delivery plan
+# (installer.md §5). Triggered by w-mirrors.timer; `--scheduled` makes the run
+# a no-op unless the list is actually older than INTERVAL_DAYS and the link is
+# not metered, so the timer can tick cheaply every day while the expensive job
+# stays on its real (monthly by default) cadence.
+Description=Refresh the pacman mirror ranking (W)
+Documentation=man:reflector(1)
+# Ranking downloads a database from every candidate mirror — without a real link
+# this is a guaranteed-useless run, and reflector would just burn its timeout.
+Wants=network-online.target
+After=network-online.target nss-lookup.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/w-mirrors rank --scheduled
+# The worst case the tool itself allows is ceil(SCORE/THREADS)*DOWNLOAD_TIMEOUT
+# plus slack (~200 s at W's defaults, and it wraps reflector in its own `timeout`).
+# This is the outer backstop for the case where reflector hangs in a way its own
+# wrapper cannot see; it must stay comfortably above the inner budget.
+TimeoutStartSec=15min
+Nice=10
+IOSchedulingClass=idle

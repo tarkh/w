@@ -1,0 +1,15 @@
+[Desktop Entry]
+Name=Hyprland
+Comment=An intelligent dynamic tiling Wayland compositor
+# Launched by the greetd greeter after authentication. uwsm wraps Hyprland in a
+# systemd user session: graphical-session.target, app slices, journald logs,
+# clean shutdown. -D Hyprland sets XDG_CURRENT_DESKTOP (selects the uwsm
+# hyprland plugin and sources /etc/xdg/uwsm/env-hyprland). The compositor is
+# given as the executable directly to avoid uwsm's desktop-entry self-reference.
+# UWSM_SILENT_START=1 keeps uwsm's startup chatter off the VT (it still goes to
+# the journal) for a clean greeter->Hyprland transition; real warnings/errors
+# stay visible.
+Exec=env UWSM_SILENT_START=1 uwsm start -N Hyprland -D Hyprland -- Hyprland
+TryExec=uwsm
+DesktopNames=Hyprland
+Type=Application

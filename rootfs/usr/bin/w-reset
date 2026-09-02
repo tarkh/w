@@ -1,0 +1,615 @@
+#!/usr/bin/env bash
+# w-reset — W Linux force-restore of a module's config to the W default.
+#
+# Universal on-demand recovery, orthogonal to updates (update-system.md, ös 3):
+# a wheel user or admin hand-edits a module's config, breaks it, and wants the W
+# default back WITHOUT waiting for a release. Reads the per-module ownership
+# manifest (/usr/share/w/update/<module>.manifest) — the same single source of
+# truth the deploy SDK seeds from, so no parallel list can drift — and restores
+# each declared path from its pristine source, backing up the current copy first.
+#
+# Manifest format (TSV, '#' comments / blank lines ignored):
+#   <path>\t<class>
+#     path : home-relative (no leading '/', lives under a user's $HOME) OR
+#            absolute (/etc/..., /usr/share/w/..., a system path).
+#            A trailing '/' marks a directory (restored as a tree).
+#     class: user     — seed-if-absent on deploy; reset = restore default.
+#            managed  — overwritten by the module on deploy; reset = restore default.
+#            override — /etc/w admin-state the update preserves; reset = drop to vendor.
+#            user-conf— ~/.config/w/<subsys>.conf (or another wconf user-layer
+#                       file), the user's OWN deviations written by `wconf_set
+#                       ... user` (Hub, CLI setters). No vendor default exists —
+#                       "default" for this layer IS absence, so reset = backup +
+#                       delete (path must be home-relative). See w-conf.md.
+#
+# Pristine sources (offline-first, like the deploy SDK's $SRC-vs-deployed split):
+#   home paths        -> /etc/skel                     (always on the machine)
+#   /etc/w overrides  -> /usr/share/w/vendor/etc-w      (vendor copy shipped by --reset)
+#   other system paths-> /var/lib/w/src/rootfs<path>    (edge git-checkout; may be absent)
+# Theme artifacts (gtk/qt/shell colours, hypr *.lua) are rendered by w-style, not
+# shipped in skel, so after any home-scope reset w-reset re-runs `w-style apply
+# user` to return them to the ACTIVE theme's default.
+#
+# W-Pack bundles are resettable too, by bundle name — the promise packs.md always
+# made and the one thing that never worked, because the source roots above were
+# hardcoded and a bundle keeps its pristine copies inside its own directory:
+#   <bundle> home paths   -> /usr/share/w/packs/<b>/config/skel/<path>
+#   <bundle> system paths -> /usr/share/w/packs/<b>/config/root<path>
+# So the roots are resolved per manifest ORIGIN (set_sources below) rather than
+# fixed. A bundle is actually the sturdier case: its tree is staged on every
+# machine, whereas a module's system paths need the edge checkout to be present.
+
+set -euo pipefail
+
+# ── Constants ────────────────────────────────────────────────────────────────
+MANIFEST_DIR="/usr/share/w/update"
+SKEL="/etc/skel"
+VENDOR="/usr/share/w/vendor/etc-w"
+REPO="/var/lib/w/src"                 # edge source; absent on a stable-only client
+SYS_BACKUP_ROOT="/var/lib/w/reset-backups"
+PACKS_DIR="/usr/share/w/packs"        # staged W-Pack bundle trees
+PACKS_STATE="/var/lib/w/packs.json"   # which bundles this machine has
+
+# Where the pristine copies come from for the manifest currently being reset.
+# Defaults are the module roots; set_sources() repoints them at a bundle's own
+# tree. Everything downstream (restore_home / restore_system / cmd_check) reads
+# these two and stays ignorant of which kind of thing it is restoring.
+SRC_HOME="$SKEL"
+SRC_SYS="$REPO/rootfs"
+
+err()  { echo -e "\033[1;31mw-reset:\033[0m $*" >&2; }
+info() { echo -e "\033[1;35m==>\033[0m $*"; }
+warn() { echo -e "\033[1;33mWARN:\033[0m $*" >&2; }
+
+# ── Usage ────────────────────────────────────────────────────────────────────
+usage() {
+  cat <<EOF
+Usage: w-reset <module|bundle|--all> [file] [--user <name>]
+
+Info: Force-restore any W module's or bundle's config to its default.
+
+Force-restore a module's config to the W default (backs up the current copy
+first). Recovery for a hand-broken config, without waiting for an update.
+Installed W-Pack bundles work the same way, by bundle name.
+
+Commands:
+  <module>          Reset every path the module owns (see 'w-reset list')
+  <module> <file>   Reset a single home-relative path from that module
+  <bundle>          Reset an installed W-Pack bundle's config the same way
+  --all             Reset every module and every installed bundle
+  list              List modules and bundles that have a reset manifest
+  check             Report which managed files drifted from the W default
+                    (read-only; nothing is restored)
+  status            Show which pristine sources are available
+
+Options:
+  --user <name>     Target another user's home (root only; default: the
+                    invoking user, or SUDO_USER / the primary uid-1000 user)
+
+Scope & privileges:
+  Home config resets for your OWN home need no root. Resetting another user's
+  home, or any system/override path (/etc, /usr, /etc/w), needs root (sudo).
+
+Exit codes:
+  0  Success
+  1  Runtime error (missing source, privilege, unknown module)
+  2  Usage error
+
+Examples:
+  w-reset check                       # what drifted from the W default
+  w-reset shell                       # restore your shell config to default
+  w-reset quickshell config/bar.json  # one file
+  w-reset dev                         # a W-Pack bundle's config, your home
+  sudo w-reset dns                    # system + /etc/w override, needs root
+  sudo w-reset --all --user alice
+EOF
+}
+
+# ── Target user / home resolution ────────────────────────────────────────────
+TARGET_USER=""; TARGET_HOME=""
+resolve_user() {
+  local u="${1:-}"
+  if [[ -z "$u" ]]; then
+    if [[ $EUID -ne 0 ]]; then
+      u="$(id -un)"
+    elif [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != root ]]; then
+      u="$SUDO_USER"
+    else
+      u="$(awk -F: '$3>=1000 && $3<65534 {print $1; exit}' /etc/passwd)"
+    fi
+  fi
+  [[ -n "$u" ]] || { err "could not determine a target user"; exit 1; }
+  TARGET_HOME="$(getent passwd "$u" | cut -d: -f6)"
+  [[ -n "$TARGET_HOME" ]] || { err "unknown user: $u"; exit 1; }
+  # Root required to touch a home that is not the invoker's own.
+  if [[ $EUID -ne 0 && "$u" != "$(id -un)" ]]; then
+    err "resetting $u's home requires root (sudo)"; exit 1
+  fi
+  TARGET_USER="$u"
+}
+
+# ── Backup helpers ───────────────────────────────────────────────────────────
+# The backup follows the OWNER of the data: a reset acts on the user's behalf, so a
+# home-path backup lands in that user's own state dir (user-owned), even when root
+# runs it. System/override paths (root-owned) back up under /var/lib/w. One
+# invocation can touch both, so the two roots are created lazily, per path.
+BK_TS=""; HOME_BK=""; SYS_BK=""
+init_backup() { BK_TS="$(date +%Y%m%d-%H%M%S)"; }
+
+ensure_home_bk() {
+  [[ -n "$HOME_BK" ]] && return 0
+  # Own each parent from the home root down, so a root-run backup never leaves a
+  # root-owned .local/state/w behind (the trap the deploy SDK guards).
+  local rel=".local/state/w/reset-backups/$BK_TS" acc="$TARGET_HOME" part
+  local IFS=/
+  for part in $rel; do
+    acc="$acc/$part"
+    if [[ $EUID -eq 0 ]]; then install -d -o "$TARGET_USER" -g "$TARGET_USER" "$acc"
+    else install -d "$acc"; fi
+  done
+  unset IFS
+  HOME_BK="$TARGET_HOME/$rel"
+}
+ensure_sys_bk() { [[ -n "$SYS_BK" ]] && return 0; SYS_BK="$SYS_BACKUP_ROOT/$BK_TS"; mkdir -p "$SYS_BK"; }
+
+# backup_path <abs-path>  — snapshot current version (file, dir or symlink) if present.
+backup_path() {
+  local p="$1" dest
+  [[ -e "$p" || -L "$p" ]] || return 0
+  if [[ "$p" == "$TARGET_HOME"/* ]]; then
+    ensure_home_bk; dest="$HOME_BK/${p#"$TARGET_HOME"/}"
+  else
+    ensure_sys_bk; dest="$SYS_BK/${p#/}"
+  fi
+  mkdir -p "$(dirname "$dest")"
+  cp -a "$p" "$dest"
+}
+
+# Hand the home backup tree to the user (root-run copies inherit source owner, but
+# the intermediate dirs mkdir -p created above are root-owned — tidy them up).
+finalize_backup() {
+  [[ $EUID -eq 0 && -n "$HOME_BK" ]] && chown -R "$TARGET_USER:$TARGET_USER" "$HOME_BK" || true
+}
+
+# Report where backups landed (either or both roots may be unused). Ends with an
+# explicit `return 0` — a trailing `[[…]] && echo` that goes false would otherwise
+# return 1 and trip `set -e` in the caller.
+backup_summary() {
+  [[ -n "$HOME_BK" ]] && echo "  home backup:   $HOME_BK"
+  [[ -n "$SYS_BK"  ]] && echo "  system backup: $SYS_BK"
+  return 0
+}
+
+# ── Restore primitives ───────────────────────────────────────────────────────
+# Own every parent dir from the home root down (install -D alone makes them
+# root-owned, breaking later user-scope writes — same trap the deploy SDK guards).
+own_home_parents() {
+  local rel="$1" acc="$TARGET_HOME" part
+  [[ "$rel" == */* ]] || return 0
+  local IFS=/
+  for part in ${rel%/*}; do
+    acc="$acc/$part"
+    install -d -o "$TARGET_USER" -g "$TARGET_USER" "$acc"
+  done
+}
+
+restore_home() {                       # <relpath> (trailing '/' = dir)
+  local rel="$1"
+  if [[ "$rel" == */ ]]; then
+    local src="$SRC_HOME/${rel%/}" dst="$TARGET_HOME/${rel%/}"
+    [[ -d "$src" ]] || { warn "skel dir missing, skipping: $rel"; return 0; }
+    backup_path "$dst"
+    install -d -o "$TARGET_USER" -g "$TARGET_USER" "$dst"
+    # No --delete: restore W files, leave any stray user-added files in place.
+    rsync -a --chown="$TARGET_USER:$TARGET_USER" "$src/" "$dst/"
+  else
+    local src="$SRC_HOME/$rel" dst="$TARGET_HOME/$rel"
+    [[ -f "$src" ]] || { warn "skel file missing, skipping: $rel"; return 0; }
+    backup_path "$dst"
+    own_home_parents "$rel"
+    install -Dm644 -o "$TARGET_USER" -g "$TARGET_USER" "$src" "$dst"
+  fi
+}
+
+restore_system() {                     # <abspath> (trailing '/' = dir)
+  [[ $EUID -eq 0 ]] || { SYS_SKIPPED=$((SYS_SKIPPED + 1)); return 1; }
+  local p="$1" src="$SRC_SYS$1"
+  if [[ "$p" == */ ]]; then
+    [[ -d "${src%/}" ]] || { warn "source missing ($src): $p"; return 1; }
+    backup_path "${p%/}"
+    rsync -a --chown=root:root "${src%/}/" "$p"
+  else
+    [[ -f "$src" ]] || { warn "source missing ($src): $p"; return 1; }
+    backup_path "$p"
+    install -Dm644 -o root -g root "$src" "$p"
+  fi
+}
+
+reset_user_conf() {                    # <home-relative path, e.g. .config/w/nightlight.conf>
+  local rel="$1"
+  local dst="$TARGET_HOME/$rel"
+  if [[ -e "$dst" || -L "$dst" ]]; then
+    backup_path "$dst"
+    rm -f "$dst"
+  fi
+  # A layer may carry its own .d/*.conf drop-ins (wconf_layer_table); wipe those too.
+  if [[ -d "$dst.d" ]]; then
+    backup_path "$dst.d"
+    rm -rf "$dst.d"
+  fi
+}
+
+restore_override() {                   # <abspath> under /etc/w
+  [[ $EUID -eq 0 ]] || { SYS_SKIPPED=$((SYS_SKIPPED + 1)); return 1; }
+  local p="$1"
+  # active-theme is a symlink into the theme catalog; vendor default = baseline 'w'.
+  if [[ "$p" == /etc/w/active-theme ]]; then
+    backup_path "$p"; ln -sfn themes/w "$p"; return 0
+  fi
+
+  # Split subsystems (update-system.md phase 2+): the admin file holds only
+  # DEVIATIONS, and W's defaults sit in their own vendor layer underneath. So a
+  # reset is "drop the deviations", not "copy a vendor file over them" — that is
+  # what "as on a fresh install" actually means once the layers are separate, and
+  # it is what lets later default improvements keep arriving afterwards.
+  local base; base="$(basename "$p")"
+  if [[ -f "/usr/share/w/defaults/${base}" || -f "/usr/share/w/defaults/${base%.conf}.schema" ]]; then
+    backup_path "$p"
+    # Keep the file (with its header) but strip every assignment: the subsystem's
+    # own tooling re-seeds what it must (w-power rewrites MODE on the next apply).
+    if [[ -f "$p" ]]; then
+      awk '/^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=/ { next } { print }' "$p" > "$p.w-tmp" \
+        && mv -f "$p.w-tmp" "$p" && chmod 644 "$p"
+    fi
+    return 0
+  fi
+
+  # Not split yet: restore the whole vendor copy (phase 3 converts the rest).
+  local src
+  src="$VENDOR/$base"; [[ -f "$src" ]] || src="$REPO/rootfs$p"
+  [[ -f "$src" ]] || { warn "no vendor default for $p (needs --reset applied or $REPO)"; return 1; }
+  backup_path "$p"
+  install -Dm644 -o root -g root "$src" "$p"
+}
+
+# ── Module reset ─────────────────────────────────────────────────────────────
+HOME_TOUCHED=0        # a home path was restored -> re-render theme artifacts after
+THEME_HANDLED=0       # the style delegate already re-rendered -> skip generic render
+SYS_SKIPPED=0         # system/override paths skipped for lack of root
+# ── Modules and bundles share one namespace ──────────────────────────────────
+# `w-reset containers` should just work, so a name is looked up as a module first
+# and as a W-Pack bundle second. Names cannot collide: check.sh's manifests suite
+# refuses a bundle named after a module, which keeps this resolution unambiguous
+# without making anyone type a prefix.
+bundle_manifest_of() { echo "$PACKS_DIR/$1/manifest"; }
+is_bundle()          { [[ -f "$PACKS_DIR/$1/meta.conf" ]]; }
+
+# Is the bundle actually on this machine? Resetting the config of a bundle that
+# was never installed would restore files for software that isn't here.
+bundle_installed() {
+  [[ -f "$PACKS_STATE" ]] || return 1
+  command -v jq >/dev/null || return 1
+  [[ "$(jq -r --arg b "$1" '.bundles[$b] // empty' "$PACKS_STATE" 2>/dev/null)" != "" ]]
+}
+
+# Point SRC_HOME/SRC_SYS at the right pristine tree and put the manifest path in
+# MANIFEST_PATH. Modules keep the machine-wide roots; a bundle carries its own,
+# which is why it works offline on a stable client with no checkout at all.
+#
+# Results come back through globals rather than stdout on purpose: `x=$(f)` runs f
+# in a SUBSHELL, so the source roots it sets would be discarded and every restore
+# would silently fall back to /etc/skel and find nothing.
+MANIFEST_PATH=""
+set_sources() {                        # <name> -> sets MANIFEST_PATH, or fails
+  local name="$1"
+  MANIFEST_PATH=""
+  if [[ -f "$MANIFEST_DIR/$name.manifest" ]]; then
+    SRC_HOME="$SKEL"; SRC_SYS="$REPO/rootfs"
+    MANIFEST_PATH="$MANIFEST_DIR/$name.manifest"; return 0
+  fi
+  if is_bundle "$name"; then
+    if ! bundle_installed "$name"; then
+      err "bundle '$name' is not installed on this machine — nothing to reset (see 'w-pack list')"
+      return 1
+    fi
+    [[ -f "$PACKS_DIR/$name/manifest" ]] || {
+      err "bundle '$name' ships no manifest — it owns no config to reset"; return 1; }
+    SRC_HOME="$PACKS_DIR/$name/config/skel"
+    SRC_SYS="$PACKS_DIR/$name/config/root"
+    MANIFEST_PATH="$PACKS_DIR/$name/manifest"; return 0
+  fi
+  err "unknown module or bundle: $name (see 'w-reset list')"
+  return 1
+}
+
+# Every installed bundle that owns config, for --all and check.
+installed_bundles_with_manifest() {
+  local d name
+  [[ -d "$PACKS_DIR" ]] || return 0
+  for d in "$PACKS_DIR"/*/; do
+    [[ -f "$d/meta.conf" && -f "$d/manifest" ]] || continue
+    name="$(basename "$d")"
+    bundle_installed "$name" || continue
+    echo "$name"
+  done | LC_ALL=C sort
+}
+
+# Run a command as the target user (drop root when we hold it).
+as_user() {
+  if [[ $EUID -eq 0 ]]; then runuser -u "$TARGET_USER" -- "$@"; else "$@"; fi
+}
+
+reset_entry() {                        # <path> <class> [file-filter]
+  local path="$1" class="$2" filter="${3:-}"
+  # A file filter matches the full manifest path or any trailing segment of it, so
+  # `w-reset quickshell config/bar.json` hits .config/quickshell/w/config/bar.json.
+  [[ -n "$filter" && "$path" != "$filter" && "$path" != */"$filter" ]] && return 0
+  case "$class" in
+    user|managed)
+      if [[ "$path" == /* ]]; then restore_system "$path" || true
+      else restore_home "$path" && HOME_TOUCHED=1 || true; fi ;;
+    override) restore_override "$path" || true ;;
+    user-conf)
+      [[ "$path" == /* ]] && { warn "class 'user-conf' must be home-relative, skipping: $path"; return 0; }
+      reset_user_conf "$path" && HOME_TOUCHED=1 ;;
+    *) warn "unknown class '$class' for $path (skipped)" ;;
+  esac
+}
+
+# The `style` module's per-USER config is not a manifest file but the theme
+# selection pointer (~/.config/w/theme/active, set by `w-theme set`). Its default =
+# follow the system theme, so the reset = drop the pin + re-render — exactly what
+# `w-theme reset` already does (single source of truth). w-reset backs the pin up
+# first, then delegates. The manifest's SYSTEM rows (active-theme symlink, renderer,
+# theme catalog) are handled by the normal loop under root.
+reset_style_user() {
+  local pin="$TARGET_HOME/.config/w/theme/active"
+  backup_path "$pin"                   # no-op if the user never pinned a theme
+  info "Resetting this user's theme to the system default (w-theme reset)..."
+  as_user w-theme reset || warn "w-theme reset failed"
+  THEME_HANDLED=1
+}
+
+reset_module() {                       # <module|bundle> [file]
+  local module="$1" file="${2:-}" manifest
+  set_sources "$module" || exit 1
+  manifest="$MANIFEST_PATH"
+  info "Resetting '$module' to W default (current copies backed up first)..."
+  local path class
+  while read -r path class _ || [[ -n "$path" ]]; do
+    [[ -z "$path" || "$path" == \#* ]] && continue
+    # `override` is /etc/w admin-state, a concept only the base system has — a
+    # bundle declaring it would silently fall through to the vendor lookup and
+    # find nothing useful, so name it instead.
+    if [[ "$class" == override && "$SRC_HOME" != "$SKEL" ]]; then
+      warn "class 'override' is not a bundle concept ($path) — skipped"; continue
+    fi
+    reset_entry "$path" "$class" "$file"
+  done < "$manifest"
+
+  # power / nightlight: their manifests hold the CONFIG, but what the machine and
+  # the session actually obey is RENDERED from it — hypridle.conf, the logind
+  # drop-in, hyprsunset.conf — and none of those is a manifest path (they are
+  # generated output, deliberately untracked). Dropping the admin deviations alone
+  # therefore left the OLD policy in force until somebody happened to run an
+  # apply: "reset to the W default" that changes nothing you can observe. Same
+  # rule as sync-map's, one level up — copying a file is not activating it.
+  # Rendered for the account this reset acted on, not for whoever typed sudo.
+  if [[ -z "$file" && $EUID -eq 0 ]]; then
+    case "$module" in
+      power)
+        info "Re-rendering power policy (w-power apply)..."
+        w-power --user "$TARGET_USER" apply || warn "w-power apply failed" ;;
+      nightlight)
+        info "Re-applying night light (w-nightlight apply)..."
+        w-nightlight --user "$TARGET_USER" apply || warn "w-nightlight apply failed" ;;
+      session)
+        # Nothing is rendered here, but the same rule applies one step over: the
+        # snapshot daemon read its settings when it started, so dropping the
+        # config leaves the OLD mode in force inside the running session. A
+        # restart re-reads it — and `w-session daemon` exits 0 by itself when the
+        # restored default (MODE=off) says there is nothing to record, so this
+        # single verb covers both directions. Best-effort: an account with no
+        # live session has no user manager to talk to.
+        info "Restarting the session-memory daemon..."
+        if [[ -d /run/systemd/system ]]; then
+          systemctl --user --machine="${TARGET_USER}@.host" restart w-session-save.service 2>/dev/null \
+            || warn "could not restart w-session-save for $TARGET_USER (no live session?)"
+        fi ;;
+    esac
+  fi
+
+  # style: user theme selection (outside the manifest) + system re-render.
+  if [[ "$module" == style && -z "$file" ]]; then
+    reset_style_user
+    # Root also reset the system pointer/renderer/catalog above — re-render the
+    # system-scope artifacts (greeter, grub, plymouth, skel) from the default theme.
+    # NB: keep this an `if` (not `[[…]] && …`) so a non-root run returns 0 here and
+    # doesn't trip `set -e` before the caller reaches finish().
+    if [[ $EUID -eq 0 ]]; then
+      info "Re-rendering system theme (w-style apply all)..."
+      w-style apply all || warn "w-style apply all failed"
+    fi
+  fi
+}
+
+# Re-render theme artifacts (not shipped in skel) as the target user.
+rerender_theme() {
+  command -v w-style >/dev/null || return 0
+  info "Re-rendering theme artifacts (w-style apply user)..."
+  if [[ $EUID -eq 0 ]]; then
+    runuser -u "$TARGET_USER" -- w-style apply user || warn "w-style apply user failed"
+  else
+    w-style apply user || warn "w-style apply user failed"
+  fi
+}
+
+# ── Sub-commands ─────────────────────────────────────────────────────────────
+cmd_list() {
+  local m b any=0
+  echo "Modules with a reset manifest:"
+  for m in "$MANIFEST_DIR"/*.manifest; do
+    [[ -e "$m" ]] || { echo "  (none)"; break; }
+    any=1
+    echo "  $(basename "$m" .manifest)"
+  done
+  # Installed bundles are resettable by name too, from their own staged tree.
+  local first=1
+  while read -r b; do
+    [[ -z "$b" ]] && continue
+    if [[ $first -eq 1 ]]; then echo; echo "Installed W-Pack bundles (same syntax):"; first=0; fi
+    echo "  $b"
+  done < <(installed_bundles_with_manifest)
+  return 0
+}
+
+# ── Drift audit ──────────────────────────────────────────────────────────────
+# Which W-managed files this machine no longer matches. `w-reset <module>` answers
+# "put it back"; this answers "what would that change", which is the question you
+# have BEFORE you overwrite anything — and the one an update needs answered, since
+# a hand-edited managed file is silently replaced on the next apply.
+#
+# The pristine source is the same one a reset restores from, per class:
+#   user/managed under home → /etc/skel        managed system path → the checkout
+#   override (/etc/w admin state) → not drift by definition: those files are MEANT
+#   to differ, they hold this machine's deviations. Reported separately, as facts.
+#
+# Site layers (/etc/w/site-defaults.d, /etc/w/policy.d) are deliberately absent:
+# they are not local state at all — the fleet owns them, `apply.sh --site` mirrors
+# them, and a local "reset" of a policy would be meaningless.
+drift_one() { # <src> <dst>  → 0 = same/unknown, 1 = drifted
+  [[ -f "$1" && -f "$2" ]] || return 0
+  cmp -s "$1" "$2" && return 0
+  return 1
+}
+
+DRIFT_N=0; DRIFT_OWN=0; DRIFT_OVER=0; DRIFT_USERCONF=0
+
+# Audit one manifest. SRC_HOME/SRC_SYS must already point at its pristine roots,
+# so modules and bundles run through identical code.
+check_manifest() {                     # <name> <manifest>
+  local module="$1" m="$2" path class src
+  while IFS=$'\t' read -r path class || [[ -n "$path" ]]; do
+    [[ -n "$path" && "$path" != \#* ]] || continue
+    [[ "$path" == */ ]] && continue                     # whole dirs: not a byte compare
+    case "$class" in
+      override)
+        [[ -s "$path" ]] || continue
+        # Any assignment at all IS the machine's deviation set — expected, not drift.
+        grep -qE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=' "$path" 2>/dev/null || continue
+        echo "  [deviation] $path ($module) — admin state, preserved by updates"
+        DRIFT_OVER=$((DRIFT_OVER + 1)) ;;
+      user-conf)
+        [[ "$path" == /* ]] && continue
+        path="$TARGET_HOME/$path"
+        [[ -s "$path" ]] || continue
+        echo "  [personal]  $path ($module) — your own settings; 'w-reset $module' erases them"
+        DRIFT_USERCONF=$((DRIFT_USERCONF + 1)) ;;
+      managed|user)
+        if [[ "$path" == /* ]]; then src="$SRC_SYS$path"
+        else src="$SRC_HOME/$path"; path="$TARGET_HOME/$path"; fi
+        drift_one "$src" "$path" && continue
+        # The two classes differ in exactly the way that matters here: a
+        # `managed` file is overwritten by the next update (so a local edit is a
+        # loss waiting to happen), while a `user` file is seeded once and then
+        # left alone forever — editing it is what it is FOR. Reporting both as
+        # "drift about to be overwritten" would cry wolf about every customised
+        # dotfile and bury the one line that needs acting on.
+        if [[ "$class" == managed ]]; then
+          echo "  [drifted]    $path ($module) — W-managed, the next update overwrites it"
+          DRIFT_N=$((DRIFT_N + 1))
+        else
+          echo "  [customised] $path ($module) — your own copy; updates leave it alone"
+          DRIFT_OWN=$((DRIFT_OWN + 1))
+        fi ;;
+    esac
+  done < "$m"
+}
+
+cmd_check() { # <user>
+  resolve_user "$1"
+  local m b any=0
+  echo "Drift vs the W defaults (nothing is changed by this command):"
+  for m in "$MANIFEST_DIR"/*.manifest; do
+    [[ -e "$m" ]] || break
+    any=1
+    SRC_HOME="$SKEL"; SRC_SYS="$REPO/rootfs"
+    check_manifest "$(basename "$m" .manifest)" "$m"
+  done
+  # Installed bundles, from their own staged trees.
+  while read -r b; do
+    [[ -z "$b" ]] && continue
+    any=1
+    SRC_HOME="$PACKS_DIR/$b/config/skel"; SRC_SYS="$PACKS_DIR/$b/config/root"
+    check_manifest "$b" "$(bundle_manifest_of "$b")"
+  done < <(installed_bundles_with_manifest)
+  [[ $any -eq 1 ]] || { echo "  (no manifests installed)"; return 0; }
+  echo
+  echo "  $DRIFT_N managed file(s) edited locally, $DRIFT_OWN customised user file(s), $DRIFT_OVER admin deviation(s), $DRIFT_USERCONF personal setting(s)."
+  (( DRIFT_N > 0 )) && echo "  Only the [drifted] ones are at risk — 'w-reset <module>' puts them back now, on purpose."
+  [[ -d "$REPO/rootfs" ]] || warn "no local checkout ($REPO) — system paths could not be compared (stable client)."
+  return 0
+}
+
+cmd_status() {
+  echo "Pristine sources:"
+  echo "  home (/etc/skel)          : $([[ -d $SKEL ]] && echo available || echo MISSING)"
+  echo "  overrides ($VENDOR): $([[ -d $VENDOR ]] && echo available || echo 'absent (run: sudo apply.sh --reset)')"
+  echo "  system ($REPO/rootfs)  : $([[ -d $REPO/rootfs ]] && echo available || echo 'absent (edge source not staged / stable client)')"
+}
+
+# Re-render theme artifacts unless the style delegate already did, then wrap up:
+# hand the backups to their owner, report where they landed, and nudge for sudo if
+# system paths were skipped for lack of root.
+finish() {
+  [[ $HOME_TOUCHED -eq 1 && $THEME_HANDLED -eq 0 ]] && rerender_theme
+  finalize_backup
+  info "Done."; backup_summary
+  [[ $SYS_SKIPPED -gt 0 ]] &&
+    warn "$SYS_SKIPPED system/override path(s) skipped (need root) — rerun with sudo to reset them too."
+  return 0
+}
+
+cmd_all() {
+  resolve_user "$1"; init_backup
+  local m b
+  for m in "$MANIFEST_DIR"/*.manifest; do
+    [[ -e "$m" ]] || break
+    reset_module "$(basename "$m" .manifest)"
+  done
+  # Installed bundles own config too — "reset everything" that skipped them would
+  # leave a hand-broken lazygit or Zed config in place and claim to be done.
+  while read -r b; do
+    [[ -z "$b" ]] && continue
+    reset_module "$b"
+  done < <(installed_bundles_with_manifest)
+  finish
+}
+
+cmd_module() {                         # <module> [file] <user>
+  local module="$1" file="$2" user="$3"
+  resolve_user "$user"; init_backup
+  reset_module "$module" "$file"
+  finish
+}
+
+# ── Dispatch ─────────────────────────────────────────────────────────────────
+# Parse a trailing `--user <name>` from anywhere in the args.
+ARG_USER=""; POS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --user) ARG_USER="${2:-}"; [[ -n "$ARG_USER" ]] || { err "--user needs a name"; exit 2; }; shift 2 ;;
+    *) POS+=("$1"); shift ;;
+  esac
+done
+set -- "${POS[@]:-}"
+
+case "${1:-}" in
+  --all)          cmd_all "$ARG_USER" ;;
+  list)           cmd_list ;;
+  check)          cmd_check "$ARG_USER" ;;
+  status)         cmd_status ;;
+  help|-h|--help) usage ;;
+  "")             usage >&2; exit 2 ;;
+  *)              cmd_module "$1" "${2:-}" "$ARG_USER" ;;
+esac

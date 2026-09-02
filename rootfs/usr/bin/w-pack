@@ -1,0 +1,726 @@
+#!/usr/bin/env bash
+# w-pack — W Linux optional software bundles (W-Packs).
+#
+# Second install layer on top of the base `apply.sh`: the base is must-have (the
+# session, theme, shell, security — always installed); packs are opt-in bundles by
+# DIRECTION (containers, graphics, office, gaming…) that not everyone needs. See
+# packs.md. This is the user-facing orchestrator; a bundle is self-contained under
+# its own directory and ships everything it needs (packages, config, w-style axes,
+# AI knowledge, setup):
+#
+#   /usr/share/w/packs/<bundle>/
+#     meta.conf                      # NAME/DESC/SCOPE/DEPS/WEIGHT/INSTALLER (+ i18n key)
+#                                     # INSTALLER=on|off (default on): off hides the
+#                                     # bundle from the TUI installer checklist ONLY —
+#                                     # it still installs/lists/statuses normally via
+#                                     # w-pack/Hub/AI tools (userspace-only bundles).
+#     pkgs.txt                       # packages (repo + AUR), one per line, # comments
+#     setup.sh                       # post-install tuning (idempotent), like an apply module
+#     manifest                       # config ownership (TSV: <path>\t<class>)
+#     config/skel/<home-rel>         # source for home-relative manifest paths
+#     config/root/<abs>              # source for absolute (system) manifest paths
+#     wstyle/<band>-<token>/module.sh# w-style axis (deployed to w-style modules.d/)
+#     ai/SKILL.md                    # AI knowledge (curated into /usr/share/w/ai/skills/)
+#     quadlet/                       # optional systemd quadlet templates
+#
+# The bundle tree is staged to /usr/share/w/packs by `apply.sh --packs` (edge) or,
+# on stable, by the w-system package — so w-pack works offline on a client without
+# the repo.
+#
+# ── Two layers, two states ───────────────────────────────────────────────────
+# A bundle is installed ONCE per machine but is used per account, so it splits in
+# two. The split is not a new declaration — it is the shape the tree already had:
+#
+#   MACHINE layer   packages, absolute manifest paths (/etc/…), w-style axes, the
+#                   AI skill, `setup.sh`.  Root, once per machine.
+#                   State: /var/lib/w/packs.json
+#   PER-USER layer  home-relative manifest paths, `setup-user.sh` (uv tools in
+#                   ~/.local/bin, per-user units, home subvolumes).  Runs for ONE
+#                   account, rootless when that account asks for itself.
+#                   State: ~/.local/state/w/packs.json
+#
+# Two states because the object is two objects. Before this split the state was
+# machine-wide only, so a second account was told "installed" while none of the
+# bundle's user-side tools existed for them — the state lied (update-system.md
+# phase 5 fixed the same disease for base config; this is its W-Packs half).
+#
+# Deliberately NOT done: setting the per-user layer up for every account on
+# install. It costs disk and network and is a decision a non-admin never asked
+# for. The catch-up is explicit and rootless: `w-pack setup <bundle>`.
+#
+# v1 = list + install + setup + status + refresh. `remove` is a later phase and
+# needs a declared inverse per bundle (teardown.sh / teardown-user.sh — packs.md
+# phase 7); reverting a bundle's CONFIG already works today via `w-reset <bundle>`.
+
+set -euo pipefail
+
+# ── Constants ────────────────────────────────────────────────────────────────
+PACKS_DIR="/usr/share/w/packs"                         # deployed bundle tree
+STATE="/var/lib/w/packs.json"                          # machine layer state
+USER_STATE_REL=".local/state/w/packs.json"             # per-user layer state (in $HOME)
+WSTYLE_DROPIN="/usr/lib/w/w-style/modules.d"     # w-style axis drop-in root
+AI_SKILLS="/usr/share/w/ai/skills"                     # curated AI knowledge
+DEPLOY_SDK="/usr/lib/w/lib/deploy.sh"            # seed_user_file (config-ownership SDK)
+
+err()  { echo -e "\033[1;31mw-pack:\033[0m $*" >&2; }
+info() { echo -e "\033[1;35m==>\033[0m $*"; }
+warn() { echo -e "\033[1;33mWARN:\033[0m $*" >&2; }
+
+# shellcheck source=../lib/w/w-priv-lib.sh
+source /usr/lib/w/w-priv-lib.sh
+# The package-transaction seam (installer.md §5 layer 2). A bundle install pulls
+# tens of packages in one go and is exactly the long transaction a stalled mirror
+# kills; before Ф.3 this script could not reach the seam at all (it lives in
+# scripts/install/lib, which is not on an installed machine) and ran bare pacman.
+# shellcheck source=../lib/w/w-pac-lib.sh
+source /usr/lib/w/w-pac-lib.sh
+
+# ── Usage ────────────────────────────────────────────────────────────────────
+# NB: the heredoc delimiter is deliberately UNQUOTED so $PACKS_DIR/$STATE below
+# expand to the real paths — which means backticks in this text are command
+# substitution and MUST stay escaped. An unescaped `w-sync update` here used to
+# run the updater every time someone typed `w-pack` with no arguments.
+usage() {
+  cat <<EOF
+Usage: w-pack <command> [bundle] [--user <name>] [--porcelain]
+
+Info: Install and inspect optional W software bundles (packs).
+
+Optional software bundles (W-Packs) — opt-in add-ons on top of the base system.
+A bundle has a MACHINE layer (packages, system config, services — installed once,
+needs root) and a PER-USER layer (its tools and config in your home).
+
+Commands:
+  list                 List available bundles and their state
+  install <bundle>     Install a bundle: machine layer, then your per-user layer
+  setup <bundle>       Set up an already-installed bundle for YOUR account
+                       (no root, no polkit — it only writes your own home)
+  refresh [<bundle>]   Re-apply installed bundles from the staged tree, WITHOUT
+                       touching packages (config + w-style + AI skill + setup)
+  status [<bundle>]    Show what is installed (all, or one bundle)
+  help                 Show this help
+
+Options:
+  --user <name>        Act for another account (root only; default: the invoking
+                       user, or SUDO_USER / the primary uid-1000 user)
+  --porcelain          Machine-readable \`list\`, one bundle per line:
+                       <name> TAB <machine:yes|no> TAB <user:yes|no|n/a> TAB <desc>
+
+Notes:
+  install and refresh require root (packages + system paths); setup does not.
+  Bundles are self-contained under $PACKS_DIR; machine state is recorded in
+  $STATE, your own layer in ~/$USER_STATE_REL.
+  A bundle someone else installed is NOT set up for you automatically — that
+  would spend your disk and network on a choice you never made. \`w-pack list\`
+  says so plainly, and \`w-pack setup <bundle>\` is the one command that fixes it.
+  refresh is what an update calls: \`w-sync update\` runs it after an apply that
+  touched the bundle tree, so a bundle's own idempotent setup (marker regions,
+  drop-ins, legacy-layout cleanups) is replayed on every machine instead of
+  waiting for someone to reinstall the bundle by hand. It replays the per-user
+  layer for every account that already has it — and only those.
+  remove is a later phase (shared pacman deps make automatic removal risky). To
+  put a bundle's config back to the W default now, use \`w-reset <bundle>\`.
+
+Exit codes:
+  0  Success
+  1  Runtime error (unknown bundle, missing source, privilege)
+  2  Usage error
+
+Examples:
+  w-pack list
+  sudo w-pack install containers
+  w-pack setup ai-extra              # catch my own account up, no sudo
+  sudo w-pack refresh
+  w-pack status
+EOF
+}
+
+# ── Prerequisites ────────────────────────────────────────────────────────────
+# "run it with sudo" is only useful advice for someone who has sudo — for a
+# non-admin it just trades this message for a sudoers refusal, so name the real
+# reason instead. Read-only commands (list/status) never come through here.
+require_root() {
+  if [[ $EUID -eq 0 ]]; then return 0; fi
+  if ! w_is_admin; then err "$(w_admin_msg "'w-pack $1'")"; exit 1; fi
+  err "$1 requires root (sudo)"; exit 1
+}
+require_jq()   { command -v jq >/dev/null || { err "jq not found (installed by the shell module)"; exit 1; }; }
+
+# Whose per-user layer are we acting on? Mirrors w-reset: an explicit --user
+# (root only), else the invoker when unprivileged, else SUDO_USER, else the
+# primary uid-1000 account.
+#
+# Never exits, so the read-only commands can degrade to "no per-user dimension" on
+# an account-less machine instead of dying. Two failure codes, so the caller knows
+# whether the user has already been told why:
+#   1  nothing to resolve (no human account at all) — silent, caller decides
+#   2  refused, and the reason is already on stderr — caller must not add noise
+TARGET_USER=""; TARGET_HOME=""
+resolve_user() {
+  local u="${1:-}"
+  if [[ -z "$u" ]]; then
+    if [[ $EUID -ne 0 ]]; then u="$(id -un)"
+    elif [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != root ]]; then u="$SUDO_USER"
+    else u="$(awk -F: '$3>=1000 && $3<65534 {print $1; exit}' /etc/passwd)"; fi
+  fi
+  [[ -n "$u" ]] || return 1
+  local h; h="$(getent passwd "$u" | cut -d: -f6)"
+  [[ -n "$h" ]] || { err "unknown user: $u"; return 2; }
+  # Someone else's home is someone else's business — that is root's call to make.
+  if [[ $EUID -ne 0 && "$u" != "$(id -un)" ]]; then
+    err "acting on $u's account requires root (sudo)"; return 2
+  fi
+  TARGET_USER="$u"; TARGET_HOME="$h"
+}
+
+# Commands that WRITE a per-user layer cannot proceed without knowing whose it is.
+require_user() {
+  local rc=0; resolve_user "$ARG_USER" || rc=$?
+  [[ $rc -eq 0 ]] && return 0
+  [[ $rc -eq 1 ]] && err "could not determine a target user"
+  exit 1
+}
+
+# The deploy SDK carries seed_user_file (seed-if-absent) and w_home_users (who
+# counts as a human account of this machine) — the same definitions the base
+# system's modules use, so bundles cannot drift into a second answer.
+SDK_LOADED=0
+need_sdk() {
+  [[ $SDK_LOADED -eq 1 ]] && return 0
+  [[ -f "$DEPLOY_SDK" ]] || { err "deploy SDK missing: $DEPLOY_SDK (run apply.sh --packs)"; return 1; }
+  # shellcheck source=/dev/null
+  source "$DEPLOY_SDK"
+  SDK_LOADED=1
+}
+
+# ── Registry ─────────────────────────────────────────────────────────────────
+bundle_dir()    { echo "$PACKS_DIR/$1"; }
+bundle_exists() { [[ -f "$PACKS_DIR/$1/meta.conf" ]]; }
+
+# Every bundle name (a dir with a meta.conf) in deterministic order.
+list_bundles() {
+  local d
+  for d in "$PACKS_DIR"/*/; do
+    [[ -f "$d/meta.conf" ]] || continue
+    basename "$d"
+  done | LC_ALL=C sort
+}
+
+# Read one field from a bundle's meta.conf in an isolated subshell (so its shell
+# assignments never leak into ours). Echoes the value ('' if unset/missing).
+meta_field() {
+  local name="$1" field="$2" conf="$PACKS_DIR/$1/meta.conf"
+  [[ -f "$conf" ]] || return 0
+  ( set +u; source "$conf" 2>/dev/null; printf '%s' "${!field:-}" )
+}
+
+# ── State (packs.json) ───────────────────────────────────────────────────────
+# packs.json is system-scope install state with no secrets (bundle names, install
+# timestamps, weight). It must be world-readable: the read consumers — w-mcp's
+# user-scope w_pack_* tools, the future Quickshell menu, w-sync — all need it, and
+# w-mcp runs as the ordinary user. Keep it 0644 on every write (mktemp below is
+# 0600, so re-assert after each mv).
+state_init() {
+  [[ -f "$STATE" ]] && return 0
+  install -d -m 0755 "$(dirname "$STATE")"
+  echo '{"bundles":{}}' > "$STATE"
+  chmod 0644 "$STATE"
+}
+is_installed()   { require_jq; [[ -f "$STATE" ]] && [[ "$(jq -r --arg b "$1" '.bundles[$b] // empty' "$STATE")" != "" ]]; }
+record_install() {
+  require_jq; state_init
+  local tmp; tmp="$(mktemp)"
+  jq --arg b "$1" --arg at "$(date -Is)" --arg w "$(meta_field "$1" WEIGHT)" \
+     '.bundles[$b] = {installed_at:$at, weight:$w}' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
+  chmod 0644 "$STATE"   # mktemp made $tmp 0600; state must stay world-readable
+}
+
+# ── Per-user state (~/.local/state/w/packs.json) ─────────────────────────────
+# The machine file above answers "is this bundle on this machine"; this one
+# answers "has THIS account been through its per-user layer". Two files because
+# they are two facts about two different objects — w-scripts.md's rule is to
+# place state by the object, not by whoever happened to run the command.
+#
+# It also has to live here for a plain reason: a non-admin must be able to set a
+# bundle up for themselves, and they cannot write /var/lib/w.
+#
+# Written by the account's owner, or by root on their behalf (install/refresh) —
+# in which case every directory created on the way is handed to them, or the next
+# user-scope write into ~/.local/state hits a root-owned parent.
+user_state_of() { echo "$1/$USER_STATE_REL"; }          # <home>
+
+user_state_init() {                                     # <user> <home>
+  local u="$1" home="$2" part acc
+  for part in .local .local/state .local/state/w; do
+    acc="$home/$part"
+    if [[ $EUID -eq 0 ]]; then install -d -o "$u" -g "$u" "$acc"
+    else install -d "$acc"; fi
+  done
+  local f; f="$(user_state_of "$home")"
+  [[ -f "$f" ]] && return 0
+  echo '{"bundles":{}}' > "$f"
+  if [[ $EUID -eq 0 ]]; then chown "$u:$u" "$f"; fi
+  chmod 0644 "$f"
+}
+
+# Has <home>'s account been through <bundle>'s per-user layer?
+user_has() {                                            # <bundle> <home>
+  local f; f="$(user_state_of "$2")"
+  [[ -r "$f" ]] || return 1
+  [[ "$(jq -r --arg b "$1" '.bundles[$b] // empty' "$f" 2>/dev/null)" != "" ]]
+}
+
+user_record() {                                         # <bundle> <user> <home>
+  require_jq; user_state_init "$2" "$3"
+  local f tmp; f="$(user_state_of "$3")"; tmp="$(mktemp)"
+  jq --arg b "$1" --arg at "$(date -Is)" '.bundles[$b] = {setup_at:$at}' "$f" > "$tmp" && mv "$tmp" "$f"
+  if [[ $EUID -eq 0 ]]; then chown "$2:$2" "$f"; fi
+  chmod 0644 "$f"      # mktemp made $tmp 0600 — the very trap that once made
+                       # packs.json lie "not installed" to the user-scope AI tools
+}
+
+# Does this bundle have a per-user layer at all? A bundle that is purely
+# machine-wide (no home-relative manifest rows, no setup-user.sh) must never
+# report a per-user state or nag anyone to "set it up" — there is nothing to set.
+bundle_has_user_layer() {
+  local name="$1" bdir="$PACKS_DIR/$1" path class
+  [[ -f "$bdir/setup-user.sh" ]] && return 0
+  [[ -f "$bdir/manifest" ]] || return 1
+  while read -r path class _ || [[ -n "$path" ]]; do
+    [[ -z "$path" || "$path" == \#* ]] && continue
+    [[ "$path" == /* ]] || return 0                     # a home-relative row
+  done < "$bdir/manifest"
+  return 1
+}
+
+# ── Package install (yay: repo + AUR in one pass, as the unprivileged build user) ─
+build_user() { awk -F: '$3>=1000 && $3<65534 {print $1; exit}' /etc/passwd; }
+
+# Run yay as the build user with a TEMPORARY passwordless-sudo grant (revoked on
+# return), same mechanism apply.sh's run_yay uses: yay shells out to `sudo pacman`
+# internally and would otherwise block forever on the password-gated wheel policy.
+pack_yay() {
+  local bu; bu="$(build_user)"
+  [[ -n "$bu" ]] || { err "no unprivileged build user to install packages"; return 1; }
+  local sudoers="/etc/sudoers.d/zzzz-w-pack-build"
+  echo "$bu ALL=(ALL) NOPASSWD: ALL" > "$sudoers"
+  chmod 440 "$sudoers"
+  visudo -cf "$sudoers" >/dev/null || { rm -f "$sudoers"; err "generated build sudoers invalid"; return 1; }
+  local rc=0
+  sudo -u "$bu" -H yay -S --needed --noconfirm --removemake --answerdiff None --answerclean None "$@" || rc=$?
+  rm -f "$sudoers"
+  return $rc
+}
+
+install_pkgs() {
+  local name="$1" bdir; bdir="$(bundle_dir "$name")"
+  local list="$bdir/pkgs.txt"
+  [[ -f "$list" ]] || { info "No pkgs.txt for '$name', skipping packages."; return 0; }
+  local pkgs
+  pkgs=$(sed 's/#.*//' "$list" | grep -v '^\s*$' | tr '\n' ' ') || true
+  [[ -n "${pkgs// }" ]] || return 0
+  info "Installing packages for '$name': $pkgs"
+  if command -v yay >/dev/null; then
+    pack_yay $pkgs || { err "package install failed for '$name'"; return 1; }
+  else
+    warn "yay not found — installing repo packages only via pacman (AUR skipped)"
+    # shellcheck disable=SC2086  # word-splitting is intended: $pkgs is a list
+    w_pac -S --needed --noconfirm $pkgs || { err "package install failed for '$name'"; return 1; }
+  fi
+}
+
+# ── Config deploy (bundle manifest → home/system, reusing the deploy SDK) ─────
+# Manifest TSV: <path>\t<class>. class:
+#   user    — seed-if-absent (survives user edits on re-install)
+#   managed — force overwrite (W owns it). On an absolute path, user is treated as
+#             managed (no per-user home for system files).
+# A trailing '/' marks a directory (deployed as a tree).
+#
+# The path SHAPE is what splits the two layers, and it always did — an absolute
+# path is machine-wide by definition, a home-relative one belongs to exactly one
+# account. So the split needed no new field in meta.conf or class in the manifest:
+# it only needed the two halves to stop being deployed in the same breath.
+
+# Machine layer: absolute paths, sourced from config/root<path>.
+deploy_configs_system() {
+  local name="$1" bdir; bdir="$(bundle_dir "$name")"
+  local manifest="$bdir/manifest"
+  [[ -f "$manifest" ]] || { info "No manifest for '$name', skipping system config."; return 0; }
+
+  info "Deploying '$name' system config from manifest..."
+  local path class
+  while read -r path class _ || [[ -n "$path" ]]; do
+    [[ -z "$path" || "$path" == \#* ]] && continue
+    [[ "$path" == /* ]] || continue
+    [[ "$class" == user ]] && warn "class 'user' on absolute path $path — treating as managed"
+    deploy_managed "$bdir/config/root$path" "$path" root
+  done < "$manifest"
+}
+
+# Per-user layer: home-relative paths, sourced from config/skel/<path>, into ONE
+# account's home. Runs as root (install/refresh) or as that account itself
+# (`w-pack setup`) — `install -o/-g` and `rsync --chown` both accept naming
+# yourself as the owner, so the same SDK calls serve both.
+deploy_configs_user() {                                 # <bundle> <user> <home>
+  local name="$1" u="$2" home="$3" bdir; bdir="$(bundle_dir "$name")"
+  local manifest="$bdir/manifest"
+  [[ -f "$manifest" ]] || return 0
+  need_sdk || return 1
+
+  info "Deploying '$name' home config for $u..."
+  local path class src dst
+  while read -r path class _ || [[ -n "$path" ]]; do
+    [[ -z "$path" || "$path" == \#* ]] && continue
+    [[ "$path" == /* ]] && continue
+    src="$bdir/config/skel/$path"; dst="$home/$path"
+    if [[ "$class" == user ]]; then
+      seed_user_file "$src" "$dst" "$u" "$home"         # SDK: seed-if-absent
+    else
+      deploy_managed "$src" "$dst" "$u"
+    fi
+  done < "$manifest"
+}
+
+# Force-deploy a file or directory (managed class): W owns it, overwrite in place.
+deploy_managed() {
+  local src="$1" dst="$2" owner="$3"
+  if [[ "$dst" == */ ]]; then
+    [[ -d "${src%/}" ]] || { warn "source dir missing, skipping: $src"; return 0; }
+    install -d -o "$owner" -g "$owner" "${dst%/}"
+    rsync -a --chown="$owner:$owner" "${src%/}/" "$dst"
+  else
+    [[ -f "$src" ]] || { warn "source missing, skipping: $src"; return 0; }
+    install -Dm644 -o "$owner" -g "$owner" "$src" "$dst"
+  fi
+}
+
+# ── w-style axes (bundle wstyle/ → w-style drop-in root) ──────────────────────
+deploy_wstyle() {
+  local name="$1" bdir; bdir="$(bundle_dir "$name")"
+  local wdir="$bdir/wstyle"
+  compgen -G "$wdir/*/module.sh" >/dev/null 2>&1 || return 0
+  info "Deploying '$name' w-style axes into $WSTYLE_DROPIN..."
+  install -d "$WSTYLE_DROPIN"
+  rsync -a --chown=root:root "$wdir/" "$WSTYLE_DROPIN/"
+  # Render each freshly deployed axis so the bundle's UI is themed immediately.
+  # Root render = skel + system channels; per-user home re-renders at next login
+  # (or `w-theme set`). Best-effort — a failing axis must not fail the install.
+  local d token
+  for d in "$wdir"/*/; do
+    [[ -d "$d" ]] || continue
+    token="$(basename "$d")"; token="${token#*-}"
+    w-style apply "$token" || warn "w-style apply $token failed (renders at next login)"
+  done
+}
+
+# ── AI knowledge (bundle ai/SKILL.md → curated skills dir) ────────────────────
+deploy_ai() {
+  local name="$1" bdir; bdir="$(bundle_dir "$name")"
+  local skill="$bdir/ai/SKILL.md"
+  [[ -f "$skill" ]] || return 0
+  info "Curating '$name' AI knowledge into $AI_SKILLS/$name..."
+  install -Dm644 "$skill" "$AI_SKILLS/$name/SKILL.md"
+}
+
+# ── setup.sh / setup-user.sh (bundle post-install tuning, idempotent) ────────
+# Two scripts because there are two layers. setup.sh tunes the MACHINE (services,
+# system paths, package variants) and gets no user at all — it used to receive
+# PACK_USER and that is precisely how per-account work ended up buried in a
+# machine-scope step, reaching whichever account happened to run the install.
+run_setup() {
+  local name="$1" bdir; bdir="$(bundle_dir "$name")"
+  local setup="$bdir/setup.sh"
+  [[ -f "$setup" ]] || return 0
+  info "Running '$name' machine setup..."
+  BUNDLE_NAME="$name" BUNDLE_DIR="$bdir" \
+    bash "$setup" || { err "setup failed for '$name'"; return 1; }
+}
+
+# setup-user.sh tunes ONE account. It runs with whatever privileges the caller
+# has — root during install/refresh, the account itself during `w-pack setup` —
+# and is told which via PACK_AS_ROOT, because a few genuinely per-user steps are
+# still root's to take (usermod --add-subuids). The contract is that a bundle
+# degrades those with a named warning rather than failing or, worse, skipping
+# silently; everything else works either way.
+run_setup_user() {                                      # <bundle> <user> <home>
+  local name="$1" u="$2" home="$3" bdir; bdir="$(bundle_dir "$name")"
+  local setup="$bdir/setup-user.sh"
+  [[ -f "$setup" ]] || return 0
+  local as_root=0; [[ $EUID -eq 0 ]] && as_root=1
+  info "Running '$name' user setup for $u..."
+  BUNDLE_NAME="$name" BUNDLE_DIR="$bdir" PACK_USER="$u" PACK_HOME="$home" \
+    PACK_AS_ROOT="$as_root" bash "$setup" || { err "user setup failed for '$name' ($u)"; return 1; }
+}
+
+# The per-user layer end to end, for one account. Recorded only on success, so a
+# half-finished catch-up keeps saying "not set up" instead of quietly claiming to
+# be done — the same rule the machine layer follows with packs.json.
+setup_user_layer() {                                    # <bundle> <user> <home>
+  deploy_configs_user "$1" "$2" "$3"
+  run_setup_user      "$1" "$2" "$3"
+  user_record         "$1" "$2" "$3"
+}
+
+# ── install ──────────────────────────────────────────────────────────────────
+# Recursion guard: a bundle lists prerequisite bundles in meta.conf DEPS (space
+# separated); we install missing ones first, tracking the in-flight set to break
+# cycles.
+INSTALLING=()
+install_bundle() {
+  local name="$1" d
+  bundle_exists "$name" || { err "unknown bundle: $name (see 'w-pack list')"; exit 1; }
+
+  if is_installed "$name"; then info "'$name' already installed — re-applying (idempotent)."; fi
+
+  # Cycle guard.
+  for d in "${INSTALLING[@]}"; do
+    [[ "$d" == "$name" ]] && { warn "dependency cycle at '$name' — skipping"; return 0; }
+  done
+  INSTALLING+=("$name")
+
+  # Dependencies first.
+  local dep deps; deps="$(meta_field "$name" DEPS)"
+  for dep in $deps; do
+    is_installed "$dep" && continue
+    info "'$name' depends on '$dep' — installing it first."
+    install_bundle "$dep"
+  done
+
+  info "Installing bundle '$name' ($(meta_field "$name" DESC))..."
+  install_pkgs          "$name"
+  deploy_configs_system "$name"
+  deploy_wstyle         "$name"
+  deploy_ai             "$name"
+  run_setup             "$name"
+  record_install        "$name"
+
+  # The machine layer is now genuinely in place, and it is recorded BEFORE the
+  # per-user layer runs on purpose: the user half wants the network (uv tools,
+  # model pulls) and may legitimately fail on a machine that is offline right
+  # now. Losing the record of packages and services that really did install —
+  # and re-doing all of it on the next attempt — would be the worse trade.
+  if bundle_has_user_layer "$name"; then
+    setup_user_layer "$name" "$TARGET_USER" "$TARGET_HOME" \
+      || warn "'$name' is installed, but its setup for $TARGET_USER did not finish — retry with: w-pack setup $name"
+  fi
+  info "Bundle '$name' installed."
+}
+
+cmd_install() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || { err "install needs a bundle name"; usage >&2; exit 2; }
+  require_root "install"
+  require_jq
+  require_user
+  install_bundle "$name"
+  info "Done."
+}
+
+# ── setup (per-user catch-up) ────────────────────────────────────────────────
+# The one command a non-admin can run to get a bundle someone else installed.
+# Deliberately ungated: it writes nothing outside the caller's own home, so there
+# is no privilege to ask for and no polkit prompt to answer.
+cmd_setup() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || { err "setup needs a bundle name"; usage >&2; exit 2; }
+  require_jq
+  bundle_exists "$name" || { err "unknown bundle: $name (see 'w-pack list')"; exit 1; }
+  require_user
+
+  # The machine layer is not ours to install — say who can, rather than failing
+  # with a privilege error that explains nothing.
+  if ! is_installed "$name"; then
+    err "'$name' is not installed on this machine, so there is nothing to set up for you yet."
+    err "  Its machine part (packages, services) has to be installed once, by an administrator."
+    if w_is_admin; then
+      err "  You are one — run: sudo w-pack install $name"
+    else
+      err "  Ask a system administrator of this machine to run: sudo w-pack install $name"
+    fi
+    exit 1
+  fi
+
+  if ! bundle_has_user_layer "$name"; then
+    info "'$name' is machine-wide — it has no per-account part, so there is nothing to set up."
+    return 0
+  fi
+
+  info "Setting '$name' up for $TARGET_USER..."
+  setup_user_layer "$name" "$TARGET_USER" "$TARGET_HOME"
+  info "Done."
+}
+
+# ── refresh ──────────────────────────────────────────────────────────────────
+# Re-apply what a bundle OWNS, from the freshly staged tree, for bundles that are
+# already installed. Deliberately skips install_pkgs: packages are pacman's job
+# and an update must not turn into a network operation, while config/theme/skill
+# deployment and the bundle's own setup.sh are idempotent by contract (packs.md).
+#
+# This is the missing link update-system.md kept flagging: without it a bundle's
+# migrations only ever ran at install time, so an M1/M2 marker layout or a legacy
+# path could never be fixed on machines that installed the bundle earlier.
+cmd_refresh() {
+  require_root "refresh"
+  require_jq
+  require_user
+  local name="${1:-}" any=0
+  if [[ -n "$name" ]]; then
+    bundle_exists "$name" || { err "unknown bundle: $name (see 'w-pack list')"; exit 1; }
+    is_installed "$name"  || { err "'$name' is not installed — nothing to refresh"; exit 1; }
+    refresh_bundle "$name"
+    info "Done."
+    return 0
+  fi
+  while read -r name; do
+    [[ -z "$name" ]] && continue
+    is_installed "$name" || continue
+    any=1
+    refresh_bundle "$name"
+  done < <(list_bundles)
+  if [[ $any -eq 0 ]]; then info "No installed bundles to refresh."; else info "Done."; fi
+}
+
+refresh_bundle() {
+  local name="$1"
+  info "Refreshing '$name' (config + w-style + AI + setup; packages untouched)..."
+  deploy_configs_system "$name"
+  deploy_wstyle         "$name"
+  deploy_ai             "$name"
+  run_setup             "$name"
+
+  bundle_has_user_layer "$name" || return 0
+  # Replay the per-user layer for every account that already went through it —
+  # and ONLY those. An update keeps its promises current; it does not sign anyone
+  # up for a bundle they never asked for. This is the loop that was missing: a
+  # refresh used to reach exactly one account, so a second administrator's copy
+  # of a bundle's config could never be brought forward at all.
+  need_sdk || return 0
+  local u home
+  while IFS=$'\t' read -r u home; do
+    [[ -n "$u" ]] || continue
+    user_has "$name" "$home" || continue
+    setup_user_layer "$name" "$u" "$home" \
+      || warn "per-user refresh of '$name' failed for $u (their account is unchanged)"
+  done < <(w_home_users)
+}
+
+# ── list / status ────────────────────────────────────────────────────────────
+# Three states, not two, because there are two layers and the honest answer has
+# to name which one is missing:
+#   yes / yes  installed and ready for you
+#   yes / no   on the machine, but YOUR account has not been set up  <- the case
+#              that used to be reported as a flat "installed" and was a lie
+#   no  / -    not on this machine
+#   * / n/a    bundle has no per-user layer; the question does not apply
+B_MACHINE=""; B_USER=""
+bundle_state() {                                        # <name>
+  B_MACHINE=no; B_USER=n/a
+  is_installed "$1" && B_MACHINE=yes
+  if bundle_has_user_layer "$1"; then
+    if [[ "$B_MACHINE" == yes && -n "$TARGET_HOME" ]] && user_has "$1" "$TARGET_HOME"; then
+      B_USER=yes
+    else
+      B_USER=no
+    fi
+  fi
+}
+
+cmd_list() {
+  require_jq
+  resolve_user "$ARG_USER" || true      # read-only: no account is not an error
+  local any=0 pending=0 name mark
+  [[ $PORCELAIN -eq 1 ]] || echo "Available bundles:"
+  while read -r name; do
+    [[ -z "$name" ]] && continue
+    any=1
+    bundle_state "$name"
+    if [[ $PORCELAIN -eq 1 ]]; then
+      printf '%s\t%s\t%s\t%s\n' "$name" "$B_MACHINE" "$B_USER" "$(meta_field "$name" DESC)"
+      continue
+    fi
+    if   [[ "$B_MACHINE" == no  ]]; then mark="[         ]"
+    elif [[ "$B_USER"    == no  ]]; then mark="[machine  ]"; pending=1
+    else                                 mark="[installed]"; fi
+    printf '  %s %-14s %s\n' "$mark" "$name" "$(meta_field "$name" DESC)"
+  done < <(list_bundles)
+  [[ $PORCELAIN -eq 1 ]] && return 0
+  [[ $any -eq 1 ]] || echo "  (none — no bundles staged in $PACKS_DIR)"
+  if [[ $pending -eq 1 ]]; then
+    echo
+    echo "  [machine] = on this machine, but not set up for ${TARGET_USER:-you}."
+    echo "  Set one up for your own account (no sudo needed): w-pack setup <bundle>"
+  fi
+  return 0
+}
+
+# One line about the caller's own half of a bundle, for cmd_status.
+user_status_line() {                                    # <bundle>
+  local name="$1" f
+  bundle_has_user_layer "$name" || { echo "  your account:  n/a (this bundle is machine-wide)"; return 0; }
+  [[ -n "$TARGET_USER" ]] || return 0
+  f="$(user_state_of "$TARGET_HOME")"
+  if user_has "$name" "$TARGET_HOME"; then
+    echo "  your account:  set up for $TARGET_USER ($(jq -r --arg b "$name" '.bundles[$b].setup_at // "?"' "$f" 2>/dev/null))"
+  else
+    echo "  your account:  NOT set up for $TARGET_USER — run: w-pack setup $name"
+  fi
+}
+
+cmd_status() {
+  require_jq
+  resolve_user "$ARG_USER" || true
+  local name="${1:-}"
+  if [[ -n "$name" ]]; then
+    bundle_exists "$name" || { err "unknown bundle: $name"; exit 1; }
+    if is_installed "$name"; then
+      echo "$name: installed on this machine"
+      [[ -f "$STATE" ]] && jq -r --arg b "$name" \
+        '.bundles[$b] | "  installed_at:  \(.installed_at)\n  weight:        \(.weight // "-")"' "$STATE"
+      user_status_line "$name"
+    else
+      echo "$name: not installed"
+    fi
+    return 0
+  fi
+  echo "Installed bundles:"
+  if [[ -f "$STATE" ]] && [[ "$(jq -r '.bundles | length' "$STATE")" != "0" ]]; then
+    local b
+    while read -r b; do
+      [[ -z "$b" ]] && continue
+      bundle_state "$b"
+      if [[ "$B_USER" == no ]]; then
+        printf '  %-14s (%s)  — not set up for %s\n' "$b" \
+          "$(jq -r --arg b "$b" '.bundles[$b].installed_at' "$STATE")" "${TARGET_USER:-this account}"
+      else
+        printf '  %-14s (%s)\n' "$b" "$(jq -r --arg b "$b" '.bundles[$b].installed_at' "$STATE")"
+      fi
+    done < <(jq -r '.bundles | keys[]' "$STATE")
+  else
+    echo "  (none)"
+  fi
+  return 0
+}
+
+# ── Dispatch ─────────────────────────────────────────────────────────────────
+# Parse the options out of anywhere in the args (same shape as w-reset), so
+# `w-pack setup dev --user alice` and `w-pack --user alice setup dev` both read.
+ARG_USER=""; PORCELAIN=0; POS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --user) ARG_USER="${2:-}"; [[ -n "$ARG_USER" ]] || { err "--user needs a name"; exit 2; }; shift 2 ;;
+    --porcelain) PORCELAIN=1; shift ;;
+    *) POS+=("$1"); shift ;;
+  esac
+done
+set -- "${POS[@]:-}"
+
+case "${1:-}" in
+  list)           cmd_list ;;
+  install)        cmd_install "${2:-}" ;;
+  setup)          cmd_setup "${2:-}" ;;
+  refresh)        cmd_refresh "${2:-}" ;;
+  status)         cmd_status "${2:-}" ;;
+  help|-h|--help) usage ;;
+  "")             usage >&2; exit 2 ;;
+  *)              err "unknown command: $1"; usage >&2; exit 2 ;;
+esac

@@ -1,0 +1,316 @@
+{
+  "_comment": "W Linux bar config. USER-OWNED — w-style/w-theme never touch it. Edit and the running bar live-reloads (FileView watch). Any color is a THEME TOKEN name (e.g. surface/inputBg/text/accent/accentFg/border) OR a literal #RRGGBB hex; the matching *Opacity (0.0–1.0) is always separate, so the bar follows theme switches while opacity is tuned per element (set 0 for a fully transparent element, e.g. no button border).",
+
+  "_comment_chrome": "The bar's own plaque (bgColor/bgOpacity) and outline (borderColor/borderOpacity) — everything else here paints the blocks ON it. These two opacities are THEME-FOLLOWING by default: unlike the per-element ones they also accept an EFFECTS TOKEN name — \"bar\"/\"barBorder\" (the bar's own chrome pair) or \"surface\"/\"scrim\" (the shared shell scale) — resolved live from the active theme's effects.conf (W_FX_BAR_OPACITY / W_FX_BAR_BORDER_OPACITY), so a theme can make the bar a solid plaque or dissolve it entirely. Writing a number here pins it and the bar stops following the theme; delete the key or write the token back to hand it over. Dropping both to 0 (in the theme, or here) leaves the blocks floating as separate islands — their zone backgrounds are their own. Outline WIDTH is geometry, not this (W_GEO_BAR_BORDER, default 0).",
+
+  "_comment_geometry": "GEOMETRY IS THEME-OWNED and deliberately absent below. position/height/radius/margin/padding/gap/borderWidth/minSquare for the bar, and zoneRadius/zonePadding/zoneBorderWidth/buttonRadius/buttonGap/buttonBorderWidth/itemsGap inside blocks, all come from the active theme's geometry.conf (W_GEO_BAR_*, rendered into core/geometry.json by `w-style apply geometry`) — so switching themes reshapes the bar without touching this file. Writing any of those keys back in overrides just that one element and it stops following the theme; delete the key to hand it back. An override is a number (px), or a geometry TOKEN name resolved live (\"barRadiusZone\", \"barGap\", \"radiusSm\", …). Radii additionally accept \"pill\" = half the element's height (even rounding) and 0 = sharp corners. \"minSquare\" (true/false, root-level) is the one boolean override: when true, every block's (and every folded `zone`'s) minimum width is clamped to its height with content centered, so small pill/circle buttons stay round instead of oval; content wider than the height still grows the block as before.",
+
+  "_comment_enabled": "Every block takes an optional \"enabled\": true|false at its root (default true). \"enabled\": false drops the block entirely — it is never instantiated and none of its background work (Process / FileView / UPower-Pipewire subscriptions) runs.",
+
+  "_comment_network": "Light read-only network indicator — connection-type glyph + primary IP. All management is delegated to nm-applet in the tray (left-click its icon); this block's left-click opens nm-connection-editor (GUI editor). Source: `ip -j route get 1.1.1.1` -> { dev, prefsrc } for the default-route interface (so 'wired AND Wi-Fi both up' shows the winning link; a VPN shows via its tun*/wg* device). Type is classified by device prefix (en/eth -> ethernet, wl -> wifi, tun/tap/wg/ppp -> vpn). No connectivity -> 'disconnected' state (does NOT auto-hide). Liveness: a Timer poll every `interval` ms plus `nmcli monitor` for an instant re-poll on any NM event. Built-in glyphs: ethernet \\uf0200, wifi \\uf1eb, vpn \\uf0582, disconnected \\uf0c9d. Settings: showIcon, icon (state object), showText, display ip|ifname, offlineText (\"\" = glyph only when offline), interval, fontSize, textColor/textOpacity, iconColor/iconOpacity, zone*.",
+
+  "_comment_icon": "Blocks with a left glyph expose it as \"icon\" (toggle the whole icon with showIcon). \"icon\" is either a single Nerd Font glyph string, or — for multi-glyph blocks — an object of named states: volume → { normal, muted }; battery → { levels: [full, three-quarter, half, quarter, empty], charging }; network → { ethernet, wifi, vpn, disconnected }. An empty string \"\" (or a missing key) means 'use the block's built-in default glyph' (to HIDE an icon use showIcon:false, not an empty glyph), so the defaults below are blank and documented here. Put a real glyph between the quotes to override. Editor tip: a bare Nerd Font PUA char can get lost on save in some editors — a JSON \\uXXXX escape (e.g. \"\\uf538\") is equivalent and safe. Built-in defaults (Nerd Font): clock \\uf017, volume normal \\uf028 / muted \\uf026, battery levels \\uf240 \\uf241 \\uf242 \\uf243 \\uf244 + charging \\uf0e7, brightness \\uf185, kbdBacklight \\uf030c, cpu \\uf4bc, ram \\uf538, temp \\uf2c9, disk \\uf0a0, keyboardLayout \\uf11c.",
+
+  "_comment_monitors": "System-monitor blocks cpu/ram/temp/disk are lightweight indicators (poll on \"interval\" ms; click opens btop). Shared opts: showIcon, icon, fontSize, interval, textColor/textOpacity, iconColor/iconOpacity, zone*, and a threshold that paints text+glyph in highColor/highOpacity once the value hits highThreshold. Per-block: cpu → showPercent (\"%\" load from /proc/stat). ram → display percent|used|usedTotal (used = MemTotal−MemAvailable from /proc/meminfo). temp → lm_sensors `sensors -j`; unit C|F, showDegree, sensorChip/sensorLabel override the auto-detected CPU sensor (\"\" = auto), auto-hides when no sensor is found. disk → path (mountpoint), display percent|used|free|usedTotal from `df`. Sensible default intervals: cpu/ram/temp 2000, disk 30000. The numeric value uses tabular figures and reserves the width of its widest reading, so changing digits never shift neighboring blocks.",
+
+  "_comment_updates": "Block type \"updates\" is a read-only pending-updates indicator. It does NOT poll pacman itself — the `w-update-check` systemd user timer runs `w-update check` (non-root: checkupdates for repo + `yay -Qua` for AUR, never `pacman -Sy`) and writes ~/.local/state/w/updates.json, which this block watches. count = repo (+ AUR if includeAur). It auto-hides when count is 0 (hideWhenZero, default true) UNLESS a reboot is pending. highColor/highOpacity paint the glyph+count when a reboot is owed — detected reliably by the running kernel's modules dir /usr/lib/modules/$(uname -r) being gone after an in-place kernel upgrade. Multi-glyph icon: { available, reboot } (built-in defaults: available \\uf06b5, reboot \\uf0709). Left-click runs the interactive upgrade (ghostty -e w-update); right-click shows Arch news. Change the check period with `w-update interval <minutes>`. Settings: showIcon, icon (state object), showCount, includeAur, hideWhenZero, interval (status-file reload fallback, ms), fontSize, textColor/textOpacity, iconColor/iconOpacity, highColor/highOpacity, zone*, plus the shared click-flash/cursor keys.",
+
+  "_comment_notifications": "Block type \"notifications\" is the Do Not Disturb indicator + toggle. State comes from ~/.local/state/w/notifications.json (written by `w-notify`), so the glyph flips whichever surface changed it — this block, the Hub panel, a hotkey or the AI. It stays visible by default even when DND is off (hideWhenIdle: true collapses it to 'only while silenced') because a silent desktop with no visible cause is how notifications get missed for days; while DND is on the glyph+label switch to highColor. Multi-glyph icon: { idle, dnd } (built-in defaults: idle \\uf09a1, dnd \\uf09a2). showText shows the DND deadline (HH:mm) or 'On'. Left-click toggles DND (`w-notify dnd toggle`), right-click opens Hub → Notifications, where the history lives. Settings: showIcon, icon (state object), showText, hideWhenIdle, fontSize, textColor/textOpacity, iconColor/iconOpacity, highColor/highOpacity, zone*, plus the shared click-flash/cursor keys.",
+
+  "_comment_interaction": "Every block exposes optional click-flash + cursor controls on its interactive element (the zone for single-unit blocks like clock/volume/cpu/...; each button for multi-button blocks workspaces/apps/tray). They apply wherever present: clickColorLeft / clickColorRight — flash color on LMB / RMB (theme TOKEN name or #RRGGBB); a button with no color set does NOT flash (opt-in per button). clickOpacity — apex alpha 0..1 (default 0.5). clickDuration — full pulse fade-in -> apex -> fade-out, ms (default 300). cursor — hover cursor on that element: pointer | default/arrow | text | crosshair | wait | busy | grab | grabbing | none; omitted = the block's own default (pointer for interactive blocks/buttons, arrow for clock/battery/brightness/kbdBacklight). Setting clickColorRight also makes the element accept RMB (for the flash) on blocks that otherwise ignore it.",
+
+  "_comment_button": "Block type \"button\" is a generic launcher: a clickable pill that runs a shell command on left-click (commandLeft) and, optionally, a different one on right-click (commandRight) — run detached via `sh -c`, so any command works (an empty string is a no-op). Reach the shell's own popups through their Hyprland globals, e.g. hyprctl dispatch 'hl.dsp.global(\"quickshell:launcher\")'. Optional label (\"\" = none) and optional icon (\"\" = none): a Nerd Font glyph, a theme-icon name, a /path/to.(png|svg), or the special keyword \"w-logo\" = the active theme's brand SVG (theme-aware + live). Image icons get iconMode tint|solid|original + iconStrength/iconShade/iconLift (like apps/tray); a glyph is colored by iconColor. gap = space between icon and label (drops out when either is absent). Settings: icon, label, gap, iconSize, fontSize, commandLeft, commandRight, iconMode/iconStrength/iconShade/iconLift, textColor/textOpacity, iconColor/iconOpacity, zoneColor/zoneOpacity/zoneBorderColor/zoneBorderOpacity, plus the shared click-flash/cursor keys.",
+
+  "_comment_zone": "Block type \"zone\" is a decorative wrapper that groups other blocks behind one shared background, and can fold. Its nested blocks live in a top-level \"items\": [ ... ] (sibling of \"settings\", each item a normal block honoring \"enabled\"). settings: zoneColor/zoneOpacity (shape comes from the theme) + optional \"folded\": { enabled, trigger: \"hover\"|\"click\", chevron: bool, icon (Nerd Font glyph OR theme-icon name OR /path/to.png — image icons get iconMode tint|solid|original + iconStrength/iconShade/iconLift), iconSize, iconColor, iconOpacity, iconGap, label, fontSize, textColor, textOpacity }. Folded shows just icon+label; hover reveals the blocks (icon+label crossfade out, items slide+fade in), click keeps icon+label as a persistent toggle handle. folded.enabled=false ⇒ always-expanded decorative meta-block.",
+
+  "_comment_multimonitor": "Optional multi-monitor map: output name -> { enabled, blocks: { start, center, end } }. The PRIMARY monitor (set by `w-monitor primary`, W Hub Displays panel — where the main bar lives) always gets a bar from the root \"blocks\" above; no entry here is needed for it. Any OTHER monitor gets no bar unless it has an entry: \"enabled\": false (or omitted) means no bar there, \"enabled\": true (with an optional \"blocks\") shows one. A monitor entry's \"blocks\" overrides only which blocks appear (same { type, settings } shape as the root \"blocks\") — geometry/colors always come from the theme and this file's global settings, never per-monitor (avoids desynced popup baselines). Example: { \"HDMI-A-1\": { \"enabled\": true, \"blocks\": { \"start\": [...], \"end\": [ { \"type\": \"clock\", ... } ] } } }.",
+
+  "bgColor": "surface",
+  "bgOpacity": "bar",
+
+  "borderColor": "border",
+  "borderOpacity": "barBorder",
+
+  "blocks": {
+    "start": [
+      { "type": "button", "enabled": true, "settings": {
+        "icon": "w-logo",
+        "label": "",
+        "gap": 6,
+        "iconSize": 14,
+        "commandLeft":  "hyprctl dispatch 'hl.dsp.global(\"quickshell:hub\")'",
+        "commandRight": "hyprctl dispatch 'hl.dsp.global(\"quickshell:powermenu\")'",
+        "iconMode": "solid",
+        "iconStrength": 0.8, "iconShade": 0.2, "iconLift": 0.4,
+        "iconColor": "border", "iconOpacity": 1.0,
+        "textColor": "text", "textOpacity": 1.0,
+        "zoneColor": "inputBg", "zoneOpacity": 0.85,
+        "clickColorLeft": "accent", "clickColorRight": "accent",
+        "clickOpacity": 0.5,
+        "clickDuration": 200,
+        "cursor": "pointer"
+      } },
+      { "type": "button", "enabled": true, "settings": {
+        "icon": "󰚩",
+        "label": "",
+        "gap": 6,
+        "iconSize": 14,
+        "commandLeft":  "hyprctl dispatch 'hl.dsp.global(\"quickshell:assistant\")'",
+        "commandRight": "",
+        "iconMode": "solid",
+        "iconStrength": 0.8, "iconShade": 0.2, "iconLift": 0.4,
+        "iconColor": "text", "iconOpacity": 1.0,
+        "textColor": "text", "textOpacity": 1.0,
+        "zoneColor": "inputBg", "zoneOpacity": 0.85,
+        "clickColorLeft": "accent",
+        "clickOpacity": 0.5,
+        "clickDuration": 200,
+        "cursor": "pointer"
+      } },
+      { "type": "workspaces", "enabled": true, "settings": {
+        "zoneColor": "inputBg", "zoneOpacity": 0.85,
+        "buttonSize": 0,
+        "buttonColor": "inputBg", "buttonOpacity": 0.85,
+        "buttonActiveColor": "accent", "buttonActiveOpacity": 0.85,
+        "buttonBorderColor": "border", "buttonBorderOpacity": 1.0,
+        "fontSize": 12,
+        "fontColor": "text", "fontOpacity": 1.0,
+        "fontActiveColor": "accentFg", "fontActiveOpacity": 1.0
+      } },
+      { "type": "apps", "enabled": true, "settings": {
+        "zoneColor": "inputBg", "zoneOpacity": 0.85,
+        "buttonSize": 0,
+        "buttonColor": "inputBg", "buttonOpacity": 0.0,
+        "buttonActiveColor": "accent", "buttonActiveOpacity": 0.85,
+        "buttonBorderColor": "border", "buttonBorderOpacity": 1.0,
+        "iconSize": 14,
+        "iconMode": "tint",
+        "iconStrength": 0.8, "iconShade": 0.2, "iconLift": 0.4
+      } }
+    ],
+    "center": [
+      { "type": "clock", "enabled": true, "settings": {
+        "format": [
+          "HH:mm",
+          "HH:mm:ss"
+        ],
+        "showIcon": true,
+        "icon": "",
+        "fontSize": 12,
+        "textColor": "text", "textOpacity": 1.0,
+        "iconColor": "text", "iconOpacity": 0.85,
+        "zoneColor": "inputBg", "zoneOpacity": 0.85,
+        "clickColorLeft": "accent",
+        "clickOpacity": 0.5,
+        "clickDuration": 200,
+        "cursor": "pointer"
+      } },
+      { "type": "zone", "enabled": true, "settings": {
+        "zoneColor": "inputBg", "zoneOpacity": 0.85,
+        "folded": {
+          "enabled": true,
+          "trigger": "click",
+          "chevron": null,
+          "icon": "󰓅",
+          "iconSize": 14,
+          "iconColor": "text",
+          "iconOpacity": 0.85,
+          "label": "",
+          "fontSize": 12
+        },
+        "clickColorLeft": "accent",
+        "clickOpacity": 0.5,
+        "clickDuration": 200,
+        "cursor": "pointer"
+      }, "items": [
+          { "type": "cpu", "enabled": true, "settings": {
+            "showIcon": false,
+            "icon": "",
+            "showPercent": true,
+            "interval": 2000,
+            "fontSize": 12,
+            "highThreshold": 85,
+            "highColor": "dangerBorder", "highOpacity": 1.0,
+            "textColor": "text", "textOpacity": 1.0,
+            "iconColor": "text", "iconOpacity": 0.85,
+            "zoneColor": "inputBg", "zoneOpacity": 0.0,
+            "zoneBorderWidth": 0,
+            "zonePadding": { "left": 3, "right": 3 }
+          } },
+          { "type": "ram", "enabled": true, "settings": {
+            "showIcon": true,
+            "icon": "",
+            "display": "percent",
+            "interval": 2000,
+            "fontSize": 12,
+            "highThreshold": 85,
+            "highColor": "dangerBorder", "highOpacity": 1.0,
+            "textColor": "text", "textOpacity": 1.0,
+            "iconColor": "text", "iconOpacity": 0.85,
+            "zoneColor": "inputBg", "zoneOpacity": 0.0,
+            "zoneBorderWidth": 0,
+            "zonePadding": { "left": 3, "right": 3 }
+          } },
+          { "type": "temp", "enabled": true, "settings": {
+            "showIcon": true,
+            "icon": "",
+            "unit": "C",
+            "showDegree": true,
+            "sensorChip": "", "sensorLabel": "",
+            "interval": 2000,
+            "fontSize": 12,
+            "highThreshold": 80,
+            "highColor": "dangerBorder", "highOpacity": 1.0,
+            "textColor": "text", "textOpacity": 1.0,
+            "iconColor": "text", "iconOpacity": 0.85,
+            "zoneColor": "inputBg", "zoneOpacity": 0.0,
+            "zoneBorderWidth": 0,
+            "zonePadding": { "left": 3, "right": 3 }
+          } },
+          { "type": "disk", "enabled": true, "settings": {
+            "showIcon": true,
+            "icon": "",
+            "path": "/",
+            "display": "percent",
+            "interval": 30000,
+            "fontSize": 12,
+            "highThreshold": 90,
+            "highColor": "dangerBorder", "highOpacity": 1.0,
+            "textColor": "text", "textOpacity": 1.0,
+            "iconColor": "text", "iconOpacity": 0.85,
+            "zoneColor": "inputBg", "zoneOpacity": 0.0,
+            "zoneBorderWidth": 0,
+            "zonePadding": { "left": 3, "right": 3 }
+          } }
+        ]
+      }
+    ],
+    "end": [
+      { "type": "updates", "enabled": true, "settings": {
+        "showIcon": true,
+        "icon": { "available": "", "reboot": "" },
+        "showCount": true,
+        "includeAur": true,
+        "hideWhenZero": true,
+        "interval": 60000,
+        "fontSize": 12,
+        "highColor": "dangerBorder", "highOpacity": 1.0,
+        "textColor": "text", "textOpacity": 1.0,
+        "iconColor": "text", "iconOpacity": 0.85,
+        "zoneColor": "inputBg", "zoneOpacity": 0.85,
+        "clickColorLeft": "accent", "clickColorRight": "accent",
+        "clickOpacity": 0.5,
+        "clickDuration": 200,
+        "cursor": "pointer"
+      } },
+      { "type": "network", "enabled": true, "settings": {
+        "showIcon": true,
+        "icon": { "ethernet": "", "wifi": "", "vpn": "", "disconnected": "" },
+        "showText": true,
+        "display": "ip",
+        "offlineText": "",
+        "interval": 5000,
+        "fontSize": 12,
+        "textColor": "text", "textOpacity": 1.0,
+        "iconColor": "text", "iconOpacity": 0.85,
+        "zoneColor": "inputBg", "zoneOpacity": 0.85,
+        "clickColorLeft": "accent",
+        "clickOpacity": 0.5,
+        "clickDuration": 200,
+        "cursor": "pointer"
+      } },
+      { "type": "keyboardLayout", "enabled": true, "settings": {
+        "showIcon": true,
+        "icon": "",
+        "display": "code",
+        "uppercase": true,
+        "clickCycle": true,
+        "fontSize": 12,
+        "textColor": "text", "textOpacity": 1.0,
+        "iconColor": "text", "iconOpacity": 0.85,
+        "zoneColor": "inputBg", "zoneOpacity": 0.85,
+        "clickColorLeft": "accent",
+        "clickOpacity": 0.5,
+        "clickDuration": 200,
+        "cursor": "pointer"
+      } },
+      { "type": "battery", "enabled": true, "settings": {
+        "showIcon": true,
+        "icon": { "levels": ["", "", "", "", ""], "charging": "" },
+        "showPercent": true,
+        "fontSize": 12,
+        "lowThreshold": 15,
+        "textColor": "text", "textOpacity": 1.0,
+        "iconColor": "text", "iconOpacity": 0.85,
+        "lowColor": "dangerBorder", "lowOpacity": 1.0,
+        "zoneColor": "inputBg", "zoneOpacity": 0.85,
+        "cursor": "default"
+      } },
+      { "type": "brightness", "enabled": true, "settings": {
+        "showIcon": true,
+        "icon": "",
+        "showPercent": true,
+        "fontSize": 12,
+        "textColor": "text", "textOpacity": 1.0,
+        "iconColor": "text", "iconOpacity": 0.85,
+        "zoneColor": "inputBg", "zoneOpacity": 0.85,
+        "cursor": "pointer"
+      } },
+      { "type": "kbdBacklight", "enabled": true, "settings": {
+        "showIcon": true,
+        "icon": "",
+        "showPercent": true,
+        "fontSize": 12,
+        "textColor": "text", "textOpacity": 1.0,
+        "iconColor": "text", "iconOpacity": 0.85,
+        "zoneColor": "inputBg", "zoneOpacity": 0.85,
+        "cursor": "pointer"
+      } },
+      { "type": "volume", "enabled": true, "settings": {
+        "showIcon": true,
+        "icon": { "normal": "", "muted": "" },
+        "fontSize": 12,
+        "textColor": "text", "textOpacity": 1.0,
+        "iconColor": "text", "iconOpacity": 0.85,
+        "zoneColor": "inputBg", "zoneOpacity": 0.85,
+        "zonePadding": { "right": 4 },
+        "clickColorLeft": "accent",
+        "clickOpacity": 0.5,
+        "clickDuration": 200,
+        "cursor": "pointer"
+      } },
+      { "type": "notifications", "enabled": true, "settings": {
+        "showIcon": true,
+        "icon": { "idle": "", "dnd": "" },
+        "showText": false,
+        "hideWhenIdle": false,
+        "fontSize": 12,
+        "highColor": "accent", "highOpacity": 1.0,
+        "textColor": "text", "textOpacity": 1.0,
+        "iconColor": "text", "iconOpacity": 0.85,
+        "zoneColor": "inputBg", "zoneOpacity": 0.85,
+        "clickColorLeft": "accent", "clickColorRight": "accent",
+        "clickOpacity": 0.5,
+        "clickDuration": 200,
+        "cursor": "pointer"
+      } },
+      { "type": "tray", "enabled": true, "settings": {
+        "zoneColor": "inputBg", "zoneOpacity": 0.85,
+        "buttonGap": 0,
+        "buttonSize": 0,
+        "buttonColor": "inputBg", "buttonOpacity": 0.0,
+        "buttonBorderColor": "border", "buttonBorderOpacity": 1.0,
+        "clickColorLeft": "accent",
+        "clickColorRight": "accent",
+        "clickOpacity": 0.5,
+        "clickDuration": 200,
+        "cursor": "pointer",
+        "iconSize": 14,
+        "iconMode": "tint",
+        "iconStrength": 0.8, "iconShade": 0.2, "iconLift": 0.4
+      } }
+    ]
+  },
+
+  "monitors": {}
+}

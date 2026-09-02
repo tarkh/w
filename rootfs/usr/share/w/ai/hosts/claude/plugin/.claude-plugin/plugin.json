@@ -1,0 +1,7 @@
+{
+  "name": "w",
+  "version": "1.0.0",
+  "description": "W Linux system knowledge: operation-facing skills for this machine's subsystems (updates, theming, network, audio, power, security, desktop, packs).",
+  "author": { "name": "W Linux" },
+  "keywords": ["w-linux", "arch", "hyprland", "system"]
+}

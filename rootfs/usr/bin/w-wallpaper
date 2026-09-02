@@ -1,0 +1,284 @@
+#!/usr/bin/env bash
+# w-wallpaper — W Linux wallpaper manager
+#
+# Selects the appropriate resolution wallpaper and exposes it via a stable
+# symlink so all tools (hyprpaper, the greeter, etc.) can reference a fixed path.
+#
+# The wallpaper set comes from the active theme: each theme ships
+# <theme>/wallpaper/wallpaper-NNNxNNN.{webp,png}. webp is preferred (smaller,
+# fast to load); png is supported as an alternative — each theme may ship either.
+# The theme is resolved per the same rule w-style uses — the invoking user's pin
+# (~/.config/w/theme/active) if any, otherwise the system fallback
+# (/etc/w/active-theme). Run by the greeter user (no pin) this naturally yields
+# the system theme's wallpaper.
+#
+# Symlink: /run/w/wallpaper/wallpaper → <theme>/wallpaper/wallpaper-NNNxNNN.<ext>
+# The link is extension-agnostic on purpose (the target may be webp or png);
+# consumers detect the format by content (Qt/hyprpaper). Alongside it, `set`
+# writes /run/w/wallpaper/manifest.json — the per-tier resolved paths so a
+# resolution-aware consumer without hyprctl (the greeter) can pick a wallpaper
+# per monitor by the SAME logic hyprpaper uses. /run/w/wallpaper/ is created on
+# boot by systemd-tmpfiles (w.conf) with mode 0777, allowing any user or service
+# to update it without elevated privileges.
+
+set -euo pipefail
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+
+SYSTEM_POINTER="/etc/w/active-theme"      # persistent system-fallback symlink
+DEFAULT_THEME_DIR="/etc/w/themes/w"       # last-resort default
+WALLPAPER_LINK="/run/w/wallpaper/wallpaper"
+MANIFEST_FILE="/run/w/wallpaper/manifest.json"  # per-tier resolved paths for the greeter
+
+# ── Theme resolution ──────────────────────────────────────────────────────────
+
+w_system_theme_dir() {
+  if [[ -e "$SYSTEM_POINTER" ]]; then readlink -f "$SYSTEM_POINTER"
+  else echo "$DEFAULT_THEME_DIR"; fi
+}
+
+# Effective theme for the invoking user: per-user pin, else system fallback.
+w_user_theme_dir() {
+  local pin="${HOME:-/nonexistent}/.config/w/theme/active"
+  if [[ -e "$pin" ]]; then readlink -f "$pin"
+  else w_system_theme_dir; fi
+}
+
+# Wallpaper directory of the effective theme.
+wallpaper_dir() { echo "$(w_user_theme_dir)/wallpaper"; }
+
+# ── Help ──────────────────────────────────────────────────────────────────────
+
+usage() {
+  cat <<EOF
+Usage: w-wallpaper <command> [options]
+
+Info: Select the wallpaper for the current resolution tier.
+
+Commands:
+  set [--monitor N]       Detect monitor resolution and update wallpaper symlink
+                            --monitor N  Use monitor index N (default: 0)
+  get [--real]            Print current wallpaper path
+                            --real       Print actual file instead of symlink path
+  apply [--wait [SEC]]    Set wallpaper on all monitors via hyprpaper IPC
+                            --wait [SEC] Wait for hyprpaper socket (default: 10s)
+  tiers [--porcelain]     List the resolution tiers a theme may ship
+                            --porcelain  One WIDTHxHEIGHT per line, largest first
+  help, --help            Show this help
+
+Exit codes:
+  0  Success
+  1  Runtime error (missing file, broken symlink, hyprpaper not ready, etc.)
+  2  Usage error (unknown command or option)
+
+Examples:
+  w-wallpaper set
+  w-wallpaper set --monitor 1
+  w-wallpaper get
+  w-wallpaper apply
+  w-wallpaper apply --wait
+  w-wallpaper apply --wait 5
+  w-wallpaper tiers --porcelain
+EOF
+}
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+# Resolution tiers, largest first. A monitor maps to the first tier its width
+# meets; if a theme lacks that master, resolution degrades down this ladder.
+WALLPAPER_TIERS=(wallpaper-5120x2880 wallpaper-3840x2160 wallpaper-2560x1440 wallpaper-1920x1080)
+
+# Pick the resolution base name (no extension) for a given monitor pixel width.
+wallpaper_for_width() {
+  local width="${1:-}"
+  if   [[ "$width" =~ ^[0-9]+$ ]] && (( width >= 5120 )); then echo "wallpaper-5120x2880"
+  elif [[ "$width" =~ ^[0-9]+$ ]] && (( width >= 3840 )); then echo "wallpaper-3840x2160"
+  elif [[ "$width" =~ ^[0-9]+$ ]] && (( width >= 2560 )); then echo "wallpaper-2560x1440"
+  else                                                          echo "wallpaper-1920x1080"
+  fi
+}
+
+# Try webp then png for one tier base name; print the path and succeed if found.
+wallpaper_try() {
+  local dir="$1" tier="$2" ext
+  for ext in webp png; do
+    [[ -f "$dir/$tier.$ext" ]] && { echo "$dir/$tier.$ext"; return 0; }
+  done
+  return 1
+}
+
+# Resolve an existing wallpaper file for a monitor width. Start at the matching
+# resolution tier, then fall back intelligently: first DOWN the ladder (nearest
+# smaller master), and if none exists, UP it (nearest larger). This way a theme
+# need not ship all four sizes — any non-empty set yields a file for every
+# monitor (e.g. a 2k/4k-only theme still serves an HD screen). Prefers webp then
+# png at each tier. Prints the absolute path, or nothing if the theme ships none.
+wallpaper_file() {
+  local dir="$1" width="${2:-}" base i n=${#WALLPAPER_TIERS[@]} bi=-1
+  base=$(wallpaper_for_width "$width")
+  for (( i = 0; i < n; i++ )); do [[ "${WALLPAPER_TIERS[i]}" == "$base" ]] && { bi=$i; break; }; done
+  (( bi < 0 )) && bi=$(( n - 1 ))
+  # Downward (matched tier → smaller), then upward (→ nearest larger master).
+  for (( i = bi; i < n; i++ )); do wallpaper_try "$dir" "${WALLPAPER_TIERS[i]}" && return 0; done
+  for (( i = bi - 1; i >= 0; i-- )); do wallpaper_try "$dir" "${WALLPAPER_TIERS[i]}" && return 0; done
+  return 1
+}
+
+# Minimum monitor width per tier (matches WALLPAPER_TIERS order), used both to
+# bucket a monitor into a tier and to drive the manifest below.
+WALLPAPER_MINWIDTH=(5120 3840 2560 0)
+
+# Write the manifest: for each tier, the resolved file (fallback applied) plus its
+# minimum width, newest-first. Resolution-aware consumers without hyprctl (the
+# greeter) read this and pick a wallpaper per monitor by width using the SAME
+# resolver as hyprpaper — one selection logic across userspace and the greeter.
+# Best-effort: any failure leaves the previous manifest (or none) in place.
+wallpaper_manifest() {
+  local dir="$1" i n=${#WALLPAPER_TIERS[@]} path entries=()
+  for (( i = 0; i < n; i++ )); do
+    path=$(wallpaper_file "$dir" "${WALLPAPER_MINWIDTH[i]}") || path=""
+    entries+=("{\"minWidth\":${WALLPAPER_MINWIDTH[i]},\"path\":\"${path}\"}")
+  done
+  local IFS=,
+  printf '[%s]\n' "${entries[*]}" > "$MANIFEST_FILE" 2>/dev/null || true
+}
+
+# ── Commands ──────────────────────────────────────────────────────────────────
+
+cmd_set() {
+  local monitor=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --monitor) monitor="${2:?'--monitor requires a value'}"; shift 2 ;;
+      *) echo "w-wallpaper: unknown option: $1" >&2; exit 2 ;;
+    esac
+  done
+
+  # Detect primary monitor width via hyprctl; fall back silently if unavailable
+  local width=""
+  if command -v hyprctl &>/dev/null; then
+    width=$(hyprctl monitors -j 2>/dev/null | jq ".[$monitor].width" 2>/dev/null || true)
+  fi
+
+  local dir path
+  dir=$(wallpaper_dir)
+  path=$(wallpaper_file "$dir" "$width") \
+    || { echo "w-wallpaper: no wallpaper (webp/png) for $(wallpaper_for_width "$width") in $dir" >&2; exit 1; }
+
+  # Absolute symlink — target is in a different directory than the link
+  ln -sf "$path" "$WALLPAPER_LINK"
+
+  # Per-tier manifest for resolution-aware consumers (the greeter draws per monitor).
+  wallpaper_manifest "$dir"
+
+  local label="${width:-fallback}"
+  echo "w-wallpaper: set → ${path##*/} (${label}px)"
+}
+
+cmd_get() {
+  local real=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --real) real=true; shift ;;
+      *) echo "w-wallpaper: unknown option: $1" >&2; exit 2 ;;
+    esac
+  done
+
+  [[ -L "$WALLPAPER_LINK" ]] \
+    || { echo "w-wallpaper: symlink not set, run 'w-wallpaper set' first" >&2; exit 1; }
+
+  if $real; then
+    readlink -f "$WALLPAPER_LINK"
+  else
+    echo "$WALLPAPER_LINK"
+  fi
+}
+
+# Retry a hyprpaper IPC request until it succeeds, instead of waiting on a proxy
+# signal. A prior socket-file-existence check (glob over $XDG_RUNTIME_DIR/hypr/*/
+# .hyprpaper.sock) could false-positive on a STALE socket left by a previous
+# login under the same runtime dir — Hyprland/hyprpaper don't clean those up
+# between sessions (upstream behaviour, kept for crash forensics), so the glob
+# matched instantly regardless of whether the CURRENT session's hyprpaper was
+# actually up. Readiness is the call succeeding: a fast machine returns on the
+# first try, a slow one retries for exactly as long as it needs. $1 (wait_timeout)
+# is a safety backstop against a dead/crashed hyprpaper, not a tuning knob for
+# how long startup "should" take; 0 means try once. Module-scope (not nested in
+# cmd_apply) so tests can drive it directly against a mocked hyprctl.
+hyprpaper_ipc() {
+  local wait_timeout="$1"; shift
+  local deadline=$(( $(date +%s) + wait_timeout ))
+  while true; do
+    hyprctl hyprpaper "$@" >/dev/null 2>&1 && return 0
+    (( wait_timeout > 0 )) || return 1
+    (( $(date +%s) < deadline )) || return 1
+    sleep 0.1
+  done
+}
+
+cmd_apply() {
+  local wait_timeout=0  # 0 = try once, no retry
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --wait)
+        wait_timeout=10
+        # Optional numeric argument after --wait
+        if [[ "${2:-}" =~ ^[0-9]+$ ]]; then wait_timeout="$2"; shift; fi
+        shift ;;
+      *) echo "w-wallpaper: unknown option: $1" >&2; exit 2 ;;
+    esac
+  done
+
+  # Apply per-monitor wallpaper via hyprpaper IPC. No separate preload step: the
+  # installed hyprpaper (0.8.4) only accepts `wallpaper`/`listactive` — `preload`
+  # is gone upstream (hyprpaper.md: "check hyprctl hyprpaper --help for the
+  # requests supported by your installed version").
+  local monitors
+  monitors=$(hyprctl monitors -j 2>/dev/null | jq -r '.[].name' 2>/dev/null) \
+    || { echo "w-wallpaper: hyprctl failed" >&2; exit 1; }
+
+  while IFS= read -r monitor; do
+    local width
+    width=$(hyprctl monitors -j 2>/dev/null | jq -r ".[] | select(.name==\"$monitor\") | .width" 2>/dev/null || echo "")
+    local path
+    path=$(wallpaper_file "$(wallpaper_dir)" "$width") \
+      || { echo "w-wallpaper: no wallpaper (webp/png) for $(wallpaper_for_width "$width") in $(wallpaper_dir)" >&2; exit 1; }
+
+    hyprpaper_ipc "$wait_timeout" wallpaper "$monitor,$path" \
+      || { echo "w-wallpaper: hyprpaper not responding (waited ${wait_timeout}s)" >&2; exit 1; }
+    echo "w-wallpaper: apply → $monitor: ${path##*/} (${width:-fallback}px)"
+  done <<< "$monitors"
+}
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────
+
+# ── tiers ─────────────────────────────────────────────────────────────────────
+# The ladder above is the single definition of which masters a theme may ship.
+# `w-theme new` renders exactly this set from the picked image, so it asks here
+# instead of keeping a second copy that would drift the first time a tier moves.
+cmd_tiers() {
+  local porcelain=0 t
+  [[ "${1:-}" == "--porcelain" ]] && porcelain=1
+  [[ $# -gt 0 && "${1:-}" != "--porcelain" ]] && { echo "w-wallpaper: unknown option: $1" >&2; exit 2; }
+  (( porcelain )) || echo "Resolution tiers (largest first):"
+  for t in "${WALLPAPER_TIERS[@]}"; do
+    if (( porcelain )); then echo "${t#wallpaper-}"; else echo "  ${t#wallpaper-}"; fi
+  done
+}
+
+# Source-guard: the unit tests (scripts/check/tests) source this file for the
+# pure resolver functions above — only a direct invocation reaches the dispatch.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then return 0; fi
+
+case "${1:-}" in
+  set)             shift; cmd_set "$@" ;;
+  get)             shift; cmd_get "$@" ;;
+  apply)           shift; cmd_apply "$@" ;;
+  tiers)           shift; cmd_tiers "$@" ;;
+  help|--help|-h)  usage; exit 0 ;;
+  "")              usage >&2; exit 2 ;;
+  *)               echo "w-wallpaper: unknown command: $1" >&2; usage >&2; exit 2 ;;
+esac

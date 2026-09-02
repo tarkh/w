@@ -1,0 +1,15 @@
+# W Linux — auto-reconcile .pacnew for W-managed config after any package upgrade.
+# W ships its own version of many /etc files, so a package upgrade writes a .pacnew
+# for them (pacman never overwrites a changed file). For a W-owned file that .pacnew
+# is noise — W's version is authoritative — so the helper drops it and logs to
+# journald, leaving .pacnew for non-W files alone (see /usr/lib/w/w-pacnew-reconcile).
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = *
+
+[Action]
+Description = Reconciling W-managed .pacnew files...
+When = PostTransaction
+Exec = /usr/lib/w/w-pacnew-reconcile

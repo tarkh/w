@@ -1,0 +1,7 @@
+#%PAM-1.0
+# Fingerprint first (no-op if fprintd not configured / no finger enrolled),
+# then fall through to password via system-auth.
+auth       sufficient   pam_fprintd.so
+auth       include      system-auth
+account    include      system-auth
+session    include      system-auth

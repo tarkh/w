@@ -1,0 +1,17 @@
+# mirrors.schema — who may set each key of the `mirrors` subsystem (see w-conf.md).
+# Format: <KEY>\t<scope>   scope: system | user | both
+#
+# There is exactly one /etc/pacman.d/mirrorlist and exactly one machine-wide
+# package manager reading it, so every key here is system-scope. A per-user
+# override would not be meaningless-but-harmless: it would let any account steer
+# where the machine downloads its software from.
+COUNTRY	system
+PROTOCOL	system
+AGE	system
+SCORE	system
+COUNT	system
+THREADS	system
+CONNECT_TIMEOUT	system
+DOWNLOAD_TIMEOUT	system
+INTERVAL_DAYS	system
+SKIP_METERED	system

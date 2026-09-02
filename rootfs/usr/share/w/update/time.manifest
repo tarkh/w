@@ -1,0 +1,22 @@
+# time.manifest — config owned by the NTP subsystem (w-time).
+#
+# Layered (update-system.md phase 3):
+#   • /usr/share/w/defaults/time.conf   — W's NTP catalog + default selection.
+#     Class managed: overwritten by every update, so a new server set ships to
+#     installed machines. Entries MERGE per key — an operator-added NTP_<name>
+#     lives in the admin file below and survives updates on its own.
+#   • /usr/share/w/defaults/time.schema — who may set each key (system-scope:
+#     there is one system clock, a per-user override would be meaningless).
+#   • /etc/w/time.conf — this machine's DEVIATIONS only (the active selection once
+#     it differs from W's default, plus any site-specific NTP_<name>). Class
+#     override: `w-time servers <name>` rewrites it at runtime and the update never
+#     touches it; `w-reset time` drops the deviations back to the vendor layer.
+#
+# The rendered /etc/systemd/timesyncd.conf.d/10-w-ntp.conf is w-time output
+# (regenerate with `sudo w-time apply`), not tracked here. Timezone and the NTP
+# on/off flag are live system state (timedatectl), not config.
+#
+# Format: <path>\t<class>   class: managed | override
+/usr/share/w/defaults/time.conf	managed
+/usr/share/w/defaults/time.schema	managed
+/etc/w/time.conf	override

@@ -1,0 +1,29 @@
+[Unit]
+Description=W Linux — first-boot configuration (apply --all)
+ConditionPathExists=/var/lib/w/.firstboot-pending
+After=multi-user.target network-online.target getty@tty1.service
+Wants=network-online.target
+Before=greetd.service
+Conflicts=getty@tty1.service
+
+[Service]
+Type=oneshot
+# apply.sh and every W tool it drives are written for a root SHELL, which always
+# has HOME. A systemd system unit does not: systemd exports HOME only for units
+# with User=, so firstboot ran the whole `apply --all` in an environment no
+# developer ever reproduces by hand — and two separate `set -u` sites died on a
+# bare $HOME, each breaking a FRESH install while installed machines (where apply
+# is run from a shell) stayed fine. Defence in depth: the individual sites are
+# fixed, and this makes the firstboot environment match the contract they are
+# written against, so the next such site cannot break installation either.
+Environment=HOME=/root
+ExecStart=/usr/lib/w/w-firstboot
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVTDisallocate=yes
+
+[Install]
+WantedBy=multi-user.target

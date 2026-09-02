@@ -1,0 +1,866 @@
+#!/usr/bin/env bash
+# w-theme — W Linux theme switcher
+#
+# Switches the active theme and orchestrates the renderers (w-style colors,
+# w-wallpaper, w-windowblind crossfade). Two scopes, chosen by privilege:
+#
+#   w-theme set <name>        (no root)  per-user, instant, with crossfade.
+#                                        Pins ~/.config/w/theme/active and
+#                                        re-skins THIS user (hyprland, ghostty,
+#                                        wallpaper). grub/plymouth/greeter are
+#                                        NOT touched.
+#   sudo w-theme set <name>   (root)     system fallback. Repoints
+#                                        /etc/w/active-theme, refreshes /etc/skel
+#                                        and the boot/greeter subsystems
+#                                        (greeter, grub, plymouth). Synchronous
+#                                        (includes mkinitcpio); no crossfade.
+#
+# Theme lookup (set, no root): system collection first, then the user's local
+# collection — /etc/w/themes/<name> then ~/.config/w/themes/<name>. With sudo
+# only system themes (/etc/w/themes/) are allowed.
+#
+# Authoring follows the same privilege split:
+#
+#   w-theme new <name> --wallpaper F      (no root)  build a personal theme from
+#                                                    an image into ~/.config/w/themes/
+#   sudo w-theme new <name> --wallpaper F (root)     build a SYSTEM theme into
+#                                                    /etc/w/themes/ (also how the
+#                                                    shipped themes are authored)
+#   w-theme edit <name>                              rebuild a generated theme's
+#                                                    palette (base colour, contrast,
+#                                                    dark/light) keeping its wallpaper
+#   w-theme rm <name>                                delete one, resetting the pin
+#                                                    first if it is the active theme
+#
+# The heavy lifting lives beside this script, not in it: lib/wallpaper.sh is the
+# ImageMagick pipeline, lib/palette.py the colour engine (see w-theme.md).
+
+set -euo pipefail
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+SYSTEM_THEMES_DIR="/etc/w/themes"
+SYSTEM_POINTER="/etc/w/active-theme"      # persistent system-fallback symlink
+DEFAULT_THEME_DIR="/etc/w/themes/w"
+
+USER_THEMES_REL=".config/w/themes"
+USER_POINTER_REL=".config/w/theme/active"
+
+# matugen's --source-color-index accepts 0..3 — Material's Score returns at most
+# four ranked colours. palette.py carries the same ceiling as SEED_MAX; the two
+# have to agree, since one enumerates what the other filters.
+SEED_MAX=4
+
+LIB_DIR="/usr/lib/w/w-theme"
+PALETTE_PY="$LIB_DIR/palette.py"
+
+# A theme name becomes a directory, a CLI argument and a symlink target, so it is
+# restricted to the shape all three handle without quoting games.
+THEME_NAME_RE='^[a-z][a-z0-9-]{0,31}$'
+
+FADE_MS_SAFETY=5000                       # blind self-clears if a step hangs
+# Wait for the blind to finish its (invisible) fade-in before swapping the theme
+# underneath: the freeze must reach 100% opacity first, else fast subsystems
+# (terminal) recoloring under a still-translucent blind show through. The
+# fade-in is imperceptible (freeze == screen), so this is just a hold, not a
+# visible animation. We intentionally do NOT use a global `layersIn,0` (it would
+# break hyprlock and any other layer that wants a fade-in).
+#
+# Two-phase wait, not one guessed sleep:
+#   1. WB_READY_TIMEOUT — block on a readiness fifo that w-windowblind writes to
+#      right after gtk_window_present() on every output. This absorbs the
+#      variable part (process fork/exec/dynamic-link/GTK4 init), which is not a
+#      fixed cost — a guessed sleep anchored at launch time can fire before the
+#      surface is even mapped.
+#   2. fade_settle_seconds() — once mapped, the fade-in duration IS fixed: it is
+#      the `layers` animation speed, which comes from the ACTIVE theme's
+#      motion.conf (W_MOTION_SLOW, see resolve_theme_file below), not a global
+#      Hyprland constant. A theme that overrides it must not be able to outrun a
+#      hardcoded sleep. FADE_SETTLE_MARGIN_MS covers the wayland roundtrip
+#      between "mapped" and "compositor started the animation".
+WB_READY_TIMEOUT="1.0"
+FADE_SETTLE_MARGIN_MS=50
+
+WB_PID=""
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+die() { echo "w-theme: $*" >&2; exit 1; }
+
+user_pointer()      { echo "$HOME/$USER_POINTER_REL"; }
+user_themes_dir()   { echo "$HOME/$USER_THEMES_REL"; }
+
+system_theme_dir() {
+  if [[ -e "$SYSTEM_POINTER" ]]; then readlink -f "$SYSTEM_POINTER"
+  else echo "$DEFAULT_THEME_DIR"; fi
+}
+
+user_effective_dir() {
+  local p; p="$(user_pointer)"
+  if [[ -e "$p" ]]; then readlink -f "$p"
+  else system_theme_dir; fi
+}
+
+# Resolve a per-theme file with fallback to the `w` baseline (theme dir may omit
+# it, e.g. no custom motion.conf). Duplicated from w-style's core.sh — same
+# resolver, standalone script (see w-theme.md).
+resolve_theme_file() {
+  local dir="$1" name="$2"
+  if [[ -f "$dir/$name" ]]; then echo "$dir/$name"
+  else echo "$DEFAULT_THEME_DIR/$name"; fi
+}
+
+# Resolve a theme name to its directory: system first, then user-local.
+find_theme() {
+  local name="$1"
+  if [[ -d "$SYSTEM_THEMES_DIR/$name" ]]; then echo "$SYSTEM_THEMES_DIR/$name"; return 0; fi
+  if [[ -d "$(user_themes_dir)/$name" ]]; then echo "$(user_themes_dir)/$name"; return 0; fi
+  return 1
+}
+
+validate_theme() {
+  local dir="$1"
+  [[ -f "$dir/theme.conf" ]] || die "invalid theme (no theme.conf): $dir"
+  [[ -d "$dir/wallpaper"  ]] || die "invalid theme (no wallpaper/): $dir"
+}
+
+# ── Crossfade (user session only) ─────────────────────────────────────────────
+# Freeze the screen with a grim capture shown by w-windowblind, swap the theme
+# underneath, then close the blind so Hyprland's fade-out reveals the new theme.
+#
+# Multi-monitor: capture ONE FRAME PER OUTPUT (`grim -o <name>`) into a directory
+# keyed by connector name, and let w-windowblind put a surface on every output
+# with its own frame. A single canvas-wide `grim` (no -o) stitches all outputs
+# into one image, which a per-output surface can only crop wrongly — that showed
+# up as windows apparently sliding half a screen sideways mid-switch. Per-output
+# capture also sidesteps scale arithmetic: grim -o hands back exactly that
+# output's buffer, so the frame is pixel-exact whatever its scale or resolution.
+freeze_dir() { echo "${XDG_RUNTIME_DIR:-/tmp}/w-theme-freeze.d"; }
+
+# Fixed fade-in duration once the blind is confirmed mapped: the `layers`
+# animation speed the ACTIVE (pre-swap) theme's motion.conf renders into
+# Hyprland right now, not a value w-theme invents independently — a theme that
+# overrides W_MOTION_SLOW must still get a correct wait, not a stale guess.
+fade_settle_seconds() {
+  local W_MOTION_SLOW=400   # baseline default, overwritten by the sourced conf
+  # shellcheck source=/dev/null
+  source "$(resolve_theme_file "$(user_effective_dir)" motion.conf)"
+  awk "BEGIN{printf \"%.3f\", ($W_MOTION_SLOW + $FADE_SETTLE_MARGIN_MS) / 1000}"
+}
+
+fade_begin() {
+  [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] || return 1
+  command -v grim &>/dev/null          || return 1
+  command -v jq &>/dev/null            || return 1
+  command -v w-windowblind &>/dev/null || return 1
+
+  local outputs
+  outputs="$(hyprctl monitors -j 2>/dev/null | jq -r '.[].name' 2>/dev/null)" || return 1
+  [[ -n "$outputs" ]] || return 1
+
+  local dir; dir="$(freeze_dir)"
+  rm -rf "$dir"
+  mkdir -p "$dir" || return 1
+
+  # Captures run in parallel so the frames are as close to the same instant as
+  # possible (a sequential sweep would tear across outputs on a busy desktop).
+  local m
+  while IFS= read -r m; do
+    [[ -n "$m" ]] || continue
+    grim -o "$m" "$dir/$m.png" 2>/dev/null &
+  done <<< "$outputs"
+  wait
+  # A partial capture is still worth showing (the uncovered output just recolors
+  # live, as it did before); zero frames means no crossfade at all.
+  compgen -G "$dir/*.png" >/dev/null || { rm -rf "$dir"; return 1; }
+
+  # Readiness handshake: a plain fifo opened read-write by us never blocks on
+  # open(2) (POSIX special-cases O_RDWR on a fifo), so there is no race between
+  # creating it and w-windowblind's writer connecting. w-windowblind writes one
+  # byte right after gtk_window_present() on every output (see w-windowblind.c).
+  local fifo="$dir/.ready" ready_fd
+  mkfifo "$fifo" 2>/dev/null || { rm -rf "$dir"; return 1; }
+  exec {ready_fd}<>"$fifo"
+
+  w-windowblind "$FADE_MS_SAFETY" --image-dir "$dir" --ready-fifo "$fifo" &
+  WB_PID=$!
+
+  read -r -t "$WB_READY_TIMEOUT" -u "$ready_fd" _ ||
+    echo "w-theme: windowblind readiness timed out after ${WB_READY_TIMEOUT}s, proceeding anyway" >&2
+  exec {ready_fd}<&-
+
+  sleep "$(fade_settle_seconds)"
+  return 0
+}
+
+fade_end() {
+  [[ -n "$WB_PID" ]] || return 0
+  kill "$WB_PID" 2>/dev/null || true   # window close → Hyprland fade-out
+  wait "$WB_PID" 2>/dev/null || true
+  WB_PID=""
+  rm -rf "$(freeze_dir)"
+}
+
+# ── set: per-user (no root) ───────────────────────────────────────────────────
+set_user() {
+  local name="$1" no_fade="$2" dir
+  dir="$(find_theme "$name")" || die "theme not found: $name"
+  validate_theme "$dir"
+
+  local faded=0
+  [[ "$no_fade" -eq 0 ]] && fade_begin && faded=1
+
+  # Pin and re-skin this user. `w-style apply user` renders every user-scope axis in
+  # band order straight from the module registry — no per-axis list to keep in sync
+  # here (add a w-style module → it is picked up automatically). Each axis owns its
+  # own live reload (Hyprland/Quickshell/gsettings/qt dir-watch/ghostty SIGUSR2), all
+  # firing under the crossfade freeze.
+  install -d "$(dirname "$(user_pointer)")"
+  ln -sfn "$dir" "$(user_pointer)"
+  w-style apply user
+  w-wallpaper set  >/dev/null 2>&1 || true
+  w-wallpaper apply >/dev/null 2>&1 || true
+
+  [[ "$faded" -eq 1 ]] && fade_end
+
+  echo "w-theme: switched to '$name' (this user)."
+  echo "  Boot/greeter unchanged — run 'sudo w-theme set $name' to update them too."
+}
+
+# ── set: system (root) ────────────────────────────────────────────────────────
+set_system() {
+  local name="$1" dir="$SYSTEM_THEMES_DIR/$1"
+  [[ -d "$dir" ]] || die "system theme not found: $name (sudo allows only $SYSTEM_THEMES_DIR/)"
+  validate_theme "$dir"
+
+  # Repoint the persistent system fallback (relative target, lives in /etc/w)
+  ln -sfn "themes/$name" "$SYSTEM_POINTER"
+  echo "w-theme: system fallback → $name"
+
+  # `apply all` = every user-scope axis into /etc/skel + every system-scope axis
+  # (greeter/grub/plymouth, synchronous incl. mkinitcpio), in band order from the
+  # module registry. No per-axis list to maintain here. Requires root (set_system is).
+  w-style apply all
+
+  echo "w-theme: system theme set to '$name'."
+  echo "  Live sessions: users without a personal theme apply it at next login;"
+  echo "  to change your current session now run 'w-theme set $name' (no sudo)."
+}
+
+cmd_set() {
+  local name="" no_fade=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --no-fade) no_fade=1; shift ;;
+      -*) die "unknown option: $1" ;;
+      *)  [[ -z "$name" ]] || die "unexpected argument: $1"; name="$1"; shift ;;
+    esac
+  done
+  [[ -n "$name" ]] || { echo "w-theme: usage: w-theme set <name> [--no-fade]" >&2; exit 2; }
+
+  if [[ $EUID -eq 0 ]]; then set_system "$name"
+  else set_user "$name" "$no_fade"; fi
+}
+
+# ── reset: drop the per-user pin, follow the system fallback ───────────────────
+cmd_reset() {
+  [[ $EUID -ne 0 ]] || die "reset is per-user; run without sudo"
+  local p; p="$(user_pointer)"
+  [[ -e "$p" ]] && rm -f "$p"
+  local faded=0
+  fade_begin && faded=1
+  w-style apply user              # same user-scope bundle as `set` (module registry)
+  w-wallpaper set  >/dev/null 2>&1 || true
+  w-wallpaper apply >/dev/null 2>&1 || true
+  [[ "$faded" -eq 1 ]] && fade_end
+  echo "w-theme: reset to system theme ($(basename "$(system_theme_dir)"))."
+}
+
+# ── new: build a theme from a wallpaper ───────────────────────────────────────
+# Scope follows privilege, exactly like `set`: a plain call writes the caller's
+# personal collection, sudo writes the system one (which is also how the shipped
+# themes are authored — this is not a "user feature" bolted on the side).
+
+# The name has to be free in BOTH collections, not just the one being written:
+# find_theme resolves system-first, so a local theme shadowed by a system name
+# could never be selected, and a system theme added later would silently hijack
+# an existing personal one.
+theme_name_free() { # <name>
+  local name="$1"
+  [[ "$name" =~ $THEME_NAME_RE ]] || die "invalid name '$name' (lowercase letters, digits and dashes, starting with a letter)"
+  [[ -d "$SYSTEM_THEMES_DIR/$name" ]] && die "a system theme named '$name' already exists"
+  [[ -d "$(user_themes_dir)/$name" ]] && die "a local theme named '$name' already exists"
+  return 0
+}
+
+# One matugen extraction into <out>. The stub config keeps a user's own
+# ~/.config/matugen/config.toml (templates, post-run hooks, a pinned fallback
+# colour) from leaking into a system-level operation; --source-color-index makes
+# the run non-interactive, which matters because the Hub calls this with no tty.
+#
+# The index is which of matugen's ranked source colours to build from. It used to
+# be hardcoded to 0 — the most dominant one — which is why a wallpaper with a
+# green garden, a blue sky and a gold fountain could only ever produce one theme.
+#
+# `-m dark` is fixed and means nothing to us: matugen's `palettes` (the only part
+# the engine reads) come out identical for dark and light, and W's own light/dark
+# mapping lives in palette.py. Verified against matugen 4.1.0 rather than assumed.
+#
+# --fallback-color is not a safety net here, it is the fix for a real behaviour:
+# when matugen decides an image has no usable colour it silently seeds the
+# Material baseline blue, so every greyscale wallpaper would yield the same
+# unrelated blue theme. We measure the image ourselves and hand it the seed.
+matugen_extract() { # <image> <scheme> <seed> <index> <out.json> <config>
+  matugen image "$1" --json hex --dry-run --quiet --source-color-index "$4" \
+          -t "$2" -m dark --fallback-color "$3" -c "$6" >"$5"
+}
+
+# The base colours an image offers, discovered by extraction. matugen ranks its
+# source colours with Material's Score (Celebi quantisation, chroma floor, hue
+# de-duplication) and can SELECT the Nth, but the shipped 4.x cannot LIST them —
+# so each index is extracted in turn and the palette it produced is read back.
+#
+# Asking for an index the image does not have is an error, which is exactly the
+# signal we want: a single-hue wallpaper fails at index 1 and therefore offers
+# one candidate, with no threshold of ours deciding that. The dumps are kept
+# because the preview needs them anyway, so the enumeration costs nothing extra.
+matugen_enumerate() { # <tmpdir> → "<index>\t<hex>" lines
+  local tmp="$1" idx dumps=()
+  for idx in $(seq 0 $((SEED_MAX - 1))); do
+    matugen_extract "$tmp/extract.webp" "$PAL_SCHEME" "$PAL_SEED" "$idx" \
+                    "$tmp/mg-$idx.json" "$tmp/matugen.toml" 2>/dev/null || break
+    dumps+=(--dump "$tmp/mg-$idx.json")
+  done
+  [[ ${#dumps[@]} -gt 0 ]] || die "matugen failed to extract a palette"
+  # A wallpaper whose every candidate is a grey leaves nothing to choose from;
+  # index 0 is then the honest answer (the mono path renders it neutrally).
+  python3 "$PALETTE_PY" seeds "${dumps[@]}" | grep . || printf '0\t%s\n' "$PAL_SEED"
+}
+
+# ── Extraction workspace (shared by `new` and `edit`) ─────────────────────────
+# Both start from an image and need the same three answers: which base colours it
+# offers, which matugen scheme suits it, and whether it carries any hue at all.
+# Sets PAL_SEED / PAL_MONO / PAL_SCHEME / PAL_CANDIDATES.
+PAL_SEED=""; PAL_MONO=0; PAL_SCHEME=""; PAL_CANDIDATES=()
+
+palette_prepare() { # <tmpdir> <image> [scheme override]
+  local tmp="$1" image="$2" scheme="${3:-}"
+
+  # matugen refuses to start without a parseable config, and both an empty file
+  # and a lone [config] table count as unparseable — [templates] must be present
+  # even when empty. This stub is what keeps a user's own matugen config (with
+  # its templates and post-run hooks) out of a W theme build.
+  printf '[config]\n[templates]\n' >"$tmp/matugen.toml"
+
+  # Extraction reads the CROPPED master, not the original: cover-cropping to 16:9
+  # can drop a whole colour region (a sky, a border), and the palette must match
+  # the pixels that will actually be on screen.
+  echo "w-theme: preparing wallpaper..." >&2
+  wallpaper_render_tier "$image" "2560x1440" "$tmp/extract.webp" "$WTHEME_WORK_QUALITY" \
+    || die "could not read the image: $image"
+
+  # Measure the image before extracting from it: the seed colour, and whether it
+  # has any hue at all, decide both the seed handed to matugen and the scheme.
+  # A vivid picture is reproduced faithfully (scheme-content), a washed-out one
+  # gets its chroma synthesised (tonal-spot) so the theme has an identity, and a
+  # black-and-white one is kept neutral (monochrome) instead of being painted an
+  # arbitrary colour it never contained.
+  magick "$tmp/extract.webp" -resize 400x400 -colors 16 -format '%c' histogram:info: >"$tmp/hist.txt" \
+    || die "could not analyse the image"
+
+  local key value measured="" advised=""
+  PAL_SEED=""; PAL_MONO=0
+  while IFS='=' read -r key value; do
+    case "$key" in
+      color)  PAL_SEED="$value" ;;
+      chroma) measured="$value" ;;
+      scheme) advised="$value" ;;
+      mono)   PAL_MONO="$value" ;;
+    esac
+  done < <(python3 "$PALETTE_PY" dominant "$tmp/hist.txt")
+  PAL_SCHEME="${scheme:-$advised}"
+  echo "w-theme: source $PAL_SEED (chroma $measured) → $PAL_SCHEME" >&2
+
+  # A black-and-white image has one honest answer, not a choice of several.
+  PAL_CANDIDATES=()
+  if [[ "$PAL_MONO" == "1" ]]; then
+    matugen_extract "$tmp/extract.webp" "$PAL_SCHEME" "$PAL_SEED" 0 \
+                    "$tmp/mg-0.json" "$tmp/matugen.toml" \
+      || die "matugen failed to extract a palette"
+    PAL_CANDIDATES=("0$(printf '\t')$PAL_SEED")
+  else
+    local line
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && PAL_CANDIDATES+=("$line")
+    done < <(matugen_enumerate "$tmp")
+  fi
+}
+
+# The matugen dump for candidate <position>. Positions index the FILTERED list
+# the user is shown; the ranking index matugen was asked for — and which named
+# the dump — is the left half of the record.
+palette_dump() { # <tmpdir> <position> → path
+  echo "$1/mg-${PAL_CANDIDATES[$2]%%$'\t'*}.json"
+}
+
+palette_seed_hex() { echo "${PAL_CANDIDATES[$1]#*$'\t'}"; }
+
+# Clamp rather than refuse: a position out of range means the image now offers
+# fewer candidates than when a theme was first built (a different matugen, a
+# re-encoded wallpaper), and falling back to its most dominant colour is a better
+# answer to "edit this theme" than an error.
+palette_position() { # <requested>
+  local want="$1" last=$(( ${#PAL_CANDIDATES[@]} - 1 ))
+  if (( want > last )); then
+    echo "w-theme: base colour $want is no longer offered by this image — using $last" >&2
+    want="$last"
+  fi
+  (( want < 0 )) && want=0
+  echo "$want"
+}
+
+# Every candidate × every contrast level, from one process: the Hub previews the
+# whole matrix without re-running anything when a swatch or a level is clicked.
+palette_preview_json() { # <tmpdir> [current appearance] [current contrast] [current seed index]
+  local pos dumps=() seeds=() mono_flag=() current=()
+  [[ "$PAL_MONO" == "1" ]] && mono_flag=(--mono)
+  for pos in "${!PAL_CANDIDATES[@]}"; do
+    dumps+=("$(palette_dump "$1" "$pos")")
+    seeds+=(--seed "$(palette_seed_hex "$pos")")
+  done
+  # Editing an existing theme reports where in the matrix that theme already
+  # sits, so a form can preselect it instead of guessing at the defaults.
+  [[ -n "${2:-}" ]] && current+=(--current-appearance "$2")
+  [[ -n "${3:-}" ]] && current+=(--current-contrast "$3")
+  [[ -n "${4:-}" ]] && current+=(--current-seed-index "$4")
+  python3 "$PALETTE_PY" json "${dumps[@]}" "${seeds[@]}" "${mono_flag[@]}" "${current[@]}"
+}
+
+palette_render() { # <tmpdir> <appearance> <position> <contrast> <name> <wallpaper label>
+  local dump mono_flag=()
+  dump="$(palette_dump "$1" "$3")"
+  [[ "$PAL_MONO" == "1" ]] && mono_flag=(--mono)
+  python3 "$PALETTE_PY" render "$dump" "$DEFAULT_THEME_DIR/theme.conf" \
+    --appearance "$2" --contrast "$4" --name "$5" --wallpaper "$6" \
+    --seed "$(palette_seed_hex "$3")" --seed-index "$3" "${mono_flag[@]}"
+}
+
+validate_contrast() { # <level>
+  case "$1" in low|medium|high) return 0 ;; esac
+  die "--contrast takes low, medium or high"
+}
+
+cmd_new() {
+  local name="" wallpaper="" appearance="dark" scheme="" contrast="medium" seed_index=0 activate=0 as_json=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --wallpaper)  wallpaper="${2:-}"; shift 2 ;;
+      --appearance) appearance="${2:-}"; shift 2 ;;
+      --scheme)     scheme="${2:-}"; shift 2 ;;
+      --contrast)   contrast="${2:-}"; shift 2 ;;
+      --seed-index) seed_index="${2:-0}"; shift 2 ;;
+      --activate)   activate=1; shift ;;
+      --json)       as_json=1; shift ;;
+      -*)           die "unknown option: $1" ;;
+      *)            [[ -z "$name" ]] || die "unexpected argument: $1"; name="$1"; shift ;;
+    esac
+  done
+  [[ -n "$wallpaper" ]] || { echo "w-theme: usage: w-theme new <name> --wallpaper <image>" >&2; exit 2; }
+  [[ "$appearance" == dark || "$appearance" == light ]] || die "--appearance takes dark or light"
+  validate_contrast "$contrast"
+  [[ "$seed_index" =~ ^[0-9]+$ ]] || die "--seed-index takes a number"
+
+  command -v magick   &>/dev/null || die "imagemagick is required (pacman -S imagemagick)"
+  command -v matugen  &>/dev/null || die "matugen is required (pacman -S matugen)"
+  [[ -f "$PALETTE_PY" ]]          || die "palette engine missing: $PALETTE_PY"
+
+  # shellcheck source=/dev/null
+  source "$LIB_DIR/wallpaper.sh"
+  wallpaper_validate "$wallpaper" >/dev/null || exit 1
+
+  # A preview run answers "what would this look like" without touching the
+  # collections, so the Hub can show swatches before anything is created.
+  if (( as_json == 0 )); then
+    [[ -n "$name" ]] || { echo "w-theme: usage: w-theme new <name> --wallpaper <image>" >&2; exit 2; }
+    theme_name_free "$name"
+  fi
+
+  local parent tmp
+  if [[ $EUID -eq 0 ]]; then parent="$SYSTEM_THEMES_DIR"; else parent="$(user_themes_dir)"; fi
+  install -d "$parent"
+  tmp="$(mktemp -d "$parent/.w-theme-new.XXXXXX")"
+  # shellcheck disable=SC2064  # expand $tmp now: the trap must survive the function
+  trap "rm -rf '$tmp'" EXIT
+
+  palette_prepare "$tmp" "$wallpaper" "$scheme"
+
+  if (( as_json )); then
+    palette_preview_json "$tmp"
+    return 0
+  fi
+
+  seed_index="$(palette_position "$seed_index")"
+  echo "w-theme: building theme '$name' ($appearance, $PAL_SCHEME, contrast $contrast)..." >&2
+  install -d "$tmp/stage"
+  palette_render "$tmp" "$appearance" "$seed_index" "$contrast" "$name" "$wallpaper" \
+    >"$tmp/stage/theme.conf" || die "palette engine failed"
+  wallpaper_build_set "$wallpaper" "$tmp/stage" || exit 1
+
+  # Only a directory that already passes the same validation `set` applies is
+  # allowed to appear in a collection — a half-built theme must never be
+  # selectable.
+  validate_theme "$tmp/stage"
+  mv "$tmp/stage" "$parent/$name"
+  chmod 755 "$parent/$name"
+
+  echo "w-theme: created '$name' in $parent/$name"
+  if (( activate )); then
+    if [[ $EUID -eq 0 ]]; then set_system "$name"; else set_user "$name" 0; fi
+  else
+    echo "  Apply it with: w-theme set $name"
+  fi
+}
+
+# ── edit: rebuild a generated theme's palette ─────────────────────────────────
+# Only theme.conf is rewritten; the wallpaper tiers stay exactly as they are.
+#
+# The palette is re-extracted from the theme's OWN cropped master, not from the
+# path recorded in its header: the original image may have been moved, renamed or
+# deleted long ago, while the theme's 2560x1440 tier is by definition the pixels
+# the palette was supposed to describe. That also makes the operation offline and
+# idempotent — editing a theme cannot fail because a file elsewhere went missing.
+#
+# Only themes this tool generated may be edited. A hand-authored theme.conf
+# carries no generator header — `w`, the base theme, is the one W ships that way
+# — and rebuilding one would throw away someone's hand-picked pigments. `w` in
+# particular is the template every generated theme is rendered from.
+GENERATED_MARKER='^# Generated by `w-theme new'
+SETTINGS_LINE='^# w-theme: '
+
+theme_is_generated() { grep -qE "$GENERATED_MARKER" "$1/theme.conf" 2>/dev/null; }
+
+# The parameters a theme was built with (defaults when the theme predates the
+# settings line — its settings are then the engine's own defaults).
+theme_settings() { # <dir> → prints "seed hex<TAB>contrast"
+  local line seed="" contrast=""
+  line="$(grep -E "$SETTINGS_LINE" "$1/theme.conf" 2>/dev/null | head -1 || true)"
+  [[ "$line" =~ seed=(#[0-9a-fA-F]{6}) ]] && seed="${BASH_REMATCH[1]}"
+  [[ "$line" =~ contrast=([a-z]+) ]] && contrast="${BASH_REMATCH[1]}"
+  printf '%s\t%s\n' "$seed" "${contrast:-medium}"
+}
+
+# Which of the candidates now on offer is the colour a theme was built from.
+# NOT the position it recorded: matugen ranks the source colours of the image it
+# is handed, and a theme's stored wallpaper is a re-encode of the crop the
+# original extraction saw — measured during design on a real photograph, the same
+# picture ranks fire/sky/gold/teal from the original and fire/sky/lilac/gold from
+# the theme's own copy, so position 3 means two different colours. The hex is the
+# stable identity, so reopening a theme resolves through it.
+palette_position_of_seed() { # <hex>
+  local pos hexes=()
+  [[ -n "$1" ]] || { echo 0; return 0; }
+  for pos in "${!PAL_CANDIDATES[@]}"; do hexes+=("$(palette_seed_hex "$pos")"); done
+  python3 "$PALETTE_PY" nearest --to "$1" "${hexes[@]}"
+}
+
+cmd_edit() {
+  local name="" rename="" appearance="" contrast="" seed_index="" as_json=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --rename)     rename="${2:-}"; shift 2 ;;
+      --appearance) appearance="${2:-}"; shift 2 ;;
+      --contrast)   contrast="${2:-}"; shift 2 ;;
+      --seed-index) seed_index="${2:-}"; shift 2 ;;
+      --json)       as_json=1; shift ;;
+      -*)           die "unknown option: $1" ;;
+      *)            [[ -z "$name" ]] || die "unexpected argument: $1"; name="$1"; shift ;;
+    esac
+  done
+  [[ -n "$name" ]] || { echo "w-theme: usage: w-theme edit <name> [--contrast L] [--seed-index N]" >&2; exit 2; }
+  [[ -z "$rename" || "$rename" == "$name" ]] || theme_name_free "$rename"
+
+  local dir
+  if [[ $EUID -eq 0 ]]; then
+    dir="$SYSTEM_THEMES_DIR/$name"
+    [[ -d "$dir" ]] || die "system theme not found: $name"
+  else
+    dir="$(user_themes_dir)/$name"
+    if [[ ! -d "$dir" ]]; then
+      [[ -d "$SYSTEM_THEMES_DIR/$name" ]] && die "'$name' is a system theme — edit it with sudo"
+      die "theme not found: $name"
+    fi
+  fi
+  validate_theme "$dir"
+  theme_is_generated "$dir" \
+    || die "'$name' was written by hand, not generated — editing it would discard its palette"
+
+  # Unspecified parameters keep what the theme already has, so `--contrast high`
+  # on its own means "same theme, more contrast" rather than "rebuild with
+  # defaults". The base colour is resolved after the extraction, by hex — see
+  # palette_position_of_seed.
+  local recorded recorded_seed; recorded="$(theme_settings "$dir")"
+  recorded_seed="${recorded%%$'\t'*}"
+  [[ -n "$contrast" ]] || contrast="${recorded#*$'\t'}"
+  if [[ -z "$appearance" ]]; then
+    appearance="$(grep -oE '^W_APPEARANCE="(dark|light)"' "$dir/theme.conf" | head -1 | cut -d'"' -f2)"
+    appearance="${appearance:-dark}"
+  fi
+  [[ "$appearance" == dark || "$appearance" == light ]] || die "--appearance takes dark or light"
+  validate_contrast "$contrast"
+  [[ -z "$seed_index" || "$seed_index" =~ ^[0-9]+$ ]] || die "--seed-index takes a number"
+
+  command -v magick  &>/dev/null || die "imagemagick is required (pacman -S imagemagick)"
+  command -v matugen &>/dev/null || die "matugen is required (pacman -S matugen)"
+  [[ -f "$PALETTE_PY" ]]         || die "palette engine missing: $PALETTE_PY"
+
+  # shellcheck source=/dev/null
+  source "$LIB_DIR/wallpaper.sh"
+
+  # The theme's own master. Any tier would do — this is the one extraction
+  # already works from, so the palette comes out of the same pixels it did when
+  # the theme was created.
+  local master
+  master="$(compgen -G "$dir/wallpaper/wallpaper-2560x1440.*" | head -1 || true)"
+  [[ -n "$master" ]] || master="$(compgen -G "$dir/wallpaper/wallpaper-*" | head -1 || true)"
+  [[ -n "$master" ]] || die "'$name' has no wallpaper to re-read its palette from"
+
+  local tmp; tmp="$(mktemp -d "${TMPDIR:-/tmp}/w-theme-edit.XXXXXX")"
+  # shellcheck disable=SC2064  # expand $tmp now: the trap must survive the function
+  trap "rm -rf '$tmp'" EXIT
+
+  palette_prepare "$tmp" "$master"
+
+  # An explicit --seed-index is a position in the list this very run produced
+  # (that is what a front-end previewed and clicked); without one, the theme's
+  # recorded colour decides, which survives the ranking moving underneath it.
+  [[ -n "$seed_index" ]] || seed_index="$(palette_position_of_seed "$recorded_seed")"
+
+  if (( as_json )); then
+    palette_preview_json "$tmp" "$appearance" "$contrast" "$seed_index"
+    return 0
+  fi
+
+  seed_index="$(palette_position "$seed_index")"
+  local final="${rename:-$name}"
+  echo "w-theme: rebuilding '$name' ($appearance, contrast $contrast, base colour $seed_index)..." >&2
+  # The header names the theme, so it is written with the name the theme will have
+  # once this call is done, not the one it had when it started.
+  palette_render "$tmp" "$appearance" "$seed_index" "$contrast" "$final" "$master" \
+    >"$tmp/theme.conf" || die "palette engine failed"
+  [[ -s "$tmp/theme.conf" ]] || die "palette engine produced nothing"
+
+  # Replace in one step: a theme.conf caught half-written is a broken desktop for
+  # every axis that reads it, including the session doing the editing.
+  install -m 644 "$tmp/theme.conf" "$dir/theme.conf.new"
+  mv "$dir/theme.conf.new" "$dir/theme.conf"
+
+  # Renaming is a directory move plus, if this is the theme being worn, a fresh
+  # pin — the pin is a symlink to the directory, so a move leaves it dangling and
+  # the session would fall back to the system theme at the next render.
+  local active_here=0
+  if [[ $EUID -eq 0 ]]; then
+    [[ "$(readlink -f "$SYSTEM_POINTER" 2>/dev/null)" == "$(readlink -f "$dir")" ]] && active_here=1
+  else
+    [[ "$(readlink -f "$(user_effective_dir)")" == "$(readlink -f "$dir")" ]] && active_here=1
+  fi
+
+  if [[ -n "$rename" && "$rename" != "$name" ]]; then
+    local parent; parent="$(dirname "$dir")"
+    mv "$dir" "$parent/$rename"
+    dir="$parent/$rename"
+    if (( active_here )); then
+      if [[ $EUID -eq 0 ]]; then ln -sfn "themes/$rename" "$SYSTEM_POINTER"
+      else ln -sfn "$dir" "$(user_pointer)"; fi
+    fi
+    echo "w-theme: renamed '$name' → '$rename'."
+  fi
+  echo "w-theme: rebuilt '$final'."
+
+  # Re-skin only if this very theme is what the session (or the system) is
+  # showing — editing an inactive theme must not repaint the desktop.
+  (( active_here )) || return 0
+  if [[ $EUID -eq 0 ]]; then
+    w-style apply all
+  else
+    local faded=0
+    fade_begin && faded=1
+    w-style apply user
+    [[ "$faded" -eq 1 ]] && fade_end
+  fi
+}
+
+# ── rm: delete a theme ────────────────────────────────────────────────────────
+cmd_rm() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || { echo "w-theme: usage: w-theme rm <name>" >&2; exit 2; }
+  [[ "$name" == "w" ]] && die "the baseline theme 'w' cannot be removed (every other theme inherits from it)"
+
+  local dir
+  if [[ $EUID -eq 0 ]]; then
+    dir="$SYSTEM_THEMES_DIR/$name"
+    [[ -d "$dir" ]] || die "system theme not found: $name"
+    # Repointing the system fallback re-renders grub/plymouth/initramfs, which is
+    # not something a delete should do behind the admin's back.
+    if [[ "$(readlink -f "$SYSTEM_POINTER" 2>/dev/null)" == "$(readlink -f "$dir")" ]]; then
+      die "'$name' is the current system theme — switch first: sudo w-theme set w"
+    fi
+  else
+    dir="$(user_themes_dir)/$name"
+    if [[ ! -d "$dir" ]]; then
+      [[ -d "$SYSTEM_THEMES_DIR/$name" ]] && die "'$name' is a system theme — remove it with sudo"
+      die "theme not found: $name"
+    fi
+    # Removing the directory the pin points at would leave this session
+    # rendering from a theme that no longer exists, so drop the pin first: reset
+    # re-skins the session from the system fallback, with the usual crossfade.
+    if [[ "$(readlink -f "$(user_pointer)" 2>/dev/null)" == "$(readlink -f "$dir")" ]]; then
+      echo "w-theme: '$name' is active — switching to the system theme first" >&2
+      cmd_reset
+    fi
+  fi
+
+  rm -rf "$dir"
+  echo "w-theme: removed '$name'."
+}
+
+# ── list ──────────────────────────────────────────────────────────────────────
+cmd_list() {
+  # --porcelain: machine-readable TSV for GUI front-ends (the Hub Appearance panel).
+  # One line per theme, system collection first then user-local (a local theme whose
+  # name is already taken by a system one is shadowed by find_theme → skipped here too):
+  #   <name>\t<scope>\t<dir>\t<active 1|0>\t<generated 1|0>
+  # `generated` is what `edit` accepts: a hand-authored theme has no palette
+  # settings to rebuild from, so a front-end must not offer the action at all.
+  if [[ "${1:-}" == "--porcelain" ]]; then
+    local active seen=" " d name
+    active="$(basename "$(user_effective_dir)")"
+    for d in "$SYSTEM_THEMES_DIR"/*/; do
+      [[ -d "$d" ]] || continue
+      name="$(basename "$d")"; seen+="$name "
+      printf '%s\t%s\t%s\t%s\t%s\n' "$name" system "${d%/}" \
+        "$([[ "$name" == "$active" ]] && echo 1 || echo 0)" \
+        "$(theme_is_generated "${d%/}" && echo 1 || echo 0)"
+    done
+    if [[ -d "$(user_themes_dir)" ]]; then
+      for d in "$(user_themes_dir)"/*/; do
+        [[ -d "$d" ]] || continue
+        name="$(basename "$d")"
+        [[ "$seen" == *" $name "* ]] && continue
+        printf '%s\t%s\t%s\t%s\t%s\n' "$name" local "${d%/}" \
+          "$([[ "$name" == "$active" ]] && echo 1 || echo 0)" \
+          "$(theme_is_generated "${d%/}" && echo 1 || echo 0)"
+      done
+    fi
+    return 0
+  fi
+
+  local active; active="$(basename "$(user_effective_dir)")"
+  echo "Available themes (* = active for this user):"
+  local d name
+  for d in "$SYSTEM_THEMES_DIR"/*/; do
+    [[ -d "$d" ]] || continue
+    name="$(basename "$d")"
+    printf "  %s %-16s [system]\n" "$([[ "$name" == "$active" ]] && echo '*' || echo ' ')" "$name"
+  done
+  if [[ -d "$(user_themes_dir)" ]]; then
+    for d in "$(user_themes_dir)"/*/; do
+      [[ -d "$d" ]] || continue
+      name="$(basename "$d")"
+      printf "  %s %-16s [local]\n" "$([[ "$name" == "$active" ]] && echo '*' || echo ' ')" "$name"
+    done
+  fi
+}
+
+# ── current ───────────────────────────────────────────────────────────────────
+cmd_current() {
+  echo "user:   $(basename "$(user_effective_dir)")  ($(user_effective_dir))"
+  echo "system: $(basename "$(system_theme_dir)")  ($(system_theme_dir))"
+}
+
+# ── Usage ─────────────────────────────────────────────────────────────────────
+usage() {
+  cat <<EOF
+Usage: w-theme <command> [options]
+
+Info: Switch, add and manage W themes with seamless crossfade.
+
+Commands:
+  set <name> [--no-fade]  Switch theme.
+                            no root → this user, instant, crossfade
+                            sudo    → system fallback + skel + boot/greeter
+                            --no-fade  skip the crossfade
+  reset                   Drop your personal theme, follow the system fallback
+  new <name> --wallpaper <image> [opts]
+                          Build a theme from an image: the wallpaper is
+                          cover-cropped to every resolution tier and the palette
+                          is extracted from it (matugen + OKLCH mapping).
+                            no root → ~/.config/w/themes/, sudo → /etc/w/themes/
+                            --appearance dark|light   default dark
+                            --contrast low|medium|high
+                                                      how much the surfaces are
+                                                      tinted and how far apart
+                                                      the tones sit; low is the
+                                                      pastel end, default medium
+                            --seed-index <n>          which base colour of the
+                                                      image to build from
+                                                      (0 = most dominant)
+                            --scheme <matugen type>   default: adaptive
+                            --activate                switch to it once built
+                            --json                    print the palette matrix
+                                                      only, create nothing: every
+                                                      base colour the image
+                                                      offers × dark/light × every
+                                                      contrast level (GUI preview;
+                                                      the other options are then
+                                                      irrelevant, it returns all
+                                                      of them)
+  edit <name> [opts]      Rebuild a generated theme's palette in place, keeping
+                          its wallpaper. Same options as \`new\` minus the image
+                          (a different wallpaper is a different theme — use
+                          \`new\`), plus --rename <newname>; anything not given
+                          keeps what the theme already has. Re-skins the session
+                          (or the system) if that theme is the active one.
+                          Hand-authored themes are refused.
+  rm <name>               Delete a theme (sudo for a system one). If it is your
+                          active theme, the pin is reset first.
+  list [--porcelain]      List system and local themes (* = active here)
+                            --porcelain  TSV: name, scope, dir, active, generated
+  current                 Show the effective user and system themes
+
+Theme dirs:
+  system  /etc/w/themes/<name>/
+  local   ~/.config/w/themes/<name>/    (each: theme.conf + wallpaper/)
+
+A generated theme carries only theme.conf, wallpaper/ and preview.webp — motion,
+geometry, effects, fonts and the Kvantum base are inherited from the baseline
+theme 'w', so it keeps up with W instead of freezing a copy.
+
+Exit codes:
+  0  Success
+  1  Runtime error
+  2  Usage error
+
+Examples:
+  w-theme list
+  w-theme set midnight
+  sudo w-theme set midnight
+  w-theme reset
+  w-theme new sunset --wallpaper ~/Pictures/sunset.jpg --activate
+  w-theme new garden --wallpaper ~/Pictures/park.jpg --seed-index 1 --contrast low
+  sudo w-theme new corporate --wallpaper /srv/brand.png
+  w-theme edit sunset --contrast low
+  w-theme rm sunset
+EOF
+}
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────
+case "${1:-}" in
+  set)             shift; cmd_set "$@" ;;
+  reset)           cmd_reset ;;
+  new)             shift; cmd_new "$@" ;;
+  edit)            shift; cmd_edit "$@" ;;
+  rm)              shift; cmd_rm "$@" ;;
+  list)            shift; cmd_list "$@" ;;
+  current)         cmd_current ;;
+  help|--help|-h)  usage; exit 0 ;;
+  "")              usage >&2; exit 2 ;;
+  *)               echo "w-theme: unknown command: $1" >&2; usage >&2; exit 2 ;;
+esac

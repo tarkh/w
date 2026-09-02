@@ -1,0 +1,25 @@
+# nightlight.manifest — config owned by mod_nightlight (blue-light filter).
+#
+# Three layers, two of them tracked here (update-system.md phase 2):
+#   • /usr/share/w/defaults/nightlight.conf + .schema — W's defaults and WHO may
+#     set each key. Shipped data, class managed: W owns them, every update
+#     overwrites.
+#   • /etc/w/nightlight.conf — the admin's DEVIATIONS from those defaults. Class
+#     override: the update never touches it; `w-reset nightlight` drops the
+#     deviations so the machine falls back to the vendor layer.
+#
+# NOT tracked here — generated output, regenerate with `apply.sh --nightlight`
+# (or any `w-nightlight` setter):
+#   • ~/.config/hypr/hyprsunset.conf — rendered wholesale from the merged config.
+#     Same precedent as hypridle.conf, which w-power renders into the same
+#     directory and likewise keeps out of a manifest.
+# ~/.config/w/nightlight.conf is where the settings normally land (every key is
+# user-scope), created on demand and with no vendor default — class user-conf:
+# `w-reset nightlight` deletes it (its "default" IS absence), then re-renders
+# via `w-nightlight apply` so the drop actually takes effect on screen.
+#
+# Format: <path>\t<class>   class: managed | override | user-conf
+/usr/share/w/defaults/nightlight.conf	managed
+/usr/share/w/defaults/nightlight.schema	managed
+/etc/w/nightlight.conf	override
+.config/w/nightlight.conf	user-conf

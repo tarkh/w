@@ -1,0 +1,9 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/tarkh/w/security/advisories/new
+    about: Report privately — never as a public issue. See SECURITY.md.
+  - name: How this repository works
+    url: https://github.com/tarkh/w/blob/main/CONTRIBUTING.md
+    about: Releases are published as snapshots and pull requests are landed by hand.
+      Worth reading before you open one.

@@ -1,0 +1,23 @@
+# hyprland.manifest — user-owned config seeded by mod_hyprland (seed-if-absent).
+# Single source of truth: deploy iterates this; w-reset/drift reuse it.
+# Format: <home-relative-path>\t<class>   class: user | managed | override
+# Managed (overwrite) but absent here because w-style RENDERS them and skel holds
+# no authoritative copy: hypr/{colors,animations,effects,geometry}.lua,
+# ghostty/themes/w, foot/themes/w. The system env /etc/xdg/uwsm/env-hyprland is
+# likewise out (a system path, not home). hotkeys-catalog.lua IS listed below: it
+# is static W-owned content shipped in skel, not a render artifact, so it is the
+# one managed home file of this module that a reset/drift audit can act on.
+# hypr/hyprlock.conf is owned by the hyprlock module
+# (its own manifest), not seeded here. hypr/hypridle.conf is now RENDERED by w-power
+# (apply.sh --power), not seeded here — the idle policy is generated from the machine
+# mode + timers, so it is a managed artifact like the w-style .lua files.
+.config/hypr/hotkeys-catalog.lua	managed
+.config/hypr/hyprland.lua	user
+.config/hypr/keyboard.lua	user
+.config/hypr/pointer.lua	user
+.config/hypr/monitors.lua	user
+.config/hypr/hotkeys.lua	user
+.config/hypr/hyprpaper.conf	user
+.config/hypr/xdph.conf	user
+.config/ghostty/config	user
+.config/foot/foot.ini	user

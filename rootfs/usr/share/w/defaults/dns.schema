@@ -1,0 +1,12 @@
+# dns.schema — who may set each key of the `dns` subsystem (see w-conf.md).
+# Format: <KEY>\t<scope>   scope: system | user | both
+#
+# One resolver serves the whole machine (systemd-resolved), and DoT strictness is
+# a security policy — root domain.
+PROVIDER	system
+DOT	system
+# The provider catalog is data the admin extends, so it is declared as a GLOB row
+# rather than key by key — otherwise every new entry would ship undeclared, i.e.
+# unconstrained, and a user file could redefine the addresses behind the admin's
+# chosen provider name.
+DNS_*	system

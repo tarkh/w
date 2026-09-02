@@ -1,0 +1,365 @@
+#!/usr/bin/env bash
+# w-notify — W Linux notification control (Do Not Disturb, history, per-app mute)
+#
+# The user-space backend for W's notification subsystem. Quickshell IS the freedesktop
+# notification server (see quickshell-notifications.md); this tool owns everything the
+# shell must be TOLD, and reads back what the shell RECORDS. It is the single writer of
+# the config and of the DND state, so the Hub panel, the bar block, a hotkey and the AI
+# all mutate notification behaviour through one place instead of racing on JSON.
+#
+# Three files, one writer each — never two:
+#   ~/.config/quickshell/w/config/notifications.json   config     (this tool writes)
+#   ~/.local/state/w/notifications.json                DND state  (this tool writes)
+#   ~/.local/state/w/notification-history.json         history    (the SHELL writes)
+# Everything the shell reads is watched live (FileView), so every change applies with no
+# restart. History is never edited here: `history clear` records a `historyClearedAt`
+# watermark in the state file and the shell prunes itself — one writer, no lost writes.
+#
+# DND expiry needs no daemon: `dnd for/until` stores an absolute `dndUntil` epoch and
+# every reader (this tool, the shell, the bar) compares it against the clock.
+#
+# Sending is deliberately thin: `w-notify send` wraps notify-send so W code, recipes and
+# the AI have one branded entry point with an explicit urgency; the delivery path is the
+# ordinary freedesktop bus either way.
+#
+# See quickshell-notifications.md and w-notify.md.
+
+set -euo pipefail
+
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/w/config/notifications.json"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/w"
+STATE="$STATE_DIR/notifications.json"
+HISTORY="$STATE_DIR/notification-history.json"
+
+err() { echo "w-notify: $*" >&2; }
+die() { err "$*"; exit 1; }
+
+usage() {
+  cat <<EOF
+Usage: w-notify <command> [args]
+
+Info: Control desktop notifications — Do Not Disturb, history, per-app mute.
+
+Commands:
+  status [--porcelain]          Show DND, timeouts, muted apps, history size
+  dnd on|off|toggle             Turn Do Not Disturb on / off / flip it
+  dnd for <30m|1h|90s>          Turn DND on until a relative deadline
+  dnd until <HH:MM>             Turn DND on until the next occurrence of a time
+  dnd critical on|off           Let critical alerts through DND (default on)
+  dnd fullscreen on|off         Silence by itself while a window is fullscreen
+  history [--porcelain] [-n N]  Show recent notifications (newest first)
+  history clear                 Forget the recorded history
+  mute [--list] | mute <app>    List muted apps, or mute one by app name
+  unmute <app>                  Unmute an app
+  timeout low|normal|critical|osd <ms>   Set an auto-dismiss timeout (0 = never)
+  max <n>                       Max notifications visible at once
+  osd on|off                    Volume/brightness OSD popups
+  send [-u urgency] [-a app] <summary> [body]   Send a notification
+  help                          Show this help
+
+Config: $CONF
+State:  $STATE
+
+Exit codes: 0 success · 1 runtime/validation error · 2 usage
+
+Examples:
+  w-notify dnd for 1h
+  w-notify dnd until 08:00
+  w-notify history -n 20
+  w-notify mute Telegram
+  w-notify timeout normal 8000
+  w-notify send -u critical "Reboot required" "The kernel was upgraded."
+EOF
+}
+
+require_jq() { command -v jq >/dev/null 2>&1 || die "jq not found (installed by the shell module)"; }
+
+# ── Config (notifications.json) ───────────────────────────────────────────────────
+# Written only here. A missing/empty file is not an error: every key has a default in
+# NotifConfig.qml, so we may safely start from {} and write just what the user set.
+conf_read() {
+  if [[ -s "$CONF" ]] && jq -e . "$CONF" >/dev/null 2>&1; then cat "$CONF"; else echo '{}'; fi
+}
+
+# conf_set <jq-filter> [--arg name value ...] — atomic replace, keeps every other key.
+conf_set() {
+  require_jq
+  local filter="$1"; shift
+  mkdir -p "${CONF%/*}"
+  local tmp; tmp="$(mktemp "$CONF.XXXXXX")"
+  conf_read | jq --indent 2 "$@" "$filter" > "$tmp" || { rm -f "$tmp"; die "failed to update $CONF"; }
+  mv -f "$tmp" "$CONF"
+  chmod 0644 "$CONF"   # mktemp makes 0600; the file is an ordinary user config
+}
+
+conf_get() { require_jq; conf_read | jq -r "$1"; }
+
+# ── State (DND) ───────────────────────────────────────────────────────────────────
+state_read() {
+  if [[ -s "$STATE" ]] && jq -e . "$STATE" >/dev/null 2>&1; then cat "$STATE"; else echo '{}'; fi
+}
+
+state_set() {
+  require_jq
+  local filter="$1"; shift
+  mkdir -p "$STATE_DIR"
+  local tmp; tmp="$(mktemp "$STATE.XXXXXX")"
+  state_read | jq --indent 2 "$@" "$filter" > "$tmp" || { rm -f "$tmp"; die "failed to update $STATE"; }
+  mv -f "$tmp" "$STATE"
+  chmod 0644 "$STATE"
+}
+
+state_get() { require_jq; state_read | jq -r "$1"; }
+
+# Effective DND right now: stored flag minus an elapsed deadline. Nothing rewrites the
+# file on expiry — every reader (shell, bar, this tool) derives it from the clock, so a
+# lapsed deadline can never disagree between them.
+dnd_active() {
+  local on until now
+  on="$(state_get '.dnd // false')"
+  [[ "$on" == "true" ]] || return 1
+  until="$(state_get '.dndUntil // 0')"
+  [[ "$until" == "0" || "$until" == "null" ]] && return 0
+  now="$(date +%s)"
+  (( now < until ))
+}
+
+# ── Duration / time parsing ───────────────────────────────────────────────────────
+# "90s" / "30m" / "2h" / bare number = minutes.
+parse_duration() {
+  local v="$1" n unit
+  [[ "$v" =~ ^([0-9]+)([smh]?)$ ]] || die "bad duration: $v (use 90s, 30m, 2h)"
+  n="${BASH_REMATCH[1]}"; unit="${BASH_REMATCH[2]:-m}"
+  (( n > 0 )) || die "duration must be greater than zero"
+  case "$unit" in
+    s) echo "$n" ;;
+    m) echo $(( n * 60 )) ;;
+    h) echo $(( n * 3600 )) ;;
+  esac
+}
+
+# "HH:MM" → epoch of its next occurrence (today if still ahead, else tomorrow).
+parse_until() {
+  local v="$1" today now
+  [[ "$v" =~ ^([01]?[0-9]|2[0-3]):[0-5][0-9]$ ]] || die "bad time: $v (use HH:MM)"
+  today="$(date -d "today $v" +%s 2>/dev/null)" || die "bad time: $v"
+  now="$(date +%s)"
+  if (( today > now )); then echo "$today"; else date -d "tomorrow $v" +%s; fi
+}
+
+# ── History (read-only here — the shell owns the file) ────────────────────────────
+# Entries at or before the clear watermark are filtered out, so `history clear` takes
+# effect immediately even when the shell is not running to prune the file.
+history_json() {
+  require_jq
+  local cleared
+  cleared="$(state_get '.historyClearedAt // 0')"
+  [[ "$cleared" == "null" ]] && cleared=0
+  if [[ -s "$HISTORY" ]] && jq -e 'type == "array"' "$HISTORY" >/dev/null 2>&1; then
+    jq --argjson c "$cleared" '[ .[] | select((.ts // 0) > $c) ]' "$HISTORY"
+  else
+    echo '[]'
+  fi
+}
+
+# ── Commands ──────────────────────────────────────────────────────────────────────
+cmd_status() {
+  require_jq
+  local until remain mode muted hcount
+  until="$(state_get '.dndUntil // 0')"; [[ "$until" == "null" ]] && until=0
+  muted="$(conf_get '(.mute // []) | join(", ")')"
+  hcount="$(history_json | jq 'length')"
+
+  if dnd_active; then
+    if [[ "$until" != "0" ]]; then mode="until"; remain=$(( until - $(date +%s) )); else mode="on"; remain=0; fi
+  else
+    mode="off"; remain=0
+  fi
+
+  if [[ "${1:-}" == --porcelain ]]; then
+    echo "DND=$(dnd_active && echo 1 || echo 0)"
+    echo "DND_MODE=$mode"
+    echo "DND_UNTIL=$until"
+    echo "DND_UNTIL_HUMAN=$([[ "$mode" == until ]] && date -d "@$until" +%H:%M || echo '')"
+    echo "DND_REMAINING=$remain"
+    echo "ALLOW_CRITICAL=$([[ "$(conf_get '.dnd.allowCritical // true')" == "true" ]] && echo 1 || echo 0)"
+    echo "AUTO_FULLSCREEN=$([[ "$(conf_get '.dnd.autoFullscreen // false')" == "true" ]] && echo 1 || echo 0)"
+    echo "TIMEOUT_LOW=$(conf_get '.timeout.low // 4000')"
+    echo "TIMEOUT_NORMAL=$(conf_get '.timeout.normal // 6000')"
+    echo "TIMEOUT_CRITICAL=$(conf_get '.timeout.critical // 0')"
+    echo "TIMEOUT_OSD=$(conf_get '.timeout.osd // 1600')"
+    echo "MAX_VISIBLE=$(conf_get '.layout.maxVisible // 5')"
+    echo "OSD=$([[ "$(conf_get '.osd.enable // true')" == "true" ]] && echo 1 || echo 0)"
+    echo "MUTED=$muted"
+    echo "HISTORY_COUNT=$hcount"
+    return 0
+  fi
+
+  echo "== Do Not Disturb =="
+  case "$mode" in
+    off)   echo "state: off" ;;
+    on)    echo "state: ON (until turned off)" ;;
+    until) echo "state: ON until $(date -d "@$until" +%H:%M) ($(( remain / 60 )) min left)" ;;
+  esac
+  echo "critical alerts pass through: $(conf_get '.dnd.allowCritical // true')"
+  echo "silences itself in fullscreen: $(conf_get '.dnd.autoFullscreen // false')"
+  echo
+  echo "== Behaviour =="
+  echo "timeouts (ms): low=$(conf_get '.timeout.low // 4000')  normal=$(conf_get '.timeout.normal // 6000')  critical=$(conf_get '.timeout.critical // 0')  osd=$(conf_get '.timeout.osd // 1600')   (0 = never)"
+  echo "max visible:   $(conf_get '.layout.maxVisible // 5')"
+  echo "OSD popups:    $(conf_get '.osd.enable // true')"
+  echo
+  echo "== Muted apps =="
+  echo "${muted:-(none)}"
+  echo
+  echo "history: $hcount recorded"
+}
+
+cmd_dnd() {
+  case "${1:-}" in
+    on)     state_set '.dnd = true | .dndUntil = 0' ;;
+    off)    state_set '.dnd = false | .dndUntil = 0' ;;
+    toggle) if dnd_active; then state_set '.dnd = false | .dndUntil = 0'; else state_set '.dnd = true | .dndUntil = 0'; fi ;;
+    for)
+      [[ -n "${2:-}" ]] || { err "dnd for: missing duration"; exit 2; }
+      local secs; secs="$(parse_duration "$2")"
+      state_set '.dnd = true | .dndUntil = $u' --argjson u "$(( $(date +%s) + secs ))"
+      ;;
+    until)
+      [[ -n "${2:-}" ]] || { err "dnd until: missing time"; exit 2; }
+      state_set '.dnd = true | .dndUntil = $u' --argjson u "$(parse_until "$2")"
+      ;;
+    critical)
+      case "${2:-}" in
+        on)  conf_set '.dnd.allowCritical = true' ;;
+        off) conf_set '.dnd.allowCritical = false' ;;
+        *)   err "dnd critical: expected on|off"; exit 2 ;;
+      esac
+      ;;
+    fullscreen)
+      case "${2:-}" in
+        on)  conf_set '.dnd.autoFullscreen = true' ;;
+        off) conf_set '.dnd.autoFullscreen = false' ;;
+        *)   err "dnd fullscreen: expected on|off"; exit 2 ;;
+      esac
+      ;;
+    *) err "dnd: expected on|off|toggle|for|until|critical|fullscreen"; exit 2 ;;
+  esac
+}
+
+cmd_history() {
+  if [[ "${1:-}" == clear ]]; then
+    state_set '.historyClearedAt = $t' --argjson t "$(date +%s)"
+    return 0
+  fi
+
+  local porcelain=0 limit=20
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --porcelain) porcelain=1; shift ;;
+      -n) [[ -n "${2:-}" ]] || { err "history: -n needs a count"; exit 2; }
+          [[ "$2" =~ ^[0-9]+$ ]] || die "history: bad count: $2"
+          limit="$2"; shift 2 ;;
+      *)  err "history: unknown option: $1"; exit 2 ;;
+    esac
+  done
+
+  local rows; rows="$(history_json | jq --argjson n "$limit" '.[0:$n]')"
+
+  if (( porcelain )); then
+    # TSV: ts, app, urgency, suppressed, summary, body (newlines flattened).
+    echo "$rows" | jq -r '.[] | [ (.ts // 0), (.app // ""), (.urgency // "normal"),
+        (if .suppressed then 1 else 0 end),
+        ((.summary // "") | gsub("[\n\t]"; " ")),
+        ((.body // "") | gsub("[\n\t]"; " ")) ] | @tsv'
+    return 0
+  fi
+
+  if [[ "$(echo "$rows" | jq 'length')" == "0" ]]; then echo "(no notifications recorded)"; return 0; fi
+  echo "$rows" | jq -r '.[] | [ (.ts // 0), (.urgency // "normal"),
+      (if .suppressed then "·" else " " end), (.app // "?"),
+      ((.summary // "") | gsub("[\n\t]"; " ")) ] | @tsv' |
+  while IFS=$'\t' read -r ts urg sup app summary; do
+    printf '%s %s%s [%s] %s\n' "$(date -d "@$ts" +%H:%M)" \
+      "$([[ "$urg" == critical ]] && echo '!' || echo ' ')" "$sup" "$app" "$summary"
+  done
+}
+
+cmd_mute() {
+  if [[ $# -eq 0 || "${1:-}" == --list ]]; then
+    local m; m="$(conf_get '(.mute // []) | join("\n")')"
+    echo "${m:-(no muted apps)}"
+    return 0
+  fi
+  # Idempotent + case-insensitive: the app name comes from the notification's appName,
+  # which apps spell inconsistently between releases.
+  conf_set '.mute = ((.mute // []) | map(select(ascii_downcase != ($a | ascii_downcase))) + [$a])' --arg a "$1"
+  echo "muted: $1"
+}
+
+cmd_unmute() {
+  [[ -n "${1:-}" ]] || { err "unmute: missing app name"; exit 2; }
+  conf_set '.mute = ((.mute // []) | map(select(ascii_downcase != ($a | ascii_downcase))))' --arg a "$1"
+  echo "unmuted: $1"
+}
+
+cmd_timeout() {
+  local key="${1:-}" ms="${2:-}"
+  case "$key" in low|normal|critical|osd) ;; *) err "timeout: expected low|normal|critical|osd"; exit 2 ;; esac
+  [[ "$ms" =~ ^[0-9]+$ ]] || { err "timeout: milliseconds must be a number (0 = never)"; exit 2; }
+  conf_set '.timeout[$k] = $v' --arg k "$key" --argjson v "$ms"
+}
+
+cmd_max() {
+  [[ "${1:-}" =~ ^[0-9]+$ ]] || { err "max: expected a number"; exit 2; }
+  (( $1 >= 1 )) || die "max: at least 1 notification must be visible"
+  conf_set '.layout.maxVisible = $v' --argjson v "$1"
+}
+
+cmd_osd() {
+  case "${1:-}" in
+    on)  conf_set '.osd.enable = true' ;;
+    off) conf_set '.osd.enable = false' ;;
+    *)   err "osd: expected on|off"; exit 2 ;;
+  esac
+}
+
+# Thin wrapper over notify-send: one branded entry point with an explicit urgency for W
+# scripts, AI recipes and the Hub's test button. Delivery is the ordinary freedesktop
+# bus, so DND / mute / timeouts apply exactly as they do to any other application.
+cmd_send() {
+  local urgency=normal app="W" summary="" body=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -u|--urgency) [[ -n "${2:-}" ]] || { err "send: -u needs low|normal|critical"; exit 2; }
+                    urgency="$2"; shift 2 ;;
+      -a|--app)     [[ -n "${2:-}" ]] || { err "send: -a needs an app name"; exit 2; }
+                    app="$2"; shift 2 ;;
+      -h|--help)    usage; exit 0 ;;
+      --)           shift; break ;;
+      -*)           err "send: unknown option: $1"; exit 2 ;;
+      *)            break ;;
+    esac
+  done
+  case "$urgency" in low|normal|critical) ;; *) err "send: urgency must be low|normal|critical"; exit 2 ;; esac
+  [[ -n "${1:-}" ]] || { err "send: missing summary"; exit 2; }
+  summary="$1"; body="${2:-}"
+  command -v notify-send >/dev/null 2>&1 || die "notify-send not found (package libnotify)"
+  notify-send -a "$app" -u "$urgency" "$summary" "$body"
+}
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────────
+case "${1:-}" in
+  status)          shift; cmd_status "$@" ;;
+  dnd)             shift; cmd_dnd "$@" ;;
+  history)         shift; cmd_history "$@" ;;
+  mute)            shift; cmd_mute "$@" ;;
+  unmute)          shift; cmd_unmute "$@" ;;
+  timeout)         shift; cmd_timeout "$@" ;;
+  max)             shift; cmd_max "$@" ;;
+  osd)             shift; cmd_osd "$@" ;;
+  send)            shift; cmd_send "$@" ;;
+  help|--help|-h)  usage; exit 0 ;;
+  "")              usage >&2; exit 2 ;;
+  *)               echo "w-notify: unknown command: $1" >&2; usage >&2; exit 2 ;;
+esac

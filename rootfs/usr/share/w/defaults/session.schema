@@ -1,0 +1,27 @@
+# session.schema — which layer may decide each key of the `session` subsystem.
+#
+# Read by /usr/lib/w/w-conf-lib.sh (and its Python twin) during the load
+# pass; a user-layer assignment to a `system` key is dropped with a warning, and
+# `wconf_set` refuses to write it in the first place. See w-conf.md.
+#
+# Format: <KEY>\t<scope>       scope: system | user | both
+#   system — root domain: the admin (or fleet policy) decides, per machine.
+#   user   — the logged-in user may override it in ~/.config/w/session.conf.
+#   both   — either layer may speak; the usual priority order applies.
+#
+# Every key here is `user`, for the same reason as `nightlight`: the whole
+# subsystem lives inside one graphical session. It reads that user's own window
+# list, writes that user's own snapshot (~/.local/state/w/session.json, mode
+# 0600), and its daemon is a `systemctl --user` unit. There is no machine-wide
+# artifact to protect, so there is no polkit anywhere in this subsystem — the
+# Hub calls `w-session` directly, exactly as it calls `w-nightlight`.
+#
+# A fleet that does want to fix these (a kiosk that must always come up clean,
+# say) still can: policy.d sits above the user layer and locks the setters,
+# which is the mechanism for exactly this case.
+
+MODE	user
+AUTOSAVE_SEC	user
+EXCLUDE_CLASSES	user
+MAX_WINDOWS	user
+TERMINAL_APPS	user

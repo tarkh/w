@@ -1,0 +1,42 @@
+# W Linux — the session-memory snapshot daemon.
+#
+# Subscribes to Hyprland's event socket and keeps ~/.local/state/w/session.json
+# current, so that a crash or a held power button still costs at most one
+# AUTOSAVE_SEC of your window layout. A GRACEFUL exit does not depend on this at
+# all: `w-session-exit` takes an exact snapshot before it starts closing
+# windows, which is the last instant the window list is still whole.
+#
+# Global-enabled by mod_session and pulled in by graphical-session.target, NOT
+# started from hyprland.lua: that file is ownership class `user` (seed-if-absent),
+# so a line added to it would only ever reach accounts created afterwards and no
+# existing machine would get the feature at all. The same reasoning puts hypridle
+# and the night light tick on units rather than in the Lua autostart.
+#
+# Enabled unconditionally, because whether it records anything is a per-user
+# SETTING, not a unit state: `w-session daemon` exits 0 immediately when MODE=off
+# or AUTOSAVE_SEC=0. Keeping the gate in the layered config means one answer that
+# the Hub, the CLI and the AI all write, instead of a unit state that could
+# disagree with it. Every setter calls `systemctl --user restart` on this unit, so
+# a changed setting takes effect now rather than at the next login.
+#
+# See w-session.md.
+[Unit]
+Description=W session memory — keep the window-layout snapshot current
+PartOf=graphical-session.target
+After=graphical-session.target
+# No Wayland session means no window list to watch.
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/w-session daemon
+# A clean exit is a decision, not a failure: the daemon returns 0 when the
+# config says there is nothing to record, and when the compositor goes away.
+Restart=on-failure
+RestartSec=5
+# The daemon holds no unflushed state — every snapshot is written atomically
+# (tmp + rename) the moment it is taken.
+TimeoutStopSec=5s
+
+[Install]
+WantedBy=graphical-session.target

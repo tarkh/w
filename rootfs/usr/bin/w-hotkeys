@@ -1,0 +1,423 @@
+#!/usr/bin/env bash
+# w-hotkeys — W Linux keybinding control (Hyprland)
+#
+# Manages the keybindings of the running Hyprland session as DATA. The W action catalog
+# (/usr/share/w/hotkeys/catalog.tokens + the compositor-side hotkeys-catalog.lua) defines
+# stable action TOKENS with a default chord each; a PROFILE maps tokens → chords. This tool
+# switches the active profile, rebinds single actions, and manages user profiles — the
+# user-space backend for the W Hub Hotkeys panel and a companion to `w-keyboard`.
+#
+# No root: the Hyprland session is the user's own. Every mutation is written to the active
+# fragment ~/.config/hypr/hotkeys.lua (require()d by hyprland.lua) and applied LIVE via
+# `hyprctl reload` (which re-runs the config; the autostart hook does not re-fire). The
+# fragment is the source of truth — read it (not hyprctl), so w-hotkeys is correct even
+# headless (a TTY / the AI), where the live session is unavailable.
+#
+# Profiles: "default" (built-in = the catalog defaults, no override file) and "i3-vim"
+# (/usr/share/w/hotkeys/profiles/i3-vim.map, diff over defaults) ship with W; user profiles
+# live in ~/.config/hypr/hotkeys.d/<name>.map. Media keys + mouse drag/resize are fixed
+# (always bound by the catalog) and are not tokens — they cannot be rebound in this phase.
+#
+# See quickshell-hub.md (Hotkeys) and w-hotkeys.md.
+
+set -euo pipefail
+
+FRAG="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hotkeys.lua"
+USER_PROFILES="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hotkeys.d"
+SHARE="/usr/share/w/hotkeys"
+TOKENS="$SHARE/catalog.tokens"
+PROFILES="$SHARE/profiles"
+
+err()  { echo "w-hotkeys: $*" >&2; }
+die()  { err "$*"; exit 1; }
+
+usage() {
+  cat <<EOF
+Usage: w-hotkeys <command> [args]
+
+Info: Manage Hyprland keybindings — profiles, catalog, custom binds.
+
+Commands:
+  status [--porcelain]        Show the active profile + effective binds
+  catalog [--porcelain]       List tokens (token / category / default / chord / source / profile-chord)
+  profiles [--porcelain]      List profiles (built-in + user), marking the active one
+  use <profile>               Switch the active profile (live + persisted)
+  set <token> <chord>         Rebind one action (empty chord "" unbinds it)
+  reset <token|--all>         Revert token(s) to the active profile's chord
+  custom [--porcelain]        List custom actions (chord → command)
+  custom-add <chord> <exec>   Add a custom action (arbitrary chord → shell command)
+  custom-rm <chord>           Remove a custom action by its chord
+  profile-new <name> [--from <profile|current>]   Save a user profile
+  profile-rm <name>           Delete a user profile
+  help                        Show this help
+
+Active fragment: $FRAG
+Catalog:         $TOKENS      User profiles: $USER_PROFILES
+
+Exit codes: 0 success · 1 runtime/validation error · 2 usage
+
+Examples:
+  w-hotkeys use i3-vim
+  w-hotkeys set launcher "SUPER + Space"
+  w-hotkeys set launcher ""            # unbind
+  w-hotkeys reset launcher
+  w-hotkeys custom-add "SUPER + C" "gnome-calculator"
+  w-hotkeys custom-rm "SUPER + C"
+  w-hotkeys profile-new mine --from current
+EOF
+}
+
+# ── Live session ─────────────────────────────────────────────────────────────────
+have_hypr() { command -v hyprctl >/dev/null 2>&1 && hyprctl version >/dev/null 2>&1; }
+reload() { if have_hypr; then hyprctl reload >/dev/null 2>&1 || true; fi; }
+
+# ── Catalog (token order / category / default chord) ──────────────────────────────
+declare -a TOKEN_ORDER=()
+declare -A TOK_CAT=() TOK_DEF=()
+load_tokens() {
+  [[ -r "$TOKENS" ]] || die "catalog not found: $TOKENS"
+  local tok cat def
+  while IFS=$'\t' read -r tok cat def; do
+    [[ -z "${tok:-}" || "$tok" == \#* ]] && continue
+    TOKEN_ORDER+=("$tok"); TOK_CAT["$tok"]="$cat"; TOK_DEF["$tok"]="$def"
+  done < "$TOKENS"
+}
+is_token() { [[ -n "${TOK_DEF[$1]+x}" ]]; }
+
+# The "menu" category (menu_up/down/.../delete) is Quickshell-local — see
+# hotkeys-catalog.lua's note on why it's absent from M.actions. Its chords are read by
+# core/HubNavKeys.qml's keyFor(), which only understands a bare arrow/Return/Escape/
+# Delete/Backspace keysym or a single letter/digit — no modifiers (these are never a
+# Hyprland bind, so nothing composes them). Mirror that grammar here: a chord `set`
+# accepts for a menu_* token but keyFor() can't parse would silently do nothing in the
+# Hub, so reject it up front instead of leaving a bind that looks set but never fires.
+menu_chord_valid() {
+  local c="$1" lc
+  lc="$(printf '%s' "$c" | tr '[:upper:]' '[:lower:]')"
+  case "$lc" in up|down|left|right|return|escape|delete|backspace) return 0 ;; esac
+  [[ ${#c} -eq 1 && "$c" =~ [A-Za-z0-9] ]]
+}
+
+# ── Active fragment (source of truth) ─────────────────────────────────────────────
+PROFILE="default"
+declare -A MAP=()
+declare -a CUSTOM=()
+read_frag() {
+  PROFILE="default"; MAP=(); CUSTOM=()
+  [[ -r "$FRAG" ]] || return 0
+  local p
+  p="$(sed -n 's/^[[:space:]]*profile[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' "$FRAG" | head -1)"
+  [[ -n "$p" ]] && PROFILE="$p"
+  local tok chord
+  while IFS=$'\t' read -r tok chord; do
+    [[ -n "${tok:-}" ]] && MAP["$tok"]="$chord"
+  done < <(sed -n 's/^[[:space:]]*\["\([^"]*\)"\][[:space:]]*=[[:space:]]*"\(.*\)",[[:space:]]*$/\1\t\2/p' "$FRAG")
+  local c e
+  while IFS=$'\t' read -r c e; do
+    [[ -n "${c:-}" ]] && CUSTOM+=("$c"$'\t'"$e")
+  done < <(sed -n 's/^[[:space:]]*{[[:space:]]*chord[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*,[[:space:]]*exec[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*}.*/\1\t\2/p' "$FRAG")
+}
+
+write_frag() {
+  local tmp; tmp="$(mktemp)"
+  {
+    echo '-- W Linux — active hotkey profile. Managed by `w-hotkeys` (and the W Hub Hotkeys'
+    echo '-- panel); hand-edits are overwritten. Data module require()d by hyprland.lua,'
+    echo '-- threaded through the action catalog (hotkeys-catalog.lua).'
+    echo '--'
+    echo '-- profile : active profile name ("default" = W defaults, "i3-vim" = i3 legacy, or a'
+    echo '--           user profile from ~/.config/hypr/hotkeys.d/).'
+    echo '-- map     : token → chord overrides (empty = catalog defaults).'
+    echo '-- custom  : user actions, each { chord = "SUPER + ...", exec = "shell command" }.'
+    echo 'return {'
+    printf '  profile = "%s",\n' "$PROFILE"
+    echo '  map = {'
+    local tok
+    for tok in "${TOKEN_ORDER[@]}"; do
+      [[ -n "${MAP[$tok]+x}" ]] && printf '    ["%s"] = "%s",\n' "$tok" "${MAP[$tok]}"
+    done
+    echo '  },'
+    echo '  custom = {'
+    local ce c e
+    for ce in ${CUSTOM[@]+"${CUSTOM[@]}"}; do
+      c="${ce%%$'\t'*}"; e="${ce#*$'\t'}"
+      printf '    { chord = "%s", exec = "%s" },\n' "$c" "$e"
+    done
+    echo '  },'
+    echo '}'
+  } > "$tmp"
+  mkdir -p "$(dirname "$FRAG")"
+  # Replace the CONTENT but keep the inode: the shell's core/HubNavKeys.qml watches this
+  # path with FileView{watchChanges} so every panel's menu chords follow a profile switch
+  # made from a terminal, and Quickshell watches inodes — a mv-over would leave the watch
+  # on the old, unlinked one and freeze the chords until the shell restarts. Same rule the
+  # Quickshell files w-style writes already follow (write_user_file in w-style/lib/core.sh;
+  # only qt*ct.conf, watched by directory, is written the other way round). The reload below
+  # is this file's only reader and runs after the write returns, so no torn read is possible.
+  if [[ -f "$FRAG" ]]; then cat "$tmp" >"$FRAG"; rm -f "$tmp"
+  else install -Dm600 "$tmp" "$FRAG"; rm -f "$tmp"; fi
+  reload
+}
+
+effective() { if [[ -n "${MAP[$1]+x}" ]]; then printf '%s' "${MAP[$1]}"; else printf '%s' "${TOK_DEF[$1]}"; fi; }
+src_of()    { [[ -n "${MAP[$1]+x}" ]] && echo override || echo default; }
+
+# ── Profiles ──────────────────────────────────────────────────────────────────────
+# Path of a profile's override file (empty string for the built-in "default").
+profile_file() {
+  case "$1" in
+    default)  echo "" ;;
+    i3-vim)   echo "$PROFILES/i3-vim.map" ;;
+    *)        echo "$USER_PROFILES/$1.map" ;;
+  esac
+}
+profile_exists() {
+  [[ "$1" == "default" ]] && return 0
+  [[ -r "$(profile_file "$1")" ]]
+}
+# Load a profile's overrides (token→chord) into the global MAP (validates tokens).
+load_profile_into_map() {
+  local prof="$1" f tok chord
+  MAP=()
+  f="$(profile_file "$prof")"
+  [[ -z "$f" ]] && return 0                    # default = catalog defaults, no overrides
+  while IFS=$'\t' read -r tok chord; do
+    [[ -z "${tok:-}" || "$tok" == \#* ]] && continue
+    is_token "$tok" || { err "profile $prof: unknown token '$tok' (skipped)"; continue; }
+    MAP["$tok"]="$chord"
+  done < "$f"
+}
+
+# ── Commands ───────────────────────────────────────────────────────────────────────
+cmd_status() {
+  read_frag
+  if [[ "${1:-}" == "--porcelain" ]]; then
+    echo "profile=$PROFILE"
+    local tok
+    for tok in "${TOKEN_ORDER[@]}"; do
+      printf '%s\t%s\t%s\n' "$tok" "$(effective "$tok")" "$(src_of "$tok")"
+    done
+  else
+    printf 'profile: %s\n' "$PROFILE"
+    local tok
+    for tok in "${TOKEN_ORDER[@]}"; do
+      printf '  %-14s %-26s %s\n' "$tok" "$(effective "$tok")" "$(src_of "$tok")"
+    done
+  fi
+}
+
+cmd_catalog() {
+  read_frag
+  if [[ "${1:-}" == "--porcelain" ]]; then
+    # Baseline = the active profile's chord for each token (its override if the profile sets
+    # one, else the catalog default). Emitted as a 6th column so the GUI can tell a genuine
+    # user edit (effective ≠ baseline) from a chord the profile itself provides — `use i3-vim`
+    # writes i3-vim's whole diff into the map, so `source` alone reads those as "override".
+    local -A PBASE=(); local pf ptok pchord
+    pf="$(profile_file "$PROFILE")"
+    if [[ -n "$pf" && -r "$pf" ]]; then
+      while IFS=$'\t' read -r ptok pchord; do
+        [[ -z "${ptok:-}" || "$ptok" == \#* ]] && continue
+        PBASE["$ptok"]="$pchord"
+      done < "$pf"
+    fi
+    local tok base
+    for tok in "${TOKEN_ORDER[@]}"; do
+      base="${PBASE[$tok]-${TOK_DEF[$tok]}}"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$tok" "${TOK_CAT[$tok]}" "${TOK_DEF[$tok]}" "$(effective "$tok")" "$(src_of "$tok")" "$base"
+    done
+  else
+    printf '%-14s %-10s %-26s %-26s %s\n' TOKEN CATEGORY DEFAULT CHORD SOURCE
+    local tok
+    for tok in "${TOKEN_ORDER[@]}"; do
+      printf '%-14s %-10s %-26s %-26s %s\n' "$tok" "${TOK_CAT[$tok]}" "${TOK_DEF[$tok]}" "$(effective "$tok")" "$(src_of "$tok")"
+    done
+  fi
+}
+
+cmd_profiles() {
+  read_frag
+  local porcelain=""; [[ "${1:-}" == "--porcelain" ]] && porcelain=1
+  local -a names=(default i3-vim)
+  local f
+  if [[ -d "$USER_PROFILES" ]]; then
+    for f in "$USER_PROFILES"/*.map; do
+      [[ -e "$f" ]] || continue
+      names+=("$(basename "$f" .map)")
+    done
+  fi
+  local n kind active
+  for n in "${names[@]}"; do
+    case "$n" in default|i3-vim) kind=builtin ;; *) kind=user ;; esac
+    active=""; [[ "$n" == "$PROFILE" ]] && active=1
+    if [[ -n "$porcelain" ]]; then
+      printf '%s\t%s\t%s\n' "$n" "$kind" "${active:-0}"
+    else
+      printf '  %s%-16s %s\n' "${active:+* }" "$n" "$kind"
+    fi
+  done
+}
+
+cmd_use() {
+  local prof="${1:-}"; [[ -n "$prof" ]] || { err "use: <profile> required"; exit 2; }
+  profile_exists "$prof" || die "unknown profile: $prof (see: w-hotkeys profiles)"
+  read_frag                       # keep any custom actions
+  load_profile_into_map "$prof"   # replaces MAP with the profile's overrides
+  PROFILE="$prof"
+  write_frag
+  echo "w-hotkeys: switched to profile '$prof'"
+}
+
+cmd_set() {
+  # An empty chord ("") is valid: it unbinds the action (override = unbound), distinct from
+  # `reset` which drops the override back to the profile's chord. <token> is still required.
+  [[ $# -ge 2 && -n "${1:-}" ]] || { err "set: <token> <chord> required (empty chord \"\" unbinds)"; exit 2; }
+  local tok="$1" chord="$2"
+  is_token "$tok" || die "unknown token: $tok (see: w-hotkeys catalog)"
+  [[ "$chord" == *$'\t'* ]] && die "invalid chord"
+  if [[ -n "$chord" && "${TOK_CAT[$tok]}" == "menu" ]]; then
+    menu_chord_valid "$chord" || die "menu_* actions take a single bare key only, no modifiers (e.g. 'H', 'Escape') — got '$chord'"
+  fi
+  read_frag
+  MAP["$tok"]="$chord"
+  write_frag
+  if [[ -n "$chord" ]]; then echo "w-hotkeys: set $tok = $chord"; else echo "w-hotkeys: unbound $tok"; fi
+}
+
+cmd_reset() {
+  local what="${1:-}"; [[ -n "$what" ]] || { err "reset: <token|--all> required"; exit 2; }
+  read_frag
+  if [[ "$what" == "--all" ]]; then
+    local keep="$PROFILE"
+    load_profile_into_map "$keep"; PROFILE="$keep"
+    write_frag
+    echo "w-hotkeys: reset all to profile '$keep'"
+    return
+  fi
+  is_token "$what" || die "unknown token: $what (see: w-hotkeys catalog)"
+  # The active profile's chord for this token: its override if the profile sets one,
+  # otherwise the catalog default (→ drop the override).
+  local -A PMAP=()
+  local f tok chord; f="$(profile_file "$PROFILE")"
+  if [[ -n "$f" && -r "$f" ]]; then
+    while IFS=$'\t' read -r tok chord; do
+      [[ -z "${tok:-}" || "$tok" == \#* ]] && continue
+      PMAP["$tok"]="$chord"
+    done < "$f"
+  fi
+  if [[ -n "${PMAP[$what]+x}" ]]; then MAP["$what"]="${PMAP[$what]}"; else unset 'MAP[$what]'; fi
+  write_frag
+  echo "w-hotkeys: reset $what to profile '$PROFILE'"
+}
+
+cmd_profile_new() {
+  local name="${1:-}"; [[ -n "$name" ]] || { err "profile-new: <name> required"; exit 2; }
+  # CLI-safe: a single lowercase word of a-z, 0-9 and dashes (matches the built-in ids).
+  [[ "$name" =~ ^[a-z0-9-]+$ ]] || die "invalid profile name: $name (use a-z, 0-9, - only)"
+  case "$name" in default|i3-vim) die "reserved profile name: $name" ;; esac
+  local from="current"
+  [[ "${2:-}" == "--from" ]] && { from="${3:-}"; [[ -n "$from" ]] || { err "profile-new: --from needs a value"; exit 2; }; }
+
+  read_frag
+  # Build the source's effective map, then emit a diff over the catalog defaults.
+  if [[ "$from" != "current" ]]; then
+    profile_exists "$from" || die "unknown source profile: $from"
+    load_profile_into_map "$from"
+  fi
+  mkdir -p "$USER_PROFILES"
+  local out="$USER_PROFILES/$name.map" tmp; tmp="$(mktemp)"
+  {
+    printf '# W Linux — user hotkey profile "%s" (created by w-hotkeys from %s).\n' "$name" "$from"
+    echo '# Format: token<TAB>chord  — only tokens that differ from the W defaults.'
+    local tok eff
+    for tok in "${TOKEN_ORDER[@]}"; do
+      eff="$(effective "$tok")"
+      [[ "$eff" != "${TOK_DEF[$tok]}" ]] && printf '%s\t%s\n' "$tok" "$eff"
+    done
+  } > "$tmp"
+  mv "$tmp" "$out"
+  echo "w-hotkeys: saved profile '$name' ($out)"
+}
+
+cmd_profile_rm() {
+  local name="${1:-}"; [[ -n "$name" ]] || { err "profile-rm: <name> required"; exit 2; }
+  case "$name" in default|i3-vim) die "cannot remove built-in profile: $name" ;; esac
+  local f="$USER_PROFILES/$name.map"
+  [[ -e "$f" ]] || die "no such user profile: $name"
+  rm -f "$f"
+  read_frag
+  if [[ "$PROFILE" == "$name" ]]; then
+    load_profile_into_map default; PROFILE="default"; write_frag
+    echo "w-hotkeys: removed '$name' (active profile fell back to 'default')"
+  else
+    echo "w-hotkeys: removed profile '$name'"
+  fi
+}
+
+# ── Custom actions (arbitrary chord → shell command, stored in fragment.custom) ─────
+cmd_custom() {
+  read_frag
+  local porcelain=""; [[ "${1:-}" == "--porcelain" ]] && porcelain=1
+  local ce c e
+  for ce in ${CUSTOM[@]+"${CUSTOM[@]}"}; do
+    c="${ce%%$'\t'*}"; e="${ce#*$'\t'}"
+    if [[ -n "$porcelain" ]]; then printf '%s\t%s\n' "$c" "$e"; else printf '  %-26s %s\n' "$c" "$e"; fi
+  done
+}
+
+# Guard chord/exec: a literal " or TAB would break the Lua fragment (emitted raw as "%s").
+custom_valid() { [[ "$1" != *\"* && "$1" != *$'\t'* ]]; }
+
+cmd_custom_add() {
+  [[ $# -ge 2 && -n "${1:-}" && -n "${2:-}" ]] || { err "custom-add: <chord> <exec> required"; exit 2; }
+  local chord="$1" exec="$2"
+  custom_valid "$chord" && custom_valid "$exec" || die "invalid chord/exec (no quotes or tabs)"
+  read_frag
+  local ce c
+  for ce in ${CUSTOM[@]+"${CUSTOM[@]}"}; do
+    c="${ce%%$'\t'*}"; [[ "$c" == "$chord" ]] && die "custom action already bound: $chord"
+  done
+  CUSTOM+=("$chord"$'\t'"$exec")
+  write_frag
+  echo "w-hotkeys: added custom $chord = $exec"
+}
+
+cmd_custom_rm() {
+  local chord="${1:-}"; [[ -n "$chord" ]] || { err "custom-rm: <chord> required"; exit 2; }
+  read_frag
+  local -a keep=(); local ce c hit=""
+  for ce in ${CUSTOM[@]+"${CUSTOM[@]}"}; do
+    c="${ce%%$'\t'*}"
+    if [[ "$c" == "$chord" ]]; then hit=1; else keep+=("$ce"); fi
+  done
+  [[ -n "$hit" ]] || die "no custom action bound to: $chord"
+  CUSTOM=(${keep[@]+"${keep[@]}"})
+  write_frag
+  echo "w-hotkeys: removed custom $chord"
+}
+
+# ── Dispatch ─────────────────────────────────────────────────────────────────────
+main() {
+  local cmd="${1:-}"; [[ $# -gt 0 ]] && shift || true
+  case "$cmd" in
+    status|catalog|profiles|use|set|reset)  load_tokens ;;
+    profile-new|profile-rm)                 load_tokens ;;
+  esac
+  case "$cmd" in
+    status)      cmd_status "$@" ;;
+    catalog)     cmd_catalog "$@" ;;
+    profiles)    cmd_profiles "$@" ;;
+    use)         cmd_use "$@" ;;
+    set)         cmd_set "$@" ;;
+    reset)       cmd_reset "$@" ;;
+    custom)      cmd_custom "$@" ;;
+    custom-add)  cmd_custom_add "$@" ;;
+    custom-rm)   cmd_custom_rm "$@" ;;
+    profile-new) cmd_profile_new "$@" ;;
+    profile-rm)  cmd_profile_rm "$@" ;;
+    help|-h|--help) usage ;;
+    "")          usage; exit 2 ;;
+    *)           err "unknown command: $cmd"; usage; exit 2 ;;
+  esac
+}
+main "$@"

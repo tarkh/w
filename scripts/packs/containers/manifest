@@ -1,0 +1,19 @@
+# containers bundle — config ownership (deploy.sh SDK + w-reset).
+# TSV: <path>\t<class>. Absolute path → config/root<path> (always managed);
+# home-relative → config/skel/<path>. class: user = seed-if-absent, managed =
+# overwrite (W owns it). A trailing '/' marks a directory tree.
+#
+# NOTE: ~/.config/lazydocker/config.yml is NOT listed here — it is a themed file
+# owned by the w-style axis 500-lazydocker (rendered each login/theme change),
+# same split as btop. Only behavioural/system config is deployed below.
+
+# System DNS coexistence: aardvark-dns forwards to resolved on an alt port so the
+# DoT/Quad9 stub on :53 is untouched (pack-containers.md).
+/etc/containers/containers.conf.d/10-w.conf	managed
+
+# Session env (DOCKER_HOST / DOCKER_BUILDKIT), sourced by env-hyprland drop-in.
+/etc/w/env.d/containers.sh	managed
+
+# Rootless storage: native overlay driver, no fuse mount_program (btrfs reflink).
+# User-seed so a user's own storage tweaks survive re-install.
+.config/containers/storage.conf	user

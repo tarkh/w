@@ -1,0 +1,26 @@
+# W AI recipe: log-anomaly — see ai-integration.md (Этап 4) / w-automation skill.
+# Meant to be scheduled hourly (`w-ai schedule add log-anomaly 'hourly'` or similar)
+# — the 'since' window below assumes that cadence. No `extensions:` block, same
+# reasoning as morning-digest.yaml.
+version: "1.0.0"
+title: "Log anomaly scan"
+description: >-
+  Scan recent journald logs for fresh error patterns; notify only if something new
+  turns up (silent when the machine is healthy).
+prompt: |
+  Scan the journal for fresh problems and notify ONLY if something worth a human's
+  attention turns up. This runs unattended: use ONLY read-only tools plus w_notify.
+  Do not attempt anything privileged.
+
+  1. Call w_logs(priority="err", since="1 hour ago", lines=200).
+  2. If the result is empty, or every line is routine/expected noise, DO NOTHING
+     ELSE — do not call w_notify. Silence is the correct outcome for a healthy
+     machine; do not manufacture a summary just to have something to report.
+  3. Otherwise, group the distinct error patterns (by unit/component), write a
+     short summary (a few lines — name the pattern and its likely component, do
+     not paste the raw log dump), and call
+     w_notify(summary="Log anomaly", body=<the summary>, urgency="normal") exactly
+     once, then stop. Use urgency="critical" ONLY for something that is losing data
+     or about to (a full disk, a failing drive, a failed backup) — critical alerts
+     pierce Do Not Disturb and never auto-dismiss, so an hourly scan that cries
+     critical over ordinary errors is worse than silence.

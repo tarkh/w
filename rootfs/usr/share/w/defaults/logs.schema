@@ -1,0 +1,7 @@
+# logs.schema — who may set each key of the `logs` subsystem (see w-conf.md).
+# Format: <KEY>\t<scope>   scope: system | user | both
+#
+# Log retention is machine-wide policy: one user must not shorten (or extend) how
+# long the system keeps everyone's logs. Root domain, no user layer.
+RETENTION_DAYS	system
+MAX_SIZE	system

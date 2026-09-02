@@ -1,0 +1,11 @@
+# W Linux — run one AI automation recipe (see ai-integration.md, Этап 4).
+# Instantiated per recipe by `w-ai schedule add <recipe> <OnCalendar>`, which writes
+# the matching w-ai-recipe@<recipe>.timer into ~/.config/systemd/user/ — the
+# schedule itself is user-chosen and can't ship as a fixed rootfs file, unlike this
+# service (identical for every recipe: it just hands the name to `w-ai run-recipe`).
+[Unit]
+Description=W AI recipe: %i
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/w-ai run-recipe %i

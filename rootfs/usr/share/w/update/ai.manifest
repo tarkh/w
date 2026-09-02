@@ -1,0 +1,32 @@
+# ai.manifest — config owned by mod_ai (W Jarvis: knowledge + w-mcp + actuation).
+#
+# Layered (update-system.md phase 3):
+#   • /usr/share/w/defaults/ai.conf   — W's defaults: host/provider selection, the
+#     PROVIDER_ENV_* map and every per-tool W_AI_TOOL_* switch. Class managed:
+#     overwritten by every update, which is how the switch that ships WITH a new
+#     Tier-2 tool reaches an installed machine.
+#   • /usr/share/w/defaults/ai.schema — who may set each key (mostly `both`: the
+#     assistant is a per-user tool with a machine-wide default).
+#   • /etc/w/ai.conf — this machine's DEVIATIONS only. Class override: the update
+#     never touches it; `w-reset ai` drops them back to the vendor layer.
+#
+# The per-user layers (~/.config/w/ai.conf written by `w-ai profile use`, and
+# ~/.config/w/ai-features.conf) have no vendor default — class user-conf:
+# `w-reset ai` deletes both (this drops the user's chosen profile pointer and
+# per-tool W_AI_TOOL_* overrides, not the profile CATALOG in
+# ~/.config/w/ai/profiles/, which is authored content, not a setting, and stays
+# out of scope on purpose). The knowledge tree, hyprwiki timer, root actuation
+# dispatcher and polkit action are managed system paths. The per-user Goose
+# host config is runtime-seeded by `w-ai` (reset it with `w-ai config`), not here.
+#
+# Format: <path>\t<class>   class: managed | override | user-conf  (trailing '/' = directory)
+/usr/share/w/defaults/ai.conf	managed
+/usr/share/w/defaults/ai.schema	managed
+/etc/w/ai.conf	override
+.config/w/ai.conf	user-conf
+.config/w/ai-features.conf	user-conf
+/usr/share/w/ai/	managed
+/etc/systemd/system/w-hyprwiki-update.service	managed
+/etc/systemd/system/w-hyprwiki-update.timer	managed
+/usr/lib/w/w-ai-actuate	managed
+/usr/share/polkit-1/actions/com.w.ai.policy	managed

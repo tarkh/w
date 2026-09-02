@@ -1,0 +1,30 @@
+# W Linux — quadlet example: PostgreSQL as a rootless user service.
+#
+# This is a TEMPLATE, not deployed automatically (skel is not bloated with quadlets,
+# pack-containers.md). To use it, copy into your user quadlet dir and reload:
+#
+#   mkdir -p ~/.config/containers/systemd
+#   cp /usr/share/w/packs/containers/quadlet/postgres.container ~/.config/containers/systemd/
+#   # edit POSTGRES_PASSWORD below, then:
+#   systemctl --user daemon-reload
+#   systemctl --user start postgres            # unit name = <file stem>.service
+#
+# Linger is already enabled by the bundle, so the DB starts at boot without an
+# active session. Port 5432 is a high port — rootless bind works without extra
+# privilege. Data persists in a named volume (see [Volume] pairing if desired).
+
+[Unit]
+Description=PostgreSQL (rootless, W-Packs containers)
+
+[Container]
+Image=docker.io/library/postgres:16-alpine
+ContainerName=postgres
+PublishPort=127.0.0.1:5432:5432
+Environment=POSTGRES_PASSWORD=change-me
+Volume=postgres-data:/var/lib/postgresql/data
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

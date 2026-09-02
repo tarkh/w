@@ -1,0 +1,10 @@
+# shell.manifest — user-owned config seeded by mod_shell (seed-if-absent).
+# Single source of truth: deploy iterates this; w-reset/drift reuse it.
+# Format: <home-relative-path>\t<class>   class: user | managed | override
+# Managed colours (shell-colors.zsh, Starship [palettes.w] region) are rendered
+# by the w-style `shell` axis — not seeded here, hence absent.
+.zshrc	user
+.config/starship.toml	user
+.config/atuin/config.toml	user
+.config/tmux/tmux.conf	user
+.config/btop/btop.conf	user

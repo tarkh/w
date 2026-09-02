@@ -1,0 +1,35 @@
+{
+  "layout": {
+    "cardWidth": 360,
+    "cardHeight": 96,
+    "gap": 8,
+    "maxVisible": 5,
+    "marginTop": 8,
+    "marginRight": 24,
+    "marginTopOffset": 16,
+    "osdMarginTopOffset": 16,
+    "padding": 12,
+    "radius": 14,
+    "imageRadius": 10,
+    "border": "border"
+  },
+  "text": {
+    "titleMaxChars": 64,
+    "bodyMaxLines": 3,
+    "bodyMaxChars": 160
+  },
+  "timeout": {
+    "low": 4000,
+    "normal": 6000,
+    "critical": 0,
+    "osd": 1600
+  },
+  "osd": {
+    "enable": true
+  },
+  "dnd": {
+    "allowCritical": true,
+    "autoFullscreen": false
+  },
+  "mute": []
+}

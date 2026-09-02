@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+# w-term — W Linux terminal entry point
+#
+# Single source of truth for launching the terminal across every W surface
+# (Hyprland binds, Quickshell bar/hub/launcher, w-scripts). Call sites never
+# hardcode a terminal binary: they run `w-term` (open a new window) or
+# `w-term -e CMD…` (run a command in a window), and this script maps the active
+# terminal to its fastest, systemd/D-Bus-correct invocation. Switching the
+# terminal is one edit (`w-term set <name>` → user override) with no changes to
+# any call site; the future Hub terminal picker drives the same get/list/set CLI.
+#
+# Speed & systemd: for a daemon terminal (ghostty) this `exec`s `ghostty
+# +new-window`, i.e. the D-Bus fast path into the pre-warmed
+# app-com.mitchellh.ghostty.service — one shared process, ~20ms. `exec` leaves no
+# wrapper process behind, so the only cost over a direct call is the bash startup
+# that immediately exec's away. See package-ghostty.md.
+
+set -euo pipefail
+
+# ── Config ────────────────────────────────────────────────────────────────────
+# System default (vendor) + user override. User wins. Both are shell-sourced and
+# may set TERMINAL (name from the catalog below) and TERMINAL_OPTS (extra argv,
+# array). The Hub terminal picker writes the user override via `w-term set`.
+SYS_CONF="/etc/w/terminal.conf"
+USER_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/w/terminal.conf"
+DEFAULT_TERMINAL="ghostty"
+
+# Catalog of terminals w-term knows how to launch optimally. A name outside this
+# list is rejected by `set` and falls to the generic path in launch().
+KNOWN_TERMINALS=(ghostty foot)
+
+err() { echo "w-term: $*" >&2; }
+
+usage() {
+  cat <<EOF
+Usage: w-term [command]
+
+Info: Launch or query the configured terminal (single entry point).
+
+Commands:
+  (none)          Open a new terminal window
+  -e CMD [ARGS…]  Run CMD in a new terminal window
+  get             Print the active terminal name
+  list            List known terminals (* = active)
+  set <name>      Set the active terminal (writes user override)
+  help            Show this help
+
+Config: $SYS_CONF (vendor default) + $USER_CONF (user override)
+
+Exit codes:
+  0  Success   1  Runtime error   2  Usage error
+
+Examples:
+  w-term
+  w-term -e btop
+  w-term set ghostty
+EOF
+}
+
+# ── Active-terminal resolution ────────────────────────────────────────────────
+# shellcheck source=../lib/w/w-conf-lib.sh
+source /usr/lib/w/w-conf-lib.sh
+
+# TERMINAL comes from the shared layered reader (system → user, the same
+# precedence this script always had). TERMINAL_OPTS is the one exception in all
+# of W: it is a shell ARRAY, which no KEY=value reader can represent, so it is
+# still sourced. The layered reader keeps it verbatim as "(…)" and w-term never
+# asks it for that key — the split is deliberate, not an oversight.
+load_conf() {
+  TERMINAL_OPTS=()
+  # shellcheck disable=SC1090
+  [[ -r "$SYS_CONF" ]]  && source "$SYS_CONF"
+  # shellcheck disable=SC1090
+  [[ -r "$USER_CONF" ]] && source "$USER_CONF"
+  # Scalars come from the shared reader — same system → user precedence as the
+  # sourcing above, but it also sees drop-ins and (phase 5) fleet policy, so its
+  # answer wins over whatever the sourced files assigned.
+  TERMINAL="$(wconf_get terminal TERMINAL "$DEFAULT_TERMINAL")"
+  [[ -n "$TERMINAL" ]] || TERMINAL="$DEFAULT_TERMINAL"
+}
+
+# ── Launch ────────────────────────────────────────────────────────────────────
+# Args ("$@") are the command to run, or empty for a bare interactive window.
+# Each terminal maps to its fastest new-window verb; TERMINAL_OPTS is appended to
+# the window invocation (not between `-e` and the command).
+launch() {
+  local run=("$@")
+  case "$TERMINAL" in
+    ghostty)
+      # D-Bus fast path into the pre-warmed daemon (one shared process).
+      if [[ ${#run[@]} -gt 0 ]]; then
+        exec ghostty +new-window "${TERMINAL_OPTS[@]}" -e "${run[@]}"
+      fi
+      exec ghostty +new-window "${TERMINAL_OPTS[@]}"
+      ;;
+    foot)
+      # foot has no running server in W (footclient needs `foot --server`); plain
+      # launch, scoped by uwsm like other one-shot GUI apps.
+      if [[ ${#run[@]} -gt 0 ]]; then
+        exec uwsm app -- foot "${TERMINAL_OPTS[@]}" -e "${run[@]}"
+      fi
+      exec uwsm app -- foot "${TERMINAL_OPTS[@]}"
+      ;;
+    *)
+      # Unknown terminal: best-effort generic. Assume `-e CMD` runs a command and
+      # a bare invocation opens a window; scope via uwsm (no known daemon path).
+      if [[ ${#run[@]} -gt 0 ]]; then
+        exec uwsm app -- "$TERMINAL" "${TERMINAL_OPTS[@]}" -e "${run[@]}"
+      fi
+      exec uwsm app -- "$TERMINAL" "${TERMINAL_OPTS[@]}"
+      ;;
+  esac
+}
+
+cmd_list() {
+  load_conf
+  local t
+  for t in "${KNOWN_TERMINALS[@]}"; do
+    if [[ "$t" == "$TERMINAL" ]]; then echo "* $t"; else echo "  $t"; fi
+  done
+}
+
+cmd_set() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || { err "usage: w-term set <name>"; exit 2; }
+  local ok=0 t
+  for t in "${KNOWN_TERMINALS[@]}"; do
+    if [[ "$t" == "$name" ]]; then ok=1; fi
+  done
+  [[ $ok -eq 1 ]] || { err "unknown terminal: $name (see: w-term list)"; exit 1; }
+  # User layer via the shared setter (creates the file/dir with the right modes,
+  # writes atomically, honours a fleet policy lock).
+  wconf_set terminal TERMINAL "$name" user
+  echo "w-term: active terminal → $name"
+}
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────
+case "${1:-}" in
+  -e)              shift; load_conf; launch "$@" ;;
+  get)             load_conf; echo "$TERMINAL" ;;
+  list)            cmd_list ;;
+  set)             shift; cmd_set "${1:-}" ;;
+  help|--help|-h)  usage; exit 0 ;;
+  "")              load_conf; launch ;;
+  *)               err "unknown command: $1"; usage >&2; exit 2 ;;
+esac

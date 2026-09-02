@@ -1,0 +1,4 @@
+{
+  "_comment": "W Linux 'Ask W' assistant palette config. USER-OWNED — w-style/w-theme never touch it. Edit and the running shell live-reloads (FileView watch). border: outer card outline width — a number (px) OR a geometry token name (border/sm) resolved live via Geometry.",
+  "border": "border"
+}

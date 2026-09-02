@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# w-power-monitor — user watcher for AC<->battery changes (laptop mode).
+#
+# hypridle has no native power-source awareness and power-profiles-daemon does not
+# auto-switch, so this debounced poll calls `w-power _sync` only when the source flips:
+# _sync re-renders the user's hypridle timers for the live source and applies the
+# AUTO_PROFILE profile. A 10 s poll is deliberately simple and dependency-free (no D-Bus
+# parsing); the flip latency is irrelevant for power policy. Run by
+# w-power-monitor.service (user). See w-power.md.
+set -uo pipefail
+
+src_now() {
+  local f s
+  for f in /sys/class/power_supply/AC*/online /sys/class/power_supply/ADP*/online; do
+    [ -r "$f" ] && { [ "$(cat "$f")" = 1 ] && echo ac || echo bat; return; }
+  done
+  for f in /sys/class/power_supply/BAT*/status; do
+    [ -r "$f" ] && { s="$(cat "$f")"; [ "$s" = Discharging ] && echo bat || echo ac; return; }
+  done
+  echo ac   # no battery / unknown -> AC
+}
+
+last=""
+while :; do
+  s="$(src_now)"
+  if [ "$s" != "$last" ]; then
+    last="$s"
+    /usr/bin/w-power _sync || true
+  fi
+  sleep 10
+done

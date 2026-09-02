@@ -1,0 +1,9 @@
+# terminal.schema — who may set each key of the `terminal` subsystem (w-conf.md).
+# Format: <KEY>\t<scope>   scope: system | user | both
+#
+# The terminal is a personal choice with a machine-wide default: the admin sets
+# what a fresh account gets, each user overrides it with `w-term set <name>`.
+TERMINAL	both
+# TERMINAL_OPTS is a shell ARRAY, so the layered reader cannot represent it and
+# w-term sources that one key itself (see w-conf.md). Declared here for the record.
+TERMINAL_OPTS	both

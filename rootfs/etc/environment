@@ -1,0 +1,8 @@
+# W Linux — system-wide environment (read by pam_env for every login: TTY, SSH,
+# and the graphical session). Shell-agnostic KEY=VALUE, no variable expansion.
+#
+# Default terminal text editor. micro is the W default (installed by apply.sh
+# --shell, themed by the w-style `micro` axis); vim stays in base.txt as a
+# fallback for a minimal/not-yet-applied system. See package-shell.md.
+EDITOR=micro
+VISUAL=micro

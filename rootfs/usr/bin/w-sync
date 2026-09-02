@@ -1,0 +1,681 @@
+#!/usr/bin/env bash
+# w-sync — W Linux edge update client (git channel).
+#
+# The `edge` channel (update-system.md, axis 1+2) tracks the W dev repo directly:
+# /var/lib/w/src is a real git checkout (cloned at install time when the user picks
+# Edge in the TUI, see modules/firstboot.sh). w-sync compares the local checkout to
+# its upstream ref, shows what would arrive, and on apply does a home pre-snapshot →
+# `git pull --ff-only` → a SELECTIVE `apply.sh` driven by the changed files.
+#
+# Orthogonal to w-update (that upgrades Arch/AUR *packages*; this updates W *itself*)
+# and to w-reset (that force-restores a module to the W default). The `stable`
+# channel does not use this — it receives W as the signed `w-system` pacman package
+# (phase 6); on a stable system w-sync stays inert (check is a quiet no-op).
+#
+# Selective apply — how the changed files pick which apply.sh modules run:
+#   1. `git diff --name-only OLD..NEW` lists every changed path.
+#   2. Each path is matched against /usr/share/w/update/sync-map (first rule wins):
+#        <glob>\t<flag>   flag ∈ a real apply flag (--dns) | AUTO | --all | --skip
+#      - AUTO  : the path is scripts/install/modules/<m>.sh → derive --<m>, but only
+#                if apply.sh actually accepts it (post-boot module); install-only
+#                modules (base/network/…) have no flag → skipped.
+#      - --all : force a full apply (core paths: apply.sh, install/lib).
+#      - --skip: nothing to apply on the target (docs, vm/, .claude/).
+#   3. The collected flags run in canonical (ALL_MODULES) order. An unmatched path
+#      safely falls through to --all — forgetting a rule is slow, never broken.
+# The map is read from the freshly-pulled checkout, so it is always current.
+
+set -euo pipefail
+
+# ── Constants ────────────────────────────────────────────────────────────────
+REPO="/var/lib/w/src"
+APPLY="$REPO/scripts/apply.sh"
+RELEASE_CONF="$REPO/release.conf"
+UPDATE_CONF="/etc/w/update.conf"
+# Prefer the just-pulled map in the checkout; fall back to the deployed copy.
+SYNC_MAP_REPO="$REPO/rootfs/usr/share/w/update/sync-map"
+SYNC_MAP_SYS="/usr/share/w/update/sync-map"
+
+# Sync state is MACHINE-WIDE, not per-user: the checkout is a single shared object,
+# so "how far behind is this machine" is one answer for everyone on it. The directory
+# is created by mod_updatesys owned by the checkout's owner, mode 0755 — the owner's
+# atomic tmp+mv works, root can write it too, and every other user (their Hub, their
+# `w-sync status`) reads it. The old per-user ~/.local/state/w/sync.json is dead:
+# nothing reads it, and the timer that wrote it ran for users who could not read the
+# repo at all. How many incoming commits are recorded alongside the count:
+STATE_DIR="/var/lib/w/state"
+STATE_FILE="$STATE_DIR/sync.json"
+COMMITS_CAP=30
+# Older than this, a recorded status is presented as stale rather than as fact (the
+# check timer runs every 6h, so a full day of silence means nobody refreshed it).
+STATE_STALE_AFTER=86400
+
+# Canonical apply order (mirrors apply.sh ALL_MODULES) — selected flags run in this
+# sequence so ordering constraints (rootfs first, style late, …) hold on a subset.
+ORDER=(--rootfs --yay --packages --plymouth --grub --limine --gpu --wallpaper \
+  --windowblind --greeter --hyprland --polkit --hyprlock --quickshell --update \
+  --applets --sensors --files --printing --shell --firefox --screencapture --sudo \
+  --firewall --dns --harden --keyring --fwupd --style --flatpak --ai --updatesys --site --reset --packs)
+
+err()  { echo -e "\033[1;31mw-sync:\033[0m $*" >&2; }
+info() { echo -e "\033[1;35m==>\033[0m $*"; }
+warn() { echo -e "\033[1;33mWARN:\033[0m $*" >&2; }
+die()  { err "$*"; exit 1; }
+
+# ── Admin gate (wheel) ───────────────────────────────────────────────────────
+# Sourced defensively, unlike every other W script — same reasoning as the
+# get_conf exception below: the updater must not become unusable because a
+# library it is itself responsible for delivering is missing, or there would be
+# no way left to pull the fix. Absent lib → the pre-gate behaviour, where sudo
+# answers instead of us. Only the commands that escalate call require_admin;
+# check/status/log are read-only and stay open to everyone.
+if [[ -r /usr/lib/w/w-priv-lib.sh ]]; then
+  # shellcheck source=../lib/w/w-priv-lib.sh
+  source /usr/lib/w/w-priv-lib.sh
+else
+  w_is_admin() { return 0; }
+fi
+require_admin() { if ! w_is_admin; then die "$(w_admin_msg "$1")"; fi; }
+
+# ── Config ───────────────────────────────────────────────────────────────────
+# Read KEY from a shell-style conf file, defaulting when absent.
+#
+# DELIBERATE EXCEPTION to the one-reader rule (update-system.md phase 1): every
+# other W subsystem now reads config through /usr/lib/w/w-conf-lib.sh, and
+# w-sync does not. The updater must not depend on a library it is itself
+# responsible for delivering — self-delivery has already bitten us once (the map
+# routed w-sync's own files to a module that never deployed them, 2026-08-01), and
+# a broken/half-written lib would leave no way to pull the fix. It reads exactly
+# two keys (CHANNEL, REF) before anything has been applied, so the cost of the
+# exception is two lines. Its value semantics are pinned by the same check.sh
+# gate that guards the shared reader.
+get_conf() {
+  local file="$1" key="$2" def="${3:-}" val
+  [[ -f "$file" ]] || { printf '%s' "$def"; return; }
+  val=$(grep -E "^[[:space:]]*$key=" "$file" 2>/dev/null | tail -1 | cut -d= -f2-)
+  val="${val%\"}"; val="${val#\"}"
+  printf '%s' "${val:-$def}"
+}
+
+CHANNEL="$(get_conf "$UPDATE_CONF" CHANNEL stable)"
+REF="$(get_conf "$UPDATE_CONF" REF main)"
+UPSTREAM="origin/$REF"
+# Fleet (site) overlay — a separate little repo of /etc/w/{site-defaults.d,policy.d}
+# files, owned by whoever runs the fleet rather than by W. w-sync only ROUTES to it:
+# the clone, the mirror and the re-render all live in `apply.sh --site` (mod_site), so
+# a fresh machine gets its policy from the very first `apply --all`, with no update
+# ever having run. Empty SITE_REPO (every single-machine install) = the flag is
+# never passed and nothing about the site layer is reachable.
+SITE_REPO="$(get_conf "$UPDATE_CONF" SITE_REPO "")"
+
+# ── git always runs as the checkout's owner ──────────────────────────────────
+# /var/lib/w/src is a USER-owned git checkout by design (mod_updatesys hands it to
+# the primary user): yay/makepkg refuse to run as root, and .git/config is chmod 600
+# because the clone URL carries credentials. git's ownership guard (CVE-2022-24765)
+# therefore refuses to touch the repo for anyone else — root included, whose only
+# exemption is a repo owned by $SUDO_UID.
+#
+# That exemption is exactly why the AI path used to work: pkexec exports SUDO_UID of
+# the caller (deliberate sudo compatibility, baked into the polkit binary), and the
+# caller happened to be the owner. It is a three-way coincidence — it breaks for a
+# root shell (no SUDO_UID) and for a second admin (uid 1001 ≠ owner). So W does not
+# rely on it: git is ALWAYS executed as the owner, resolved from the filesystem.
+# `safe.directory` for root is deliberately NOT used — it would trade a loud refusal
+# for root-owned objects silently accumulating inside a user's repo.
+OWNER=""; OWNER_HOME=""
+resolve_owner() {
+  if [[ -n "$OWNER" ]]; then return 0; fi
+  OWNER="$(stat -c %U "$REPO" 2>/dev/null)" \
+    || die "cannot stat $REPO — refusing to guess who owns the checkout."
+  if [[ -z "$OWNER" || "$OWNER" == UNKNOWN ]]; then
+    die "$REPO is owned by uid $(stat -c %u "$REPO" 2>/dev/null), which has no user — fix with: chown -R <user>:<user> $REPO"
+  fi
+  if [[ "$OWNER" != root ]]; then
+    OWNER_HOME="$(getent passwd "$OWNER" | cut -d: -f6)"
+    [[ -n "$OWNER_HOME" ]] || die "no home directory for the checkout owner '$OWNER'."
+  fi
+  return 0
+}
+
+# Whether this caller may drive git at all (the last git_c branch is a hard stop).
+can_git() {
+  [[ -d "$REPO" ]] || return 1
+  if [[ "$EUID" -eq 0 ]]; then return 0; fi
+  resolve_owner
+  [[ "$(id -un)" == "$OWNER" ]]
+}
+
+# Who maintains the machine-wide state file: root, and the checkout's owner. Everyone
+# else only READS it. Deliberately not "everyone who runs check": a user who cannot
+# touch the repo cannot verify anything, and writing what they could not verify is the
+# very lie phase 1 removed. Wider than can_git on purpose — it also holds on a stable
+# machine with no checkout at all, where check still records the channel.
+maintains_state() {
+  if [[ "$EUID" -eq 0 ]]; then return 0; fi
+  [[ -d "$REPO" ]] || return 1
+  resolve_owner
+  [[ "$(id -un)" == "$OWNER" ]]
+}
+
+deny_not_owner() {
+  die "$REPO is owned by '$OWNER' — run w-sync as that user, or via sudo."
+}
+
+# Hard stop for `update`, the one command that MUST drive git, checked before it
+# starts. Without it, git_c's own refusal would be swallowed by the fetch capture and
+# then misreported as a git/credentials failure. Read-only commands do NOT use this
+# any more — they fall back to the machine-wide state file instead.
+require_git_access() { if ! can_git; then deny_not_owner; fi; }
+
+# A root-owned checkout still works for git, but yay/makepkg refuse to run as root,
+# so the next apply that touches AUR would fail. Said from the command entry points,
+# not from git_c: the fetch wrappers capture git_c's stderr, so a warning raised in
+# there would be swallowed exactly when someone needs to read it.
+warn_if_degraded() {
+  if ! is_edge; then return 0; fi
+  resolve_owner
+  if [[ "$OWNER" == root ]]; then
+    warn "$REPO is owned by root — AUR builds will fail here; restore with: chown -R <user>:<user> $REPO"
+  fi
+  return 0
+}
+
+git_c() {
+  resolve_owner
+  if [[ "$EUID" -eq 0 && "$OWNER" != root ]]; then
+    # cd / : runuser keeps the caller's cwd, and root's (/root, mode 700) is
+    # unreadable for the owner → it fails to chdir before git ever runs.
+    # env  : runuser -u does NOT reset the environment, so root's HOME (and a
+    #        stray XDG_CONFIG_HOME) would point git at /root/.gitconfig as a user
+    #        who cannot read it.
+    ( cd / && runuser -u "$OWNER" -- \
+        env -u XDG_CONFIG_HOME HOME="$OWNER_HOME" git -C "$REPO" "$@" )
+  elif [[ "$EUID" -eq 0 ]]; then
+    # A degraded checkout (someone chowned it to root): git itself is happy, so run
+    # it directly — warn_if_degraded() is what tells the user about the layout.
+    git -C "$REPO" "$@"
+  elif [[ "$(id -un)" == "$OWNER" ]]; then
+    git -C "$REPO" "$@"
+  else
+    deny_not_owner
+  fi
+}
+
+# Classify a failed `git fetch`: an unreachable remote is a different problem from a
+# remote that answered and refused (bad credentials, a ref that is gone).
+fetch_err_kind() {
+  if grep -qiE 'could not resolve|connection (refused|timed out)|network is unreachable|failed to connect|temporary failure|no route to host' <<<"$1"; then
+    echo network
+  else
+    echo fetch
+  fi
+}
+
+# Human wording for the same failure, for the interactive commands.
+fetch_die_msg() {
+  if [[ "$(fetch_err_kind "$1")" == network ]]; then
+    echo "git fetch could not reach the remote — check the network."
+  else
+    echo "git fetch failed — the remote answered but refused (check the credentials in $REPO/.git/config)."
+  fi
+}
+
+# Run a privileged step. Interactively this is a normal user re-authing via sudo;
+# under the AI actuation path (com.w.ai.actuate → pkexec) we are already root, and
+# re-invoking sudo there risks a password prompt with no tty to answer it (sudo,
+# unlike su, does not universally skip auth for an already-root caller) — skip the
+# redundant hop when EUID is already 0.
+run_priv() { if [[ "$EUID" -eq 0 ]]; then "$@"; else sudo "$@"; fi; }
+
+# Edge = channel says so AND the checkout is a real git repo.
+is_edge() { [[ "$CHANNEL" == edge && -d "$REPO/.git" ]]; }
+require_edge() {
+  is_edge && return 0
+  die "not an edge system (CHANNEL=$CHANNEL, git checkout: $([[ -d $REPO/.git ]] && echo yes || echo no)). The stable channel updates via the w-system package."
+}
+ensure_git() { command -v git >/dev/null || die "git is not installed."; }
+
+# ── Usage ────────────────────────────────────────────────────────────────────
+usage() {
+  cat <<EOF
+Usage: w-sync [command]
+
+Info: Track the W dev repo (edge channel) and apply updates, keeping user config intact.
+
+Commands:
+  (none) | update   Fetch, show incoming commits, then pre-snapshot home →
+                    git pull --ff-only → selective apply.sh. Needs sudo for apply.
+  check             Refresh the machine-wide behind-count (quiet). Maintained by
+                    the checkout owner and root; a no-op for anyone else. Writes
+                    $STATE_FILE; on any refusal it records behind:-1 + err
+                    rather than a false 0.
+  log               Show the commits that an update would pull in — fetched live
+                    for the owner and root, read from the last recorded check
+                    for every other user.
+  status            Print the last known sync status + channel.
+  help              Show this help.
+
+Options:
+  --yes             With 'update': skip the pull/apply confirmation prompt and
+                    never auto-reboot (only reports if one is needed). For
+                    non-interactive callers (the AI actuation path); a human
+                    running w-sync in a terminal should not need it.
+
+Channel : $CHANNEL   Ref: $REF   Checkout: $REPO
+Status  : $STATE_FILE
+
+Exit codes:
+  0  Success   1  Runtime error   2  Usage error
+EOF
+}
+
+# ── check: behind-count + incoming commits → machine-wide status file ────────────
+# `behind` is only ever a real count when we actually reached the remote. Any refusal
+# writes -1 plus an `err` token, because the alternative — the old `|| echo 0` — turns
+# "I could not look" into "you are up to date", and that lie reaches the Hub.
+#   err: ""  ok · network (remote unreachable) · fetch (remote refused)
+#        git (local git failure)
+cmd_check() {
+  # The check timer is enabled for every user (systemctl --global), but the state is
+  # machine-wide and only the owner/root can verify it. For anyone else this is a
+  # no-op — they read the file in status/log instead of touching git.
+  #
+  # Silent for machines, spoken for people. The timer runs this in EVERY non-owner's
+  # session every 6h, so an unconditional note would be pure journal noise; but a
+  # person who types `w-sync check`, gets nothing back and rc=0 cannot tell a no-op
+  # from a refresh — and then reads `status` as proof their check succeeded (it
+  # happened). The isatty split is the same convention W already uses for pagers
+  # (w-scripts.md): a terminal gets the explanation, a timer or w-mcp does not.
+  # rc stays 0 in both cases: there is nothing wrong here, just nothing to do.
+  if ! maintains_state; then
+    if [[ -t 1 && -d "$REPO" ]]; then
+      resolve_owner
+      info "Nothing refreshed: the sync status is maintained by '$OWNER' (owner of $REPO) and root. Read the recorded one with: w-sync status"
+    fi
+    return 0
+  fi
+  local behind=0 errk="" commits="" out
+  if is_edge && command -v git >/dev/null; then
+    if ! out=$(git_c fetch --quiet --prune origin 2>&1); then
+      behind=-1; errk="$(fetch_err_kind "$out")"
+    else
+      behind=$(git_c rev-list --count "HEAD..$UPSTREAM" 2>/dev/null || echo x)
+      if [[ ! "$behind" =~ ^[0-9]+$ ]]; then
+        behind=-1; errk=git
+      elif [[ "$behind" -gt 0 ]]; then
+        # Recorded so a non-owner can see WHAT is incoming, not just how much.
+        commits="$(git_c log --oneline -n "$COMMITS_CAP" "HEAD..$UPSTREAM" 2>/dev/null || true)"
+      fi
+    fi
+  fi
+  write_state "$behind" "$errk" "$commits"
+}
+
+# Commit subjects are arbitrary text (quotes, backslashes, unicode), so the document
+# is serialised by python3 — hand-rolled escaping in bash is how a status file starts
+# lying. python3 is in packages/base.txt, but the updater must not become unusable if
+# it is ever missing: the fallback writes the same document minus `commits` (channel
+# and ref are plain tokens, behind is a number).
+write_state() { # <behind> <err> <commits>
+  mkdir -p "$STATE_DIR" 2>/dev/null || true
+  local tmp
+  if ! tmp=$(mktemp "$STATE_FILE.XXXXXX" 2>/dev/null); then
+    warn "cannot write $STATE_FILE — the sync status was not updated."
+    return 0
+  fi
+  if command -v python3 >/dev/null &&
+     ! W_CH="$CHANNEL" W_REF="$REF" W_BEHIND="$1" W_ERR="$2" python3 -c '
+import json, os, sys, time
+print(json.dumps({"channel": os.environ["W_CH"], "ref": os.environ["W_REF"],
+                  "behind": int(os.environ["W_BEHIND"]), "err": os.environ["W_ERR"],
+                  "ts": int(time.time()),
+                  "commits": [c for c in sys.stdin.read().splitlines() if c]}))' \
+       <<<"$3" > "$tmp"; then
+    rm -f "$tmp"
+    warn "could not serialise the sync status — leaving the previous one in place."
+    return 0
+  fi
+  if [[ ! -s "$tmp" ]]; then
+    printf '{"channel":"%s","ref":"%s","behind":%d,"err":"%s","ts":%d}\n' \
+      "$CHANNEL" "$REF" "$1" "$2" "$(date +%s)" > "$tmp"
+  fi
+  # mktemp gives 0600, and this file is read by every user on the machine.
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$STATE_FILE"
+}
+
+# ── reading the machine-wide state (any user, no git) ────────────────────────────
+state_scalar() { # <field> <fallback> — behind/err/ts out of the JSON
+  local pat
+  case "$1" in
+    behind) pat='"behind":\s*\K-?[0-9]+' ;;
+    ts)     pat='"ts":\s*\K[0-9]+' ;;
+    *)      pat='"err":\s*"\K[^"]*' ;;
+  esac
+  grep -oP "$pat" "$STATE_FILE" 2>/dev/null || printf '%s' "$2"
+}
+
+# "2h ago" — how old the recorded status is; empty when there is no usable ts.
+state_age() {
+  local ts now d
+  ts="$(state_scalar ts '')"
+  [[ -n "$ts" ]] || return 0
+  now=$(date +%s); d=$(( now - ts ))
+  if (( d < 0 )); then d=0; fi
+  if   (( d < 90 ));     then printf 'just now'
+  elif (( d < 5400 ));   then printf '%dm ago' $(( d / 60 ))
+  elif (( d < 172800 )); then printf '%dh ago' $(( d / 3600 ))
+  else                        printf '%dd ago' $(( d / 86400 ))
+  fi
+}
+
+state_is_stale() {
+  local ts; ts="$(state_scalar ts 0)"
+  (( $(date +%s) - ts > STATE_STALE_AFTER ))
+}
+
+# The commit list is a JSON array of arbitrary subjects — read with python3 for the
+# same reason it is written with it. Without python3 the count still stands.
+state_commits() {
+  command -v python3 >/dev/null || return 0
+  python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+for c in d.get("commits") or []:
+    print(c)' "$STATE_FILE" 2>/dev/null || true
+}
+
+cmd_status() {
+  warn_if_degraded
+  echo "Channel: $CHANNEL   Ref: $REF"
+  if [[ -r "$STATE_FILE" ]]; then
+    local behind errk age when=""
+    behind="$(state_scalar behind '?')"
+    errk="$(state_scalar err '')"
+    age="$(state_age)"
+    if [[ -n "$age" ]]; then when=" (checked $age)"; fi
+    if [[ "$behind" == -1 ]]; then
+      echo "Behind : unknown (${errk:-error}) — the last check could not read the repo$when"
+    else
+      echo "Behind : $behind commit(s) vs $UPSTREAM$when"
+      if state_is_stale; then
+        echo "         stale — refreshed by the checkout owner or root (w-sync check)"
+      fi
+    fi
+    echo "Source : $STATE_FILE"
+  else
+    echo "Behind : no status yet (the checkout owner or root refreshes it: w-sync check)"
+  fi
+  if is_edge; then
+    if can_git; then
+      echo "Local  : $(git_c rev-parse --short HEAD 2>/dev/null || echo '?') on $(git_c rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+    else
+      echo "Local  : (checkout owned by $OWNER — run as that user to inspect it)"
+    fi
+  fi
+  if [[ -n "$SITE_REPO" ]]; then
+    echo "Site   : $SITE_REPO (profile $(get_conf "$UPDATE_CONF" SITE default), $(git -C /var/lib/w/site rev-parse --short HEAD 2>/dev/null || echo 'not cloned yet'))"
+  fi
+}
+
+# What a non-owner sees: the machine-wide state the owner (or root) last recorded.
+# It is allowed to be out of date — that is said out loud — but it is never invented,
+# and it never costs an exit code: `w_sync_update(plan)` is read-only by contract and
+# must stay usable for a second admin who does not own the checkout.
+log_from_state() {
+  if [[ ! -r "$STATE_FILE" ]]; then
+    echo "No sync status recorded yet on this machine — it is refreshed by the checkout owner ('$OWNER') or root (w-sync check)."
+    return 0
+  fi
+  local behind errk age suffix=""
+  behind="$(state_scalar behind '?')"
+  errk="$(state_scalar err '')"
+  age="$(state_age)"
+  if [[ -n "$age" ]]; then suffix=", $age"; fi
+  echo "Checkout owned by '$OWNER' — reading the last recorded check instead of fetching."
+  if [[ "$behind" == -1 ]]; then
+    echo "The last check could not read the repo (${errk:-error}$suffix) — the incoming count is unknown."
+    return 0
+  fi
+  if [[ "$behind" == 0 ]]; then
+    echo "Up to date with $UPSTREAM (as of the last check$suffix)."
+  else
+    echo "$behind incoming commit(s) on $UPSTREAM (as of the last check$suffix):"
+    state_commits
+  fi
+  if state_is_stale; then
+    echo "This status is stale — ask the checkout owner or root to run: w-sync check"
+  fi
+}
+
+cmd_log() {
+  require_edge; ensure_git
+  if ! can_git; then log_from_state; return 0; fi
+  warn_if_degraded
+  local out
+  if ! out=$(git_c fetch --prune origin 2>&1); then
+    if [[ -n "$out" ]]; then err "$out"; fi
+    die "$(fetch_die_msg "$out")"
+  fi
+  local n; n=$(git_c rev-list --count "HEAD..$UPSTREAM" 2>/dev/null || echo 0)
+  if [[ "$n" -eq 0 ]]; then echo "Up to date with $UPSTREAM."; return 0; fi
+  echo "$n incoming commit(s) on $UPSTREAM:"
+  git_c log --oneline "HEAD..$UPSTREAM"
+}
+
+# ── selective apply: map changed files → ordered apply flags ─────────────────────
+sync_map() { [[ -f "$SYNC_MAP_REPO" ]] && echo "$SYNC_MAP_REPO" || echo "$SYNC_MAP_SYS"; }
+
+# First matching rule wins. `[[ $f == $pat ]]` glob-matches with * spanning '/'.
+map_file() {
+  local file="$1" map pat flag
+  map="$(sync_map)"
+  [[ -f "$map" ]] || { echo "--all"; return; }   # no map → safe full apply
+  while read -r pat flag || [[ -n "$pat" ]]; do
+    [[ -z "$pat" || "$pat" == \#* ]] && continue
+    # shellcheck disable=SC2053
+    if [[ "$file" == $pat ]]; then echo "$flag"; return; fi
+  done < "$map"
+  echo "--all"
+}
+
+# Echo the ordered, de-duplicated flag list for the changed files, or "--all".
+compute_flags() {
+  local changed="$1" force_all="$2" f flag mod
+  declare -A want=()
+  [[ "$force_all" == yes ]] && { echo "--all"; return; }
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    flag="$(map_file "$f")"
+    case "$flag" in
+      --skip) ;;
+      --all)  echo "--all"; return ;;
+      AUTO)
+        mod="$(basename "$f")"; mod="${mod%.sh}"
+        # Only route to a flag apply.sh actually accepts (post-boot module);
+        # install-only modules (base/network/…) have none → nothing to do.
+        grep -q -- "--$mod)" "$APPLY" && want["--$mod"]=1 ;;
+      *) want["$flag"]=1 ;;
+    esac
+  done <<< "$changed"
+  local out=()
+  for flag in "${ORDER[@]}"; do
+    [[ -n "${want[$flag]:-}" ]] && { out+=("$flag"); unset "want[$flag]"; }
+  done
+  # Any flag not in ORDER (a module added to apply.sh but not mirrored here yet) is
+  # still applied — appended at the end rather than silently dropped.
+  for flag in "${!want[@]}"; do out+=("$flag"); done
+  printf '%s' "${out[*]}"
+}
+
+pre_snapshot() {
+  run_priv snapper -c home list &>/dev/null || return 0
+  info "Creating pre-sync home snapshot..."
+  run_priv snapper -c home create --description "pre-sync" --cleanup-algorithm number \
+    || warn "pre-sync snapshot failed (non-fatal)."
+}
+
+# A pull that changed the bundle tree must also REPLAY the installed bundles'
+# own idempotent setup, not merely restage the tree. `apply.sh --packs` copies
+# scripts/packs → /usr/share/w/packs; it deliberately never installs or re-applies
+# a bundle (that stays an explicit `w-pack install`), which left a real gap: a
+# bundle's marker regions, drop-ins and legacy-layout cleanups only ever ran at
+# install time, so a fix for them could not reach a machine that installed the
+# bundle earlier. `w-pack refresh` closes it without touching packages, so an
+# update never turns into a network operation.
+# Managed files the admin edited by hand, that this update is about to overwrite.
+#
+# On edge the baseline is free: the checkout IS the pristine truth, so the OLD
+# revision's copy of a file is exactly what we deployed last time. A file on disk
+# that differs from it was changed locally — and since apply_rootfs will rsync the
+# new version over it, this is the last moment anyone can be told. Warn, never
+# block: the contract is "not silently", not "not at all" (update-system.md,
+# "Безопасность": detect drift → warn, do not clobber quietly).
+#
+# Class `override` (admin state — /etc/w/*.conf) is skipped: differing there is
+# the NORMAL case and apply_rootfs preserves those paths anyway.
+drift_check() { # <old rev> <changed files>
+  local old="$1" changed="$2" f target n=0
+  local -A override=()
+  local path class
+  while IFS=$'\t' read -r path class || [[ -n "$path" ]]; do
+    [[ "$path" == /* && "$class" == override ]] && override["$path"]=1
+  done < <(cat "$REPO"/rootfs/usr/share/w/update/*.manifest 2>/dev/null || true)
+
+  while IFS= read -r f; do
+    [[ "$f" == rootfs/* ]] || continue          # the only tree deployed byte-for-byte
+    target="/${f#rootfs/}"
+    [[ -f "$target" ]] || continue
+    [[ -n "${override[$target]:-}" ]] && continue
+    # Absent in the old revision = a new file with no baseline; nothing to lose.
+    git_c cat-file -e "$old:$f" 2>/dev/null || continue
+    if ! git_c show "$old:$f" 2>/dev/null | cmp -s - "$target" 2>/dev/null; then
+      warn "locally modified, this update will overwrite it: $target"
+      n=$((n + 1))
+    fi
+  done <<< "$changed"
+
+  if (( n > 0 )); then
+    warn "$n file(s) above are W-managed — save a copy now if those edits matter (w-reset check lists every drifted file)."
+  fi
+  return 0
+}
+
+# Pull the fleet overlay in, whether or not W itself moved. mod_site does the work
+# (clone/fetch → mirror /etc/w/{site-defaults.d,policy.d} → re-render what it
+# touched); here we only decide that it should run.
+sync_site() {
+  [[ -n "$SITE_REPO" ]] || return 0
+  info "Syncing the site overlay..."
+  run_priv "$APPLY" --site || warn "site overlay apply reported a problem."
+}
+
+refresh_packs() { # <changed files>
+  local changed="$1"
+  grep -q '^scripts/packs/' <<<"$changed" || return 0
+  command -v w-pack >/dev/null 2>&1 || return 0
+  info "Bundle tree changed — replaying installed bundles' setup (no package changes)..."
+  run_priv w-pack refresh || warn "w-pack refresh reported a problem (bundles may need attention)."
+}
+
+# ── update: fetch → confirm → pull → selective apply ─────────────────────────────
+cmd_update() {
+  # Before anything else: the apply half of this command needs root (run_priv), so
+  # a non-admin would work through fetch/pull only to hit `sudo: not in sudoers`.
+  # Said first, and coarser than the owner check below — "you may not update this
+  # machine at all" is the useful answer, not "the checkout belongs to someone else".
+  require_admin "updating W"
+  require_edge; ensure_git; require_git_access; warn_if_degraded
+  info "Fetching $UPSTREAM..."
+  local ferr
+  if ! ferr=$(git_c fetch --tags --prune origin 2>&1); then
+    if [[ -n "$ferr" ]]; then err "$ferr"; fi
+    die "$(fetch_die_msg "$ferr")"
+  fi
+
+  local old behind
+  old="$(git_c rev-parse HEAD)"
+  behind=$(git_c rev-list --count "HEAD..$UPSTREAM" 2>/dev/null || echo 0)
+  if [[ "$behind" -eq 0 ]]; then
+    info "Already up to date with $UPSTREAM."
+    # The site overlay lives in its OWN repo, so it changes on its own schedule:
+    # skipping it here would mean a fleet policy could not reach a machine that
+    # happens to be current on W. It is a fetch of a few KV files — cheap enough
+    # to do unconditionally.
+    sync_site
+    cmd_check
+    return 0
+  fi
+
+  info "$behind new commit(s):"
+  git_c log --oneline "HEAD..$UPSTREAM"
+  echo
+  if [[ "$YES" == yes ]]; then
+    info "--yes: skipping confirmation."
+  else
+    read -rp "Pull and apply? [Y/n] " ans
+    [[ "${ans:-y}" == [nN]* ]] && { info "Aborted (nothing pulled)."; return 0; }
+  fi
+
+  pre_snapshot
+
+  info "git pull --ff-only..."
+  git_c pull --ff-only origin "$REF" \
+    || die "pull failed — the local checkout has diverged from $UPSTREAM. Resolve manually in $REPO."
+  local new; new="$(git_c rev-parse HEAD)"
+
+  local full_apply; full_apply="$(get_conf "$RELEASE_CONF" REQUIRES_FULL_APPLY no)"
+  local changed flags
+  changed="$(git_c diff --name-only "$old" "$new")"
+  drift_check "$old" "$changed"
+  flags="$(compute_flags "$changed" "$full_apply")"
+
+  if [[ -z "$flags" ]]; then
+    info "Pulled — no target modules affected (docs / dev-only changes)."
+  else
+    info "Applying: $flags"
+    # shellcheck disable=SC2086
+    run_priv "$APPLY" $flags || die "apply.sh failed — inspect /var/log/w/apply.log."
+  fi
+
+  # …and the site overlay, unless the apply we just ran already covered it.
+  case " $flags " in *" --all "*|*" --site "*) ;; *) sync_site ;; esac
+
+  refresh_packs "$changed"
+  cmd_check
+
+  local reboot; reboot="$(get_conf "$RELEASE_CONF" REQUIRES_REBOOT no)"
+  if [[ "$reboot" == yes ]]; then
+    echo
+    if [[ "$YES" == yes ]]; then
+      info "This update requests a reboot — not rebooting automatically. Reboot manually when ready."
+    else
+      read -rp "This update requests a reboot. Reboot now? [y/N] " r
+      [[ "${r:-n}" == [yY]* ]] && systemctl reboot
+    fi
+  fi
+  info "Sync complete."
+}
+
+YES=no
+CMD=""
+for a in "$@"; do
+  case "$a" in
+    --yes) YES=yes ;;
+    update|check|log|status|help|-h|--help)
+      [[ -n "$CMD" ]] && { err "unexpected argument: $a"; usage >&2; exit 2; }
+      CMD="$a" ;;
+    *) err "unknown argument: $a"; usage >&2; exit 2 ;;
+  esac
+done
+
+case "${CMD:-update}" in
+  update)        cmd_update ;;
+  check)         cmd_check ;;
+  log)           cmd_log ;;
+  status)        cmd_status ;;
+  help|-h|--help) usage ;;
+esac

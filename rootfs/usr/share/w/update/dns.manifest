@@ -1,0 +1,22 @@
+# dns.manifest — config owned by mod_dns (systemd-resolved + DoT).
+#
+# Layered (update-system.md phase 3):
+#   • /usr/share/w/defaults/dns.conf   — W's resolver catalog + default selection.
+#     Class managed: every update overwrites it, which is exactly how a new
+#     resolver or an improved default reaches an installed machine. Catalog entries
+#     MERGE per key, so a DNS_<name> the admin adds below coexists with these.
+#   • /usr/share/w/defaults/dns.schema — who may set each key (all system-scope:
+#     one resolver serves the whole machine and DoT strictness is security policy).
+#   • /etc/w/dns.conf — this machine's DEVIATIONS only. Class override: the update
+#     never touches it; `w-reset dns` drops them back to the vendor layer.
+#
+# The rendered /etc/systemd/resolved.conf.d/10-w-dns.conf is w-dns output
+# (regenerate with `sudo w-dns apply`), not tracked here. The NetworkManager and
+# mDNS drop-ins are static W-owned system files.
+#
+# Format: <path>\t<class>   class: managed | override
+/usr/share/w/defaults/dns.conf	managed
+/usr/share/w/defaults/dns.schema	managed
+/etc/w/dns.conf	override
+/etc/NetworkManager/conf.d/10-w-dns.conf	managed
+/etc/systemd/resolved.conf.d/20-w-mdns.conf	managed

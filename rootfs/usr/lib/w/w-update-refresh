@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# w-update-refresh — refresh every active user's update indicator after a pacman
+# transaction. Invoked as root by the alpm hook 95-w-update-refresh.hook on any
+# Install/Upgrade/Remove (yay's final install is a pacman transaction too, so AUR
+# upgrades are covered). For each logged-in graphical user it runs `w-update check`
+# detached (setsid -f) so pacman is NEVER blocked by checkupdates' network DB sync;
+# the bar's ~/.local/state/w/updates.json is rewritten a few seconds later.
+#
+# Fixes the stale-count glitch: updating outside the bar (plain pacman/yay) used to
+# leave the indicator showing an old number until the next timer tick or a manual
+# click. Now any transaction re-runs the same non-root check the bar already trusts.
+set -uo pipefail
+
+command -v w-update >/dev/null 2>&1 || exit 0
+
+declare -A seen=()
+for s in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); do
+  # --value prints the three properties in order, one per line: Name, Type, Active.
+  mapfile -t p < <(loginctl show-session "$s" -p Name -p Type -p Active --value 2>/dev/null)
+  user="${p[0]:-}"; type="${p[1]:-}"; active="${p[2]:-}"
+  [[ "$active" == "yes" ]]                         || continue
+  [[ "$type" == "wayland" || "$type" == "x11" ]]   || continue
+  [[ -n "$user" && -z "${seen[$user]:-}" ]]        || continue
+  seen[$user]=1
+
+  uid=$(id -u "$user" 2>/dev/null)          || continue
+  home=$(getent passwd "$user" | cut -d: -f6)
+  [[ -n "$home" ]]                          || continue
+
+  # stdin goes too, not just stdout: pacman's terminal is still on fd 0 here, and a
+  # setsid child that keeps a pty takes it as its controlling terminal — closing
+  # that window then HUPs the check away and leaves the count stale, which is the
+  # very glitch this script exists to fix (see w-session-exit for the measurement).
+  setsid -f runuser -u "$user" -- env \
+    HOME="$home" \
+    XDG_RUNTIME_DIR="/run/user/$uid" \
+    XDG_STATE_HOME="$home/.local/state" \
+    w-update check </dev/null >/dev/null 2>&1 || true
+done

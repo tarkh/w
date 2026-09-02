@@ -1,0 +1,91 @@
+# /usr/share/w/defaults/session-terminal.list — programs `w-session` may reopen
+# inside a terminal window.
+#
+# W's own defaults. Do NOT edit: every update overwrites this file wholesale.
+# Personal entries belong in ~/.config/w/session-terminal.list, which the update
+# never touches; both files are read and their entries are simply added together.
+#
+# WHY AN ALLOWLIST
+#
+# `w-session` can see what is running in a terminal window — a terminal is a
+# process with a child on a pty, so the program in the foreground is reachable
+# through /proc. Reopening it, though, means RE-EXECUTING it at login, and what
+# people run in a terminal is arbitrary: a build, a database migration, a deploy
+# script, anything behind `sudo`. Coming back tomorrow to find those re-run
+# because they happened to be on screen when the session ended is not session
+# restore, it is a surprise with consequences.
+#
+# So the question this file answers is not "what did the user run" — that is
+# already known — but "what is safe to run AGAIN, unattended, with no one
+# looking". Editors, pagers, viewers and monitors qualify: re-running them shows
+# you what you were reading and touches nothing. Everything else still gets its
+# terminal back, in the same directory, which is the whole of what was lost and
+# is inert until you type something.
+#
+# Turning the gate off entirely is `w-session terminal all` — a per-machine
+# decision for someone who knows what they run.
+#
+# Format: one program name per line, matched (anchored) against the program's
+# own name — argv[0]'s basename, not the kernel's truncated comm. Regexes are
+# allowed. '#' and blank lines are ignored.
+
+# Editors. They reopen the file named on the command line; unsaved buffers and
+# cursor position are the editor's own business and do not come back.
+helix
+hx
+micro
+nvim
+vim
+vi
+nano
+kak
+emacs
+
+# Pagers and viewers — reading, never writing.
+less
+more
+most
+man
+bat
+glow
+
+# System monitors. Nothing they do outlives being closed.
+btop
+htop
+top
+atop
+bottom
+btm
+nvtop
+iotop
+s-tui
+
+# File managers and browsers over the filesystem. They open on a directory, and
+# `w-session` restores the working directory alongside.
+yazi
+ranger
+nnn
+lf
+mc
+broot
+
+# Read-mostly TUIs over a repository or a container host. They are the reason
+# the terminal was open and they act only when told to.
+lazygit
+gitui
+tig
+lazydocker
+k9s
+
+# Music and media, where "still playing what I was playing" is the point.
+ncmpcpp
+cmus
+
+# Deliberately NOT here, and each for the same reason — re-running it acts on
+# the machine rather than showing you something:
+#   sudo, su, doas       privilege, and a password prompt at login
+#   make, cargo, npm     a build that starts itself is a build you did not ask for
+#   ssh, mosh            a connection re-established without you is a surprise
+#   tmux, screen         they already restore their own sessions, better than we
+#                        could, and reattaching from here would fight them
+#   watch, entr          they re-run something else, so the same argument twice

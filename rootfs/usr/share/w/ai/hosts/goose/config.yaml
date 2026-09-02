@@ -1,0 +1,176 @@
+# W Linux — Goose preset (~/.config/goose/config.yaml)
+#
+# The default host of W's AI integration. w-ai seeds this into ~/.config/goose/
+# on first run (copy-if-absent — your edits are never overwritten) and injects
+# GOOSE_PROVIDER / GOOSE_MODEL / GOOSE_MODE + the provider API key from ai.conf +
+# the keyring at launch. So provider/model are deliberately NOT hardcoded here:
+# environment wins over this file, and W keeps one source of truth (ai.conf).
+#
+# What this preset pins: the W MCP server as an extension (the "actions" layer +
+# the knowledge base re-served as MCP resources), a sane tool timeout, AND every
+# one of goose 1.43's built-in "platform" extensions below — goose seeds all of
+# them into a fresh config.yaml on first run regardless of what we ship, so an
+# explicit enabled: true/false line per extension is the only way to get
+# deterministic, audited behavior instead of whatever upstream defaults to.
+# w-ai also warns (does not auto-fix) if a user's existing config.yaml carries an
+# extension key this preset doesn't know about — see seed_goose() in w-ai.
+# Decision rationale for each: ai-integration.md §4.
+
+extensions:
+  # Goose's built-in shell/file extension — lets the assistant actually operate
+  # the machine (run w-* commands, read configs, edit files).
+  developer:
+    enabled: true
+    type: builtin
+    name: developer
+    display_name: Developer
+    timeout: 300
+    bundled: true
+
+  # W's own MCP server (stdio). Exposes machine state (read) + safe/reversible
+  # actions (theme, memory) as tools and re-serves AGENTS.md + skills as
+  # w-knowledge:// resources. Runs as the user. Privileged (Tier 2) actions are
+  # gated by polkit and arrive later — see ai-integration.md.
+  w-mcp:
+    enabled: true
+    type: stdio
+    name: w-mcp
+    cmd: w-mcp
+    args: []
+    envs: {}
+    timeout: 300
+
+  # ── Goose 1.43 platform extensions (pinned, see ai-integration.md §4) ────────
+  # Read-only code analysis (tree-sitter). No overlap with any W subsystem, no
+  # host-local state beyond an in-memory cache — kept for general coding
+  # usefulness ("powerful, not just about W").
+  analyze:
+    enabled: true
+    type: platform
+    name: analyze
+    description: 'Analyze code structure with tree-sitter: directory overviews, file details, symbol call graphs'
+    display_name: Analyze
+    bundled: true
+
+  # Session-scoped checklist the model uses to track its own progress. Ephemeral,
+  # not persisted cross-session — does not compete with W's own durable task
+  # memory (w_task_* — Этап 3).
+  todo:
+    enabled: true
+    type: platform
+    name: todo
+    description: Enable a todo list for goose so it can keep track of what it is doing
+    display_name: Todo
+    bundled: true
+
+  # Injects custom context every turn via GOOSE_MOIM_MESSAGE_TEXT/FILE env vars.
+  # W sets neither today, so this is a no-op — kept on, near-zero cost, and a
+  # possible future hook (e.g. recipes) rather than a reason to disable now.
+  tom:
+    enabled: true
+    type: platform
+    name: tom
+    description: Inject custom context into every turn via GOOSE_MOIM_MESSAGE_TEXT and GOOSE_MOIM_MESSAGE_FILE environment variables
+    display_name: Top Of Mind
+    bundled: true
+
+  # Delegates sub-tasks to sub-agent LLM sessions. Host-local and outside our
+  # MCP-Prompts cross-host recipe mechanism, but a genuinely useful agentic
+  # capability — kept on deliberately (confirmed with the user 2026-07-24).
+  summon:
+    enabled: true
+    type: platform
+    name: summon
+    description: Load knowledge and delegate tasks to subagents
+    display_name: Summon
+    bundled: true
+
+  # Lets the model itself discover/enable/disable extensions at runtime — would
+  # let it silently re-enable anything we pin off below, defeating the point of
+  # this whole block. Off.
+  extensionmanager:
+    enabled: false
+    type: platform
+    name: Extension Manager
+    description: Enable extension management tools for discovering, enabling, and disabling extensions
+    display_name: Extension Manager
+    bundled: true
+
+  # Creates/manages HTML/CSS/JS "apps" in sandboxed windows and writes them to
+  # ~/.local/share/goose/apps/ (host-local state). Sandboxed windows are a Goose
+  # Desktop concept — under our CLI-only launch (`goose session`/`w-ai`) this is
+  # likely a no-op the model can't observe, which is worse than just off. Off.
+  apps:
+    enabled: false
+    type: platform
+    name: apps
+    description: Create and manage custom Goose apps through chat. Apps are HTML/CSS/JavaScript and run in sandboxed windows.
+    display_name: Apps
+    bundled: true
+
+  # Discovers/loads SKILL.md files from goose's own host-local directories
+  # (~/.agents/skills, ~/.config/goose/skills, ~/.claude/skills,
+  # ~/.config/agents/skills — none of which overlap W's /usr/share/w/ai/skills).
+  # Conceptually a host-local, un-audited competitor to W's own future
+  # cross-host self-skill layer (w_skill_add, Этап 6). Off until that lands;
+  # revisit then (confirmed with the user 2026-07-24).
+  skills:
+    enabled: false
+    type: platform
+    name: skills
+    description: Discover and provide skill instructions from filesystem and builtins
+    display_name: Skills
+    bundled: true
+
+  # Off upstream already (default_enabled: false) — pinned explicitly so a
+  # future goose update can't flip it on silently. Direct competitor to
+  # w_memory_* (host-local conversation search vs W's cross-host FTS5 store).
+  chatrecall:
+    enabled: false
+    type: platform
+    name: chatrecall
+    description: Search past conversations and load session summaries for contextual memory
+    display_name: Chat Recall
+    bundled: true
+
+  # Off upstream already; hidden: true in goose itself (not yet a mainstream
+  # feature there either). Host-local multi-agent session management — the same
+  # "host-local, outside our audit" reasoning that keeps W off goose's built-in
+  # scheduler too (Этап 4). Confirmed with the user 2026-07-24.
+  orchestrator:
+    enabled: false
+    type: platform
+    name: orchestrator
+    description: 'Manage agent sessions: list, view, start, send messages, interrupt, and stop agents'
+    display_name: Orchestrator
+    bundled: true
+
+  # Off upstream already — an extra LLM call per use, no clear need. Pinned
+  # explicitly for the same reason as chatrecall above.
+  summarize:
+    enabled: false
+    type: platform
+    name: summarize
+    description: Load files/directories and get an LLM summary in a single call
+    display_name: Summarize
+    bundled: true
+
+  # Off upstream already, and physically unavailable in our goose build (gated
+  # behind the "code-mode" cargo feature) — pinned off for documentation, not
+  # because it does anything on this binary. Revisit as a §7 (token
+  # optimization) idea if a future goose build ships the feature.
+  code_execution:
+    enabled: false
+    type: platform
+    name: code_execution
+    description: Goose will make extension calls through code execution, saving tokens
+    display_name: Code Mode
+    bundled: true
+
+# Goose's built-in `memory` extension is deliberately NOT enabled (it doesn't even
+# appear above — it's a separate goose-mcp server, not a platform extension). W
+# provides its own memory through w-mcp (w_memory_store / w_memory_search): one
+# store, shared by every host, with retrieval discipline (only relevant snippets
+# enter the prompt). Goose's memory is host-local and injects every saved memory
+# into every prompt — the opposite of W's cross-agent + token-optimization design.
+# See ai-integration.md §8.

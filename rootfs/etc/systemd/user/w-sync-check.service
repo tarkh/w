@@ -1,0 +1,12 @@
+# W Linux — refresh the edge behind-count for the sync status file.
+# Non-root, runs in the user session. The state it refreshes is machine-wide
+# (/var/lib/w/state/sync.json): the unit is enabled for every user, but only the
+# checkout's owner actually writes it — for anyone else `w-sync check` is a quiet
+# no-op, and their Hub reads the same file.
+[Unit]
+Description=W Linux — check for edge updates
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/w-sync check

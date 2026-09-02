@@ -1,0 +1,87 @@
+# Third-party material and non-code assets
+
+W Linux as a whole is licensed **GPL-3.0-or-later** — see [LICENSE](LICENSE).
+That covers every script, configuration file, QML source and installer module in
+this tree.
+
+This file records the parts that are **not** original W code, or that are not
+code at all, together with where they came from and under what terms. It is the
+authoritative provenance record: anything shipped in `rootfs/` or `archiso/`
+that W did not author from scratch is listed here.
+
+---
+
+## Vendored third-party code
+
+### `rootfs/usr/lib/w/papirus-folders`
+
+- **Upstream:** <https://github.com/PapirusDevelopmentTeam/papirus-folders>
+- **Author:** Sergei Eremenko (<https://github.com/SmartFinn>)
+- **License:** MIT
+- **Why vendored:** W recolours Papirus folder icons from the active theme
+  (`w-style`), and the upstream helper is not packaged in the Arch repositories.
+  Shipped verbatim; the MIT notice stays in the file header.
+
+MIT is GPL-3.0-compatible, so redistributing it inside a GPL-3.0-or-later work
+is permitted. The MIT terms continue to govern this file on its own.
+
+### `archiso/profile/syslinux/splash.png`
+
+- **Upstream:** `archiso` (Arch Linux), `configs/releng/syslinux/splash.png`
+- **License:** GPL-3.0-or-later
+- **Note:** byte-identical to upstream. Part of the archiso profile W builds on.
+
+---
+
+## Derived artwork
+
+### Kvantum widget theme
+
+Files:
+
+- `rootfs/etc/w/themes/w/kvantum/default.svg`
+- `rootfs/etc/skel/.config/Kvantum/w/w.svg`
+
+- **Derived from:** `KvFlat` — a theme bundled with Kvantum
+  (<https://github.com/tsujan/Kvantum>), by Pedram Pourang (Tsu Jan)
+- **Upstream license:** GPL-3.0-or-later
+- **What W changed:** colours only. The geometry is upstream's; `w-style`
+  re-tokenises the palette from `W_QT_*` at render time
+  (see `kvconfig-map.conf` / `svg-map.conf`).
+- **Status:** a derivative work of GPL-3.0-or-later material, therefore
+  distributed under GPL-3.0-or-later like the rest of this repository.
+
+The accompanying `default.kvconfig` (geometry and behaviour) is W's own work
+and is likewise GPL-3.0-or-later.
+
+---
+
+## W's own artwork
+
+Authored for W by tarkh, licensed **CC BY-SA 4.0**
+(<https://creativecommons.org/licenses/by-sa/4.0/>):
+
+- `rootfs/etc/w/themes/w/logo/W-logo.svg`, `W-logo-256x256.png` — the W mark
+- `rootfs/etc/w/themes/w/wallpaper/*.webp`, `preview.webp` — the default
+  wallpaper of theme `w`, in the four shipped resolutions plus its thumbnail
+- `rootfs/usr/share/plymouth/themes/w/*.png` — boot splash bar, bullet, lock
+- `rootfs/boot/grub/themes/w/select/*.png` — GRUB selection frame (9-slice)
+
+Verified as original: none of these match any asset shipped by Plymouth, GRUB or
+Kvantum on a stock Arch system.
+
+The wallpaper was drawn for W from scratch, to the palette already in
+`themes/w/theme.conf` rather than the other way round — so it carries no upstream
+image and `theme.conf` is unchanged by it. It replaces an earlier wallpaper that
+was derived from a downloaded photograph whose licence was never established.
+That one shipped in the pre-release snapshots v0.1.1–v0.1.5 of the throwaway test
+repository and nowhere else; it is gone from this tree, and the production
+repository — which has not been published yet — never carried it.
+
+---
+
+## Test fixtures
+
+`scripts/check/tests/fixtures/palette/matugen-*.json` are recorded outputs of
+`matugen` runs, kept so the palette suite can assert against a frozen input.
+They are generated data, not third-party material.

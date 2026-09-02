@@ -1,0 +1,26 @@
+# W Linux — one evaluation of the night light. hyprsunset can only switch
+# instantly at a wall-clock time, so W owns the schedule: this works out what the
+# screen should show right now (including a point part-way through a transition)
+# and pushes it in over IPC. Driven by w-nightlight-tick.timer; also pulled in at
+# session start so the first evaluation does not wait for the first tick.
+#
+# Cheap by construction: if the target equals what is already on screen it
+# returns immediately without touching the daemon. See w-nightlight.md.
+[Unit]
+Description=W night light — apply the scheduled colour temperature
+After=graphical-session.target
+PartOf=graphical-session.target
+# No Wayland session, nothing to tint. Keeps the unit out of TTY/SSH logins.
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+Type=oneshot
+# Should complete in well under a second; a hard cap here means a wedged run
+# (stuck hyprctl call, etc.) cannot swallow more than one missed cycle instead
+# of blocking the unit — systemd will not start a second instance while this
+# one is still "active" — for up to systemd's own default timeout.
+TimeoutStartSec=15s
+ExecStart=/usr/bin/w-nightlight _tick
+
+[Install]
+WantedBy=graphical-session.target

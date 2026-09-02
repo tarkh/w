@@ -1,0 +1,24 @@
+# W Linux — YOUR git config. The `dev` W-Pack created this file once and will
+# never write to it again (manifest class `user`, seed-if-absent).
+#
+# W's own git settings — delta as the pager, the W diff theme, a few defaults —
+# live in ~/.config/git/config, which W owns and updates. Git reads that file
+# first and this one second, and the later file wins, so ANY key you set here
+# overrides W. Nothing you write can be clobbered by an update.
+#
+# This file exists even while empty for one concrete reason: `git config --global`
+# targets ~/.gitconfig only if it is present. Without it, git would write your
+# settings into W's managed file, where the next update would erase them.
+
+# ── Identity ──────────────────────────────────────────────────────────────────
+# W cannot know these — git refuses to commit until you set them:
+#   git config --global user.name  "Your Name"
+#   git config --global user.email "you@example.com"
+# [user]
+#	name = Your Name
+#	email = you@example.com
+
+# ── Your overrides ────────────────────────────────────────────────────────────
+# e.g. to go back to git's own pager:
+# [core]
+#	pager = less

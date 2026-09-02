@@ -1,0 +1,2229 @@
+#!/usr/bin/env python3
+# w-session — W Linux graphical-session memory (windows, workspaces, layout).
+#
+# Remembers what the Hyprland session looked like — which programs were open, on
+# which workspace and monitor, how the workspace was SPLIT between them, where
+# the floating ones sat, which one had focus — and puts it back at the next
+# login.
+#
+# ── Why this exists as our own code ──────────────────────────────────────────
+#
+# Wayland's answer to this is `xdg-session-management-v1` (Qt 6.10, Mutter and
+# SDL all speak it as of 2026), where the toplevel itself carries a token across
+# restarts and the app restores its own contents. Hyprland does not implement it
+# — verified on 0.56.2: the protocol XML ships in wayland-protocols, the
+# compositor has no reference to it — so on W the only working mechanism is to
+# reconstruct the session from the outside.
+#
+# ── The layout is the point, and it is why restore has two phases ────────────
+#
+# Reopening the right set of programs is the easy half, and not what a tiling
+# user cares about: the arrangement was chosen deliberately. The first cut of
+# this tool launched each entry with a PID-keyed window rule and hoped windows
+# would arrive in the order they were launched. They do not. Measured: ghostty
+# was launched first and foot second, foot mapped first and took the left slot —
+# tiling order follows STARTUP SPEED, not launch order. And even with the order
+# right, dwindle inserts a new window by splitting the ACTIVE one, which a silent
+# launch never sets, so split direction and ratio came out of the layout engine's
+# defaults rather than out of the saved session.
+#
+# So launching and placing are separated:
+#
+#   phase 1  every window is launched onto a HIDDEN special workspace. Nothing
+#            is placed and nothing is visible; the phase costs the startup time
+#            of the slowest program rather than the sum of all of them.
+#   phase 2  the windows — all of them already open — are dealt onto their
+#            workspaces one at a time, driving dwindle explicitly: focus the
+#            anchor, `preselect` the split direction, move the window in,
+#            `splitratio <r> exact`. Every step is one compositor round trip, so
+#            the whole phase is milliseconds.
+#
+# Phase 2 replays a binary split tree recovered from the saved rectangles. The
+# compositor does not expose its tree — this is where every other Hyprland
+# session tool stops — but it does not need to: a tiled workspace is a guillotine
+# partition, so the tree is recoverable from the leaves alone, and `preselect` +
+# `splitratio exact` make it replayable. Verified on the VM: a 1269/418 px split
+# comes back as 1269/418.
+#
+# ── Two compositor facts this rests on (both measured, neither documented) ───
+#
+# 1. `uwsm app --` does NOT break PID-keyed exec rules: `uwsm app` uses a systemd
+#    SCOPE, so the payload stays a descendant of the process Hyprland forked. The
+#    window still lands in app-graphical.slice, which is where W wants it.
+# 2. `preselect` applies to a window being MOVED into a workspace, not only to
+#    one being opened there. The wiki says "the next window to be opened"; the
+#    whole of phase 2 depends on the wider behaviour, so a workspace coming back
+#    with the wrong split direction is the signal that this changed upstream.
+#
+# ── What it cannot do, honestly ──────────────────────────────────────────────
+#
+#   • In-app state (scrollback, unsaved edits, cursor position). That is what
+#     the Wayland protocol above is for; until then each program's own
+#     persistence does the work — browsers reopen tabs, editors reopen files
+#     named on the command line.
+#   • Non-dwindle layouts: `preselect`/`splitratio` are dwindle layout messages.
+#     Under master or scrolling the tree replay is skipped and windows are dealt
+#     in saved spatial order, which is as much as those layouts can accept.
+#   • Telling two windows of one single-instance program apart. See Parker.
+#
+# Everything here is user scope: the window list it reads, the snapshot it
+# writes and the daemon it runs all belong to one login session. There is no
+# polkit path in this subsystem and no root command. See w-session.md.
+#
+# Usage: w-session <command> [args]
+# Exit codes: 0 success · 1 runtime error · 2 usage
+
+import json
+import os
+import pwd
+import re
+import select
+import shlex
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import time
+import unicodedata
+
+# ── Tunables (mechanics, not settings — the settings live in `w-conf session`) ─
+PARK_WORKSPACE = "special:w-restore"   # hidden staging area for phase 1
+PARK_TIMEOUT = 45.0      # the whole of phase 1 gives up after this
+WINDOW_TIMEOUT = 20.0    # one window has this long to map before its lane moves on
+LANE_GAP_SEC = 0.15      # spacing between launches: a login is not a fork bomb
+DEBOUNCE_SEC = 2.0       # daemon: quiet period after an event before writing
+RESTORE_LOCK_MAX = 300   # a restore lock older than this is stale, ignore it
+SNAPSHOT_VERSION = 2
+
+CURTAIN = "quickshell:session-curtain"   # the shell's two global shortcuts, -on/-off
+CURTAIN_NS = "quickshell:infobox"        # ...and the layer surface they map
+BLIND_NS = "w-windowblind"               # the freeze's layer surface
+OVERLAY_LEVEL = "3"      # `hyprctl layers` level names: 0 background … 3 overlay
+# Every number below is a FAILSAFE for a step that hung, never a pause that a
+# step is expected to need: each wait ends the instant the compositor says the
+# thing happened. They are generous for that reason — on a machine where nothing
+# hangs, none of them is ever reached, and a slow laptop must not be the machine
+# that silently loses the curtain.
+CURTAIN_WAIT = 10.0      # the shell has to finish loading QML at login
+CURTAIN_READY_WAIT = 3.0 # and then to report its own fade complete
+CURTAIN_MAP_WAIT = 2.0   # its card surface has to reach the compositor's stack
+WALLPAPER_WAIT = 3.0     # the desktop the freeze photographs has to be drawn first
+FREEZE_SAFETY_MS = 60000 # the blind clears itself if this process is killed outright
+FREEZE_READY_WAIT = 1.0  # GTK4 startup is variable; the fifo absorbs exactly that
+FREEZE_MAP_WAIT = 2.0    # and then the surface has to actually be mapped
+FADE_SETTLE_MARGIN = 0.05
+DEFAULT_LAYER_FADE = 0.4 # only if the compositor reports no layer speed at all
+
+STATE_DIR = os.path.join(
+    os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "w"
+)
+SNAPSHOT = os.path.join(STATE_DIR, "session.json")
+# Named layouts are DATA, not state: the user made them on purpose, names them,
+# and expects them to outlive anything a reset or a crash touches. The automatic
+# snapshot above is the opposite — it is written behind their back and is worth
+# exactly one login — so the two deliberately live in different trees.
+LAYOUTS_DIR = os.path.join(
+    os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"),
+    "w", "layouts")
+RESTORE_LOCK = os.path.join(STATE_DIR, "session.restoring")
+CURTAIN_READY = os.path.join(STATE_DIR, "session.curtain-ready")
+FREEZE_DIR = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "w-session-freeze.d")
+
+VENDOR_APPS = "/usr/share/w/defaults/session-apps.tsv"
+VENDOR_TERMINAL = "/usr/share/w/defaults/session-terminal.list"
+
+SHELLS = {"sh", "bash", "zsh", "fish", "dash", "ksh", "mksh", "tcsh", "csh", "elvish", "nu"}
+
+
+def user_config_dir():
+    """~/.config/w, resolved the same way w-conf-lib.sh resolves it.
+
+    HOME is not assumed: a systemd unit without User= is handed no HOME at all,
+    which is the trap that once broke firstboot for the whole conf library.
+    """
+    base = os.environ.get("XDG_CONFIG_HOME")
+    if not base:
+        home = os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir
+        base = os.path.join(home, ".config")
+    return os.path.join(base, "w")
+
+
+def die(msg, code=1):
+    print(f"w-session: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def warn(msg):
+    print(f"w-session: {msg}", file=sys.stderr)
+
+
+# ── Layered config (w-conf) ──────────────────────────────────────────────────
+
+DEFAULTS = {
+    "MODE": "off",
+    "AUTOSAVE_SEC": "60",
+    "EXCLUDE_CLASSES": "",
+    "MAX_WINDOWS": "40",
+    "TERMINAL_APPS": "allowlist",
+}
+
+
+def conf_load():
+    """Effective `session` config, via the shared reader.
+
+    Shelling out to `w-conf` rather than parsing the files: the layer priority,
+    the scope schema and the policy locks are one implementation by design, and
+    a second reader here would be a second answer to the same question.
+    """
+    values = dict(DEFAULTS)
+    try:
+        out = subprocess.run(
+            ["w-conf", "list", "session", "--porcelain"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        warn(f"cannot read config ({e}); using built-in defaults")
+        return values
+    if out.returncode != 0:
+        warn("cannot read config; using built-in defaults")
+        return values
+    for line in out.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 2 and parts[0] in DEFAULTS:
+            values[parts[0]] = parts[1]
+    return values
+
+
+def conf_set(key, value):
+    """Write one key into the user layer. wconf_set enforces scope + policy."""
+    r = subprocess.run(
+        ["w-conf", "set", "session", key, value, "--user"],
+        capture_output=True, text=True, check=False,
+    )
+    if r.returncode != 0:
+        die(r.stderr.strip() or f"could not set {key}")
+
+
+def conf_int(values, key, lo, hi):
+    try:
+        n = int(str(values.get(key, "")).strip())
+    except ValueError:
+        n = int(DEFAULTS[key])
+    return max(lo, min(hi, n))
+
+
+def conf_choice(values, key, allowed):
+    v = str(values.get(key, "")).strip().lower()
+    return v if v in allowed else DEFAULTS[key]
+
+
+def exclude_patterns(values):
+    pats = []
+    for raw in str(values.get("EXCLUDE_CLASSES", "")).split():
+        try:
+            pats.append(re.compile(f"^(?:{raw})$"))
+        except re.error:
+            warn(f"ignoring malformed EXCLUDE_CLASSES entry: {raw}")
+    return pats
+
+
+# ── The relaunch override table ──────────────────────────────────────────────
+
+def _read_patterns(path, two_column):
+    rows = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if two_column:
+                    parts = line.split("\t", 1)
+                    if len(parts) != 2 or not parts[1].strip():
+                        continue
+                    pat, val = parts[0].strip(), parts[1].strip()
+                else:
+                    pat, val = line, line
+                try:
+                    rows.append((re.compile(f"^(?:{pat})$"), val))
+                except re.error:
+                    warn(f"{path}: malformed pattern: {pat}")
+    except FileNotFoundError:
+        return []
+    except OSError as e:
+        warn(f"{path}: {e}")
+        return []
+    return rows
+
+
+def app_map():
+    """[(regex, command)] from the vendor table then the user's.
+
+    The user's file is read second and its entries are tried first, so a
+    personal override beats the shipped one without having to delete anything.
+    """
+    user = _read_patterns(os.path.join(user_config_dir(), "session-apps.tsv"), True)
+    return user + _read_patterns(VENDOR_APPS, True)
+
+
+def mapped_command(entries, cls):
+    for pat, cmd in entries:
+        if pat.match(cls or ""):
+            return cmd
+    return None
+
+
+def terminal_allowlist():
+    """Programs that are safe to reopen inside a terminal, vendor plus user.
+
+    An allowlist rather than a denylist, and that asymmetry is the whole point:
+    what runs in a terminal is arbitrary, and reopening it at login means
+    re-EXECUTING it. A build, a deploy script, anything behind `sudo` must never
+    come back on its own merely because it happened to be on screen when the
+    session ended. What is not listed still reopens — as a plain terminal in the
+    same directory, which is where the user left off and which cannot do
+    anything by itself.
+    """
+    return (_read_patterns(os.path.join(user_config_dir(), "session-terminal.list"), False)
+            + _read_patterns(VENDOR_TERMINAL, False))
+
+
+# ── Hyprland IPC ─────────────────────────────────────────────────────────────
+#
+# Requests go through `hyprctl`. The request socket is evaluated SYNCHRONOUSLY
+# by the compositor and a connection left open freezes it until a five-second
+# timeout — hyprctl is the implementation that already gets that right. The
+# event socket below is a pure read stream and carries no such hazard, so it is
+# read directly.
+
+def hypr(*args):
+    r = subprocess.run(["hyprctl", *args], capture_output=True, text=True, check=False)
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or r.stdout).strip() or "hyprctl failed")
+    return r.stdout
+
+
+def hypr_json(*args):
+    return json.loads(hypr("-j", *args))
+
+
+def hypr_alive():
+    return bool(os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")) and os.path.exists(event_socket())
+
+
+def event_socket():
+    his = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+    run = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    return os.path.join(run, "hypr", his, ".socket2.sock")
+
+
+def lua_str(s):
+    """Quote a Python string as a Lua string literal.
+
+    Long brackets ([[...]]) would be shorter but are not safe for arbitrary
+    input — a command containing ']]' would close them early, and command lines
+    are exactly the place arbitrary input arrives from.
+    """
+    out = ['"']
+    for ch in s:
+        if ch in ('"', "\\"):
+            out.append("\\" + ch)
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\t":
+            out.append("\\t")
+        elif ord(ch) < 32:
+            out.append(f"\\{ord(ch)}")
+        else:
+            out.append(ch)
+    out.append('"')
+    return "".join(out)
+
+
+def lua_val(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, (list, tuple)):
+        return "{" + ", ".join(lua_val(x) for x in v) + "}"
+    return lua_str(str(v))
+
+
+def lua_table(d):
+    return "{ " + ", ".join(f"{k} = {lua_val(v)}" for k, v in d.items()) + " }"
+
+
+def dispatch(method, fields):
+    return dispatch_raw(f"{method}({lua_table(fields)})")
+
+
+def dispatch_raw(expr):
+    """Run one dispatcher. False if the compositor did not accept it.
+
+    THE ANSWER IS READ, and that is not a formality. `hyprctl` exits 0 for a
+    dispatcher that REFUSED the request and reports the refusal in the body
+    instead ("warning: … cannot alter split ratio"), so a caller that only checks
+    the exit status believes every request succeeded. That is exactly how a
+    curtain that froze the active window silently turned every restored split
+    into a 50/50 default for a whole release: Hyprland said no, several times per
+    restore, and nothing was listening.
+    """
+    try:
+        out = (hypr("dispatch", expr) or "").strip()
+    except (RuntimeError, OSError) as e:
+        warn(f"dispatch failed ({e}): {expr}")
+        return False
+    if out != "ok":
+        warn(f"dispatch refused ({out}): {expr}")
+        return False
+    return True
+
+
+def layout_msg(msg):
+    return dispatch_raw(f"hl.dsp.layout({lua_str(msg)})")
+
+
+def active_layout():
+    """The layout in force, e.g. "dwindle". Only dwindle can be replayed."""
+    try:
+        return (hypr_json("getoption", "general:layout") or {}).get("str", "").strip()
+    except (RuntimeError, OSError, ValueError):
+        return ""
+
+
+def animations_enabled():
+    try:
+        return bool((hypr_json("getoption", "animations:enabled") or {}).get("bool", True))
+    except (RuntimeError, OSError, ValueError):
+        return True
+
+
+def set_animations(on):
+    """Toggle animations around the placement phase.
+
+    `hyprctl keyword` is dead under the Lua config ("keyword can't work with
+    non-legacy parsers. Use eval."), so this goes through `hyprctl eval`, which
+    applies hl.config for real — measured, and it leaves gaps, borders and the
+    animation leaves untouched. Without it phase 2's rapid workspace switching
+    plays every workspace-change animation in sequence, which reads as a fault
+    rather than as a restore.
+    """
+    try:
+        hypr("eval", f"hl.config({{ animations = {{ enabled = {lua_val(bool(on))} }} }})")
+    except (RuntimeError, OSError) as e:
+        warn(f"could not toggle animations ({e})")
+
+
+# ── /proc: how to start a window's program again ─────────────────────────────
+
+def proc_cmdline(pid):
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return None
+    argv = [a.decode("utf-8", "replace") for a in raw.split(b"\0") if a]
+    return argv or None
+
+
+def proc_cwd(pid):
+    try:
+        return os.readlink(f"/proc/{pid}/cwd")
+    except OSError:
+        return None
+
+
+def proc_stat(pid):
+    """{comm, pgrp, tty, tpgid} from /proc/<pid>/stat.
+
+    Parsed from the LAST ')' rather than by splitting on spaces: comm is the raw
+    executable name and may itself contain spaces and parentheses.
+    """
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as fh:
+            raw = fh.read()
+    except OSError:
+        return None
+    open_, close = raw.find("("), raw.rfind(")")
+    if open_ < 0 or close < 0:
+        return None
+    rest = raw[close + 2:].split()
+    if len(rest) < 6:
+        return None
+    try:
+        return {"comm": raw[open_ + 1:close], "pgrp": int(rest[2]),
+                "tty": int(rest[4]), "tpgid": int(rest[5])}
+    except ValueError:
+        return None
+
+
+def proc_children(pid):
+    kids = []
+    try:
+        tasks = os.listdir(f"/proc/{pid}/task")
+    except OSError:
+        return kids
+    for t in tasks:
+        try:
+            with open(f"/proc/{pid}/task/{t}/children", encoding="utf-8") as fh:
+                kids.extend(int(x) for x in fh.read().split())
+        except (OSError, ValueError):
+            continue
+    return kids
+
+
+def prog_name(pid):
+    """The program's own name, from argv[0] rather than from comm.
+
+    comm is truncated to 15 characters by the kernel, which silently turns a
+    long binary name into a prefix that matches nothing in the allowlist.
+    """
+    argv = proc_cmdline(pid)
+    if argv:
+        return os.path.basename(argv[0])
+    st = proc_stat(pid)
+    return st["comm"] if st else ""
+
+
+def title_names(title, name):
+    """Does this window title identify the program `name`?
+
+    Not string equality, and the difference is the whole of a measured bug. A
+    terminal titles its window after the foreground process ONLY as long as that
+    process leaves the title alone — measured on ghostty: `btop`, `helix`,
+    `micro`, `less`, `man`. A TUI that sets its own title (OSC 2) breaks that
+    equality while still naming itself: measured, yazi titles the window
+    `Yazi: w`, i.e. its name plus the directory. Editors do the same in the other
+    order (`file - NVIM`), file managers with a separator (`ranger:/etc`).
+
+    So the question is "does the title name this program", and the answer is a
+    case-insensitive word match. Uniqueness is still required by the caller, so a
+    title that names two live candidates (`Yazi: less` next to a real `less`)
+    resolves to nothing rather than to the wrong one — a coincidence degrades
+    into an empty terminal, never into the wrong program.
+    """
+    if not title or not name:
+        return False
+    return re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", title, re.IGNORECASE) is not None
+
+
+def terminal_payload(win_pid, title):
+    """The program running inside a terminal window, or None.
+
+    A terminal is not recognised from a list of names — it is recognised
+    structurally, as a process with a child on a pty. That is what a terminal
+    IS, and it keeps this working for a terminal W has never heard of.
+
+      one process per window   the window's own pid has one pty child; if that
+      (foot)                   child is a shell, the program is whatever holds
+                               its foreground process group (tpgid), and a bare
+                               shell at its prompt has none.
+      one process for every    ghostty runs `--gtk-single-instance`, so every
+      window (ghostty)         window reports the SAME pid and the children of
+                               that pid are one-per-window with nothing tying a
+                               child to a window. The one signal left is the
+                               title, which names the running program (see
+                               title_names for how loosely, and why). Two windows
+                               running the SAME program are genuinely
+                               indistinguishable; either assignment is then
+                               equally right, and this gives up rather than
+                               guessing.
+    """
+    candidates = []
+    for kid in proc_children(win_pid):
+        st = proc_stat(kid)
+        if not st or st["tty"] == 0:
+            continue                       # not on a pty: not a terminal payload
+        if st["comm"] in SHELLS:
+            fg = st["tpgid"]
+            if fg <= 0 or fg == st["pgrp"]:
+                continue                   # a bare shell at its prompt
+            for grand in proc_children(kid):
+                gst = proc_stat(grand)
+                if gst and gst["pgrp"] == fg:
+                    candidates.append(grand)
+                    break
+        else:
+            candidates.append(kid)         # the terminal exec'd the program itself
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    t = (title or "").strip()
+    named = [p for p in candidates if title_names(t, prog_name(p))]
+    return named[0] if len(named) == 1 else None
+
+
+# ── Binary split tree ────────────────────────────────────────────────────────
+#
+# A tiled dwindle workspace is a guillotine partition: every node is its whole
+# rect cut by one straight line, recursively. That makes the tree recoverable
+# from the leaf rectangles alone, which matters because the compositor exposes
+# the leaves (`hyprctl clients`) and not the tree. Recovering it is what lets
+# phase 2 rebuild the exact arrangement instead of an arrangement that merely
+# contains the same windows.
+#
+#   node := {"leaf": <window id>}
+#         | {"split": "h"|"v", "ratio": <float>, "a": node, "b": node}
+#
+# "h" is a vertical cut producing a side-by-side pair (a left, b right); "v" a
+# horizontal cut producing a stacked pair (a top, b bottom). Named for the
+# arrangement, because that is what `preselect r` / `preselect d` reproduce.
+
+RATIO_MIN, RATIO_MAX = 0.1, 1.9
+
+
+def _cut(items, axis):
+    """Split `items` on `axis` (0 = x, 1 = y), or None if no straight cut exists.
+
+    Returns (first, second, ratio). The ratio is measured from the MIDDLE of the
+    gap between the two groups rather than from window edges, so it is
+    independent of gaps_in/gaps_out and of the border width — none of which this
+    code then has to know about.
+    """
+    ordered = sorted(items, key=lambda it: it[1][axis])
+    lo = min(it[1][axis] for it in items)
+    hi = max(it[1][axis] + it[1][axis + 2] for it in items)
+    for k in range(1, len(ordered)):
+        first, second = ordered[:k], ordered[k:]
+        end_first = max(it[1][axis] + it[1][axis + 2] for it in first)
+        start_second = min(it[1][axis] for it in second)
+        if end_first > start_second:
+            continue                       # the groups overlap: not a clean cut
+        span = hi - lo
+        if span <= 0:
+            continue
+        mid = (end_first + start_second) / 2.0
+        ratio = 2.0 * (mid - lo) / span
+        return first, second, max(RATIO_MIN, min(RATIO_MAX, ratio))
+    return None
+
+
+def build_tree(items):
+    """[(window id, (x, y, w, h))] -> tree, or None if not a guillotine partition.
+
+    The x axis is tried before the y axis, which settles the one genuinely
+    ambiguous case: a 2x2 grid reads equally as "two columns, each split in
+    half" and as "two rows, each split in half". Both replay to the same
+    picture, so the tie is broken by a fixed rule rather than by anything
+    cleverer.
+
+    None means the arrangement cannot be expressed as a tree of straight cuts —
+    which a plain tiled workspace always can. The caller falls back to dealing
+    the windows in spatial order rather than refusing to restore.
+    """
+    if not items:
+        return None
+    if len(items) == 1:
+        return {"leaf": items[0][0]}
+    for axis in (0, 1):
+        got = _cut(items, axis)
+        if not got:
+            continue
+        first, second, ratio = got
+        a, b = build_tree(first), build_tree(second)
+        if a is None or b is None:
+            return None
+        return {"split": "h" if axis == 0 else "v", "ratio": round(ratio, 4), "a": a, "b": b}
+    return None
+
+
+def tree_leaves(node):
+    if node is None:
+        return []
+    if "leaf" in node:
+        return [node["leaf"]]
+    return tree_leaves(node["a"]) + tree_leaves(node["b"])
+
+
+def first_leaf(node):
+    while node is not None and "leaf" not in node:
+        node = node["a"]
+    return node["leaf"] if node else None
+
+
+def prune_tree(node, present):
+    """Drop leaves whose window never came back; a lone sibling takes the slot.
+
+    A program uninstalled since the session was saved must cost its own slot and
+    nothing more — leaving the hole in would place every later window against an
+    anchor that does not exist.
+    """
+    if node is None:
+        return None
+    if "leaf" in node:
+        return node if node["leaf"] in present else None
+    a = prune_tree(node["a"], present)
+    b = prune_tree(node["b"], present)
+    if a and b:
+        return {"split": node["split"], "ratio": node["ratio"], "a": a, "b": b}
+    return a or b
+
+
+# ── Snapshot ─────────────────────────────────────────────────────────────────
+
+def monitor_names():
+    """{index: name} — clients report the monitor as an index, rules want a name."""
+    try:
+        return {m["id"]: m["name"] for m in hypr_json("monitors")}
+    except (RuntimeError, OSError, ValueError, KeyError):
+        return {}
+
+
+def monitor_origins():
+    """{name: (x, y)} — floating `at` is global, the `move` rule is monitor-local."""
+    try:
+        return {m["name"]: (m.get("x", 0), m.get("y", 0)) for m in hypr_json("monitors")}
+    except (RuntimeError, OSError, ValueError, KeyError):
+        return {}
+
+
+def resolve_relaunch(client, apps, allow, term_mode):
+    """(command, cwd, remapped, terminal-program) for one window.
+
+    Three sources, in order of how much each knows:
+      1. what is RUNNING IN the window, when it is a terminal and the program is
+         allowlisted — the most faithful answer, and the only one that brings
+         back an editor rather than an empty shell;
+      2. the relaunch override table, keyed on class — for where the recorded
+         command line is right but wrong for W (terminals go through `w-term`);
+      3. /proc/<pid>/cmdline — correct for the overwhelming majority of
+         programs, document arguments and all.
+    """
+    pid = client.get("pid") or 0
+    cls = client.get("initialClass") or client.get("class") or ""
+
+    if term_mode != "off":
+        payload = terminal_payload(pid, client.get("title") or "")
+        if payload:
+            argv = proc_cmdline(payload)
+            name = prog_name(payload)
+            allowed = term_mode == "all" or any(p.match(name) for p, _ in allow)
+            if argv and allowed:
+                # `w-term -e` opens the machine's configured terminal running
+                # this command, so switching terminals cannot strand the entry.
+                return ("w-term -e " + shlex.join(argv), proc_cwd(payload) or "", True, name)
+
+    cmd = mapped_command(apps, cls)
+    if cmd == "-":
+        return (None, "", False, "")       # the table says: never relaunch this
+    if cmd is not None:
+        return (cmd, proc_cwd(pid) or "", True, "")
+    argv = proc_cmdline(pid)
+    if not argv:
+        return (None, "", False, "")       # nothing to relaunch it with
+    return (shlex.join(argv), proc_cwd(pid) or "", False, "")
+
+
+def take_snapshot(values):
+    clients = hypr_json("clients")
+    mons = monitor_names()
+    excl = exclude_patterns(values)
+    apps = app_map()
+    allow = terminal_allowlist()
+    term_mode = conf_choice(values, "TERMINAL_APPS", ("off", "allowlist", "all"))
+    cap = conf_int(values, "MAX_WINDOWS", 1, 500)
+
+    windows = []
+    for c in clients:
+        if not c.get("mapped", True):
+            continue
+        cls = c.get("initialClass") or c.get("class") or ""
+        if any(p.match(cls) for p in excl):
+            continue
+        cmd, cwd, remapped, term = resolve_relaunch(c, apps, allow, term_mode)
+        if not cmd:
+            continue
+        ws = c.get("workspace") or {}
+        windows.append({
+            "class": cls,
+            "liveClass": c.get("class") or "",
+            "title": c.get("initialTitle") or "",
+            "workspace": {"id": ws.get("id"), "name": ws.get("name") or ""},
+            "monitor": mons.get(c.get("monitor"), ""),
+            "at": c.get("at") or [0, 0],
+            "size": c.get("size") or [0, 0],
+            "floating": bool(c.get("floating")),
+            "pinned": bool(c.get("pinned")),
+            "fullscreen": int(c.get("fullscreen") or 0),
+            "fullscreenClient": int(c.get("fullscreenClient") or 0),
+            "xwayland": bool(c.get("xwayland")),
+            "focusOrder": int(c.get("focusHistoryID", 9999)),
+            "cmd": cmd,
+            "cwd": cwd,
+            "remapped": remapped,
+            "term": term,
+        })
+
+    # Over the cap, keep what was most recently in use: focusHistoryID counts up
+    # from 0 (the focused window), so the trim drops what had not been touched.
+    if len(windows) > cap:
+        windows.sort(key=lambda w: w["focusOrder"])
+        windows = windows[:cap]
+
+    # Spatial order, which is also the order phase 2 falls back to.
+    windows.sort(key=lambda w: (w["workspace"]["id"] or 0, w["at"][0], w["at"][1]))
+    for i, w in enumerate(windows):
+        w["id"] = i
+
+    # One split tree per workspace, over its TILED windows only — floating ones
+    # sit above the layout and come back by coordinate.
+    grouped = {}
+    for w in windows:
+        grouped.setdefault(w["workspace"]["name"], []).append(w)
+    workspaces = []
+    for name, group in grouped.items():
+        tiled = [(w["id"], (w["at"][0], w["at"][1], w["size"][0], w["size"][1]))
+                 for w in group if not w["floating"]]
+        tree = build_tree(tiled)
+        if tiled and tree is None:
+            warn(f"workspace {name}: arrangement is not a tree of straight cuts, "
+                 "saving order only")
+        workspaces.append({
+            "name": name,
+            "id": group[0]["workspace"]["id"],
+            "monitor": group[0]["monitor"],
+            "tree": tree,
+            "order": [w["id"] for w in group if not w["floating"]],
+            "floating": [w["id"] for w in group if w["floating"]],
+        })
+
+    active = []
+    try:
+        for m in hypr_json("monitors"):
+            active.append({
+                "monitor": m.get("name", ""),
+                "workspace": (m.get("activeWorkspace") or {}).get("id"),
+                "focused": bool(m.get("focused")),
+            })
+    except (RuntimeError, OSError, ValueError):
+        pass
+
+    focused = next((w for w in windows if w["focusOrder"] == 0), None)
+    return {
+        "version": SNAPSHOT_VERSION,
+        "savedAt": int(time.time()),
+        "layout": active_layout(),
+        "monitors": active,
+        "focused": focused["id"] if focused else None,
+        "windows": windows,
+        "workspaces": workspaces,
+    }
+
+
+def write_snapshot(snap):
+    os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
+    tmp = f"{SNAPSHOT}.tmp.{os.getpid()}"
+    with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w",
+              encoding="utf-8") as fh:
+        json.dump(snap, fh, indent=1)
+        fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, SNAPSHOT)
+
+
+def read_snapshot():
+    try:
+        with open(SNAPSHOT, encoding="utf-8") as fh:
+            snap = json.load(fh)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as e:
+        warn(f"snapshot unreadable ({e})")
+        return None
+    if snap.get("version") != SNAPSHOT_VERSION:
+        warn(f"ignoring snapshot from an incompatible version ({snap.get('version')}); "
+             "the next save replaces it")
+        return None
+    return snap
+
+
+# ── Named layouts ────────────────────────────────────────────────────────────
+#
+# A layout is the SAME snapshot the automatic session memory takes, saved under a
+# name the user chose and kept until they delete it. That is the whole design:
+# nothing about reopening windows differs between "the session you had last time"
+# and "the arrangement you call Работа", so nothing about it is written twice —
+# `do_restore` takes either.
+#
+# Two scopes, and the difference is only what the snapshot contains:
+#
+#   layout      every workspace. Applying it replaces the whole desktop.
+#   workspace   the focused workspace alone, WITH ITS NUMBER STRIPPED. It is
+#               "this arrangement of windows", not "workspace 3", so it applies
+#               onto whatever workspace is focused at the time.
+#
+# Saving a layout is NOT gated on MODE. `MODE` governs the automatic memory — a
+# background daemon writing a file nobody asked for, which is a thing to be able
+# to switch off. This is the user pressing Save, and a Save button that silently
+# does nothing because of an unrelated setting is a broken button. What the mode
+# does still govern is EXCLUDE_CLASSES/TERMINAL_APPS/MAX_WINDOWS: those are
+# recording policy, and they apply to every snapshot however it was triggered.
+
+LAYOUT_SCOPES = ("layout", "workspace")
+LAYOUT_NAME_MAX = 64
+
+
+def slugify(name):
+    """A filesystem key for a name the user typed. "" if it has no key.
+
+    Unicode letters and digits survive: a layout called «Работа» keeps a readable
+    file name instead of a hash or a transliteration guess. This is only the KEY
+    — the name is stored verbatim inside the file and is what every UI shows — so
+    it may fold case and collapse punctuation without losing anything.
+
+    A name made entirely of punctuation returns "" and is refused by the caller
+    rather than given an invented key: two such names would otherwise collide and
+    silently overwrite each other. Path separators and dots do not survive the
+    filter either, so "../../x" cannot address anything outside the directory.
+    """
+    text = unicodedata.normalize("NFC", name).strip().casefold()
+    text = re.sub(r"[^\w-]+", "-", text)
+    text = re.sub(r"-{2,}", "-", text).strip("-")
+    return text[:LAYOUT_NAME_MAX].strip("-")
+
+
+def layout_path(slug):
+    return os.path.join(LAYOUTS_DIR, f"{slug}.json")
+
+
+def layout_write(slug, snap):
+    os.makedirs(LAYOUTS_DIR, mode=0o700, exist_ok=True)
+    tmp = f"{layout_path(slug)}.tmp.{os.getpid()}"
+    with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w",
+              encoding="utf-8") as fh:
+        json.dump(snap, fh, indent=1)
+        fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, layout_path(slug))
+
+
+def layout_read(slug):
+    """One layout, or None. A file that is not a layout is not a layout.
+
+    Version and scope are both checked because this directory is a place a user
+    can drop files into, and a stray json read as a snapshot would be relaunched
+    as commands. Same reason the snapshot is 0600.
+    """
+    try:
+        with open(layout_path(slug), encoding="utf-8") as fh:
+            snap = json.load(fh)
+    except (FileNotFoundError, IsADirectoryError):
+        return None
+    except (OSError, ValueError) as e:
+        warn(f"layout {slug} unreadable ({e})")
+        return None
+    if (not isinstance(snap, dict) or snap.get("version") != SNAPSHOT_VERSION
+            or snap.get("scope") not in LAYOUT_SCOPES):
+        warn(f"layout {slug} is not a layout this version understands")
+        return None
+    return snap
+
+
+def layout_list():
+    """Every saved layout, newest first. Unreadable files are skipped quietly."""
+    try:
+        names = sorted(os.listdir(LAYOUTS_DIR))
+    except OSError:
+        return []
+    out = []
+    for fname in names:
+        if not fname.endswith(".json"):
+            continue
+        slug = fname[:-len(".json")]
+        snap = layout_read(slug)
+        if snap is None:
+            continue
+        out.append({
+            "slug": slug,
+            "name": snap.get("name") or slug,
+            "scope": snap.get("scope"),
+            "windows": len(snap.get("windows") or []),
+            "savedAt": int(snap.get("savedAt") or 0),
+        })
+    out.sort(key=lambda e: -e["savedAt"])
+    return out
+
+
+def active_workspace_name():
+    try:
+        return (hypr_json("activeworkspace") or {}).get("name") or ""
+    except (RuntimeError, OSError, ValueError):
+        return ""
+
+
+def only_workspace(snap, ws_name):
+    """Narrow a snapshot to one workspace, and forget which one it was.
+
+    Window ids are left exactly as they are. They are dictionary keys and nothing
+    downstream reads them as positions, so renumbering would be churn that could
+    only introduce a mismatch between the tree, the order list and the windows.
+    """
+    windows = [w for w in (snap.get("windows") or [])
+               if (w.get("workspace") or {}).get("name") == ws_name]
+    kept = {w["id"] for w in windows}
+    workspaces = [dict(ws, name="", id=None, monitor="")
+                  for ws in (snap.get("workspaces") or []) if ws.get("name") == ws_name]
+    focused = snap.get("focused")
+    return dict(snap,
+                windows=windows,
+                workspaces=workspaces,
+                monitors=[],
+                focused=focused if focused in kept else None)
+
+
+def retarget(snap, ws_name):
+    """Point every workspace in a snapshot at one existing workspace.
+
+    This is what makes a workspace layout number-free: it was saved with its name
+    blanked, and it is applied onto whichever workspace is focused now. Floating
+    windows need no correction for a different monitor — their saved position is
+    converted to monitor-local coordinates in place_floating, so "where it sat on
+    its screen" is preserved rather than "where it sat on the desk".
+    """
+    windows = [dict(w, workspace={"id": None, "name": ws_name})
+               for w in (snap.get("windows") or [])]
+    workspaces = [dict(ws, name=ws_name) for ws in (snap.get("workspaces") or [])]
+    return dict(snap, windows=windows, workspaces=workspaces, monitors=[])
+
+
+# ── Phase 1: park every window on a hidden workspace ─────────────────────────
+
+def park_expr(win):
+    """`cd <cwd> && exec uwsm app -- <cmd>`, aimed at the staging workspace.
+
+    exec_cmd already runs the string through `sh -c`, so the `cd` costs nothing
+    extra and is what puts a restored shell back in the directory it was in.
+    `uwsm app` is what keeps the program in app-graphical.slice — and, measured,
+    keeps the PID rules working. No geometry here on purpose: everything about
+    where a window ends up is phase 2's business.
+    """
+    inner = f"uwsm app -- {win['cmd']}"
+    cwd = win.get("cwd") or ""
+    if cwd and os.path.isdir(cwd):
+        inner = f"cd {shlex.quote(cwd)} && exec {inner}"
+    rules = {"workspace": f"{PARK_WORKSPACE} silent", "no_initial_focus": True}
+    return f"hl.dsp.exec_cmd({lua_str(inner)}, {lua_table(rules)})"
+
+
+class Parker:
+    """Launches every window and works out which one is which.
+
+    Parallel across window classes, serial within one. Both halves earn their
+    keep:
+
+      parallel  a login should cost the startup time of the slowest program, not
+                the sum of all of them, and different classes are independent.
+      serial    two windows of one class are told apart ONLY by the order they
+                were asked for — same class, often the same title, and under a
+                single-instance program not even different pids. Launching them
+                one at a time, each waited for, is what keeps "the terminal that
+                was in ~/src" distinct from "the terminal that was in /etc".
+
+    A window whose class matches no lane is NOT simply set aside. The relaunch
+    can legitimately produce a different class than the one saved — `w-term`
+    opens whichever terminal the machine is configured for, so a session saved
+    under foot comes back as ghostty — and an entry flagged `remapped` is
+    exactly the one where that was foreseeable. Such a window is credited to the
+    oldest in-flight remapped entry, and failing that to the oldest in-flight
+    entry of any kind. Waiting out the per-window timeout instead would turn a
+    terminal switch into a restore that takes minutes and then gives up.
+    """
+
+    def __init__(self, windows):
+        self.windows = {w["id"]: w for w in windows}
+        self.lanes = {}                    # class -> [window id, ...] still to launch
+        for w in windows:
+            self.lanes.setdefault(w["class"], []).append(w["id"])
+        self.inflight = {}                 # class -> (window id, deadline)
+        self.addr = {}                     # window id -> window address
+        self.stray = []                    # addresses that matched no lane
+        self.sock = None
+
+    def open(self):
+        try:
+            self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.sock.connect(event_socket())
+            self.sock.settimeout(0.2)
+        except OSError as e:
+            warn(f"cannot watch window events ({e}); restore will be best-effort")
+            self.sock = None
+
+    def close(self):
+        if self.sock:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+            self.sock = None
+
+    def _launch_ready(self, now):
+        for cls, queue in self.lanes.items():
+            if queue and cls not in self.inflight:
+                wid = queue.pop(0)
+                dispatch_raw(park_expr(self.windows[wid]))
+                self.inflight[cls] = {"wid": wid, "due": now + WINDOW_TIMEOUT, "at": now}
+                return True
+        return False
+
+    def _lane_for(self, cls):
+        """Which in-flight lane a newly opened window belongs to."""
+        if cls in self.inflight:
+            return cls
+        oldest = sorted(self.inflight.items(), key=lambda kv: kv[1]["at"])
+        for lane, st in oldest:
+            if self.windows[st["wid"]].get("remapped"):
+                return lane
+        return oldest[0][0] if oldest else None
+
+    def _on_open(self, addr, ws_name, cls):
+        # A single-instance program ignores the PID rule and opens wherever the
+        # user is looking. Move it out of sight at once — with animations
+        # already off it is gone before it is drawn.
+        if ws_name != PARK_WORKSPACE:
+            dispatch("hl.dsp.window.move",
+                     {"workspace": PARK_WORKSPACE, "follow": False, "window": f"address:{addr}"})
+        lane = self._lane_for(cls)
+        if lane is None:
+            self.stray.append(addr)        # nothing in flight: not ours to claim
+            return
+        self.addr[self.inflight.pop(lane)["wid"]] = addr
+
+    def _pump(self, buf):
+        if not self.sock:
+            time.sleep(0.05)
+            return buf
+        try:
+            chunk = self.sock.recv(8192)
+        except TimeoutError:
+            return buf
+        except OSError:
+            self.close()
+            return buf
+        if not chunk:
+            self.close()
+            return buf
+        buf += chunk
+        while b"\n" in buf:
+            line, buf = buf.split(b"\n", 1)
+            name, _, data = line.decode("utf-8", "replace").partition(">>")
+            if name != "openwindow":
+                continue
+            parts = data.split(",", 3)
+            if len(parts) < 3:
+                continue
+            addr = parts[0] if parts[0].startswith("0x") else f"0x{parts[0]}"
+            self._on_open(addr, parts[1], parts[2])
+        return buf
+
+    def run(self):
+        self.open()
+        deadline = time.monotonic() + PARK_TIMEOUT
+        buf = b""
+        last_launch = 0.0
+        while time.monotonic() < deadline:
+            if not any(self.lanes.values()) and not self.inflight:
+                break
+            now = time.monotonic()
+            if now - last_launch >= LANE_GAP_SEC and self._launch_ready(now):
+                last_launch = now
+            buf = self._pump(buf)
+            now = time.monotonic()
+            for cls, st in list(self.inflight.items()):
+                if now > st["due"]:
+                    warn(f"{self.windows[st['wid']]['class']}: no window appeared, skipping")
+                    del self.inflight[cls]
+        self.close()
+        # Whatever is left over on both sides belongs together: entries that
+        # never saw a matching class, and windows whose class matched no lane.
+        missing = sorted(wid for wid in self.windows if wid not in self.addr)
+        for wid, addr in zip(missing, self.stray, strict=False):
+            self.addr[wid] = addr
+        return self.addr
+
+
+# ── Phase 2: deal the parked windows onto their workspaces ───────────────────
+
+def move_to(addr, ws_name):
+    return dispatch("hl.dsp.window.move",
+                    {"workspace": ws_name, "follow": False, "window": f"address:{addr}"})
+
+
+def place_tree(node, ws_name, addr_of):
+    """Rebuild one workspace's split tree, depth first.
+
+    Invariant: on entry, the window that is `first_leaf(node)` is already the
+    sole occupant of this node's rect. Each split is then created explicitly —
+    focus the anchor so dwindle knows what to cut, `preselect` the direction so
+    it does not infer one from the rect's aspect ratio, move the other subtree's
+    first window in, then set the ratio exactly.
+
+    `splitratio` acts on the CURRENT window, and moving with follow=false does
+    not change focus, so the anchor focused three lines earlier is still current
+    when the ratio is set. That is what puts the ratio on the right side of the
+    split.
+    """
+    if node is None or "leaf" in node:
+        return
+    anchor = addr_of.get(first_leaf(node["a"]))
+    incoming = addr_of.get(first_leaf(node["b"]))
+    if anchor and incoming:
+        dispatch("hl.dsp.focus", {"window": f"address:{anchor}"})
+        layout_msg("preselect r" if node["split"] == "h" else "preselect d")
+        move_to(incoming, ws_name)
+        layout_msg(f"splitratio {node['ratio']:.3f} exact")
+    place_tree(node["a"], ws_name, addr_of)
+    place_tree(node["b"], ws_name, addr_of)
+
+
+def place_floating(win, addr, origins):
+    """Floating windows are pixel-exact, and the order of these three is not free.
+
+    resize is centre-anchored — it moves the window it resizes — so the move has
+    to settle last. Measured: a window asked for 700x500 came back at a shifted
+    origin when the move went first.
+    """
+    sel = f"address:{addr}"
+    dispatch("hl.dsp.window.float", {"action": "set", "window": sel})
+    ox, oy = origins.get(win.get("monitor", ""), (0, 0))
+    at, size = win["at"], win["size"]
+    if size[0] > 0 and size[1] > 0:
+        dispatch("hl.dsp.window.resize",
+                 {"x": size[0], "y": size[1], "relative": False, "window": sel})
+    dispatch("hl.dsp.window.move",
+             {"x": at[0] - ox, "y": at[1] - oy, "relative": False, "window": sel})
+
+
+def apply_states(win, addr):
+    sel = f"address:{addr}"
+    if win.get("pinned"):
+        dispatch("hl.dsp.window.pin", {"action": "set", "window": sel})
+    if win.get("fullscreen") or win.get("fullscreenClient"):
+        dispatch("hl.dsp.window.fullscreen_state",
+                 {"internal": int(win.get("fullscreen") or 0),
+                  "client": int(win.get("fullscreenClient") or 0),
+                  "action": "set", "window": sel})
+
+
+def restore_lock_held():
+    try:
+        age = time.time() - os.stat(RESTORE_LOCK).st_mtime
+    except OSError:
+        return False
+    if age > RESTORE_LOCK_MAX:
+        try:
+            os.unlink(RESTORE_LOCK)
+        except OSError:
+            pass
+        return False
+    return True
+
+
+# ── Closing windows: the one graceful close ──────────────────────────────────
+#
+# Every part of W that has to clear windows out of the way comes through here:
+# the power menu's logout/reboot/shutdown (`w-session-exit`) and the layouts
+# panel, which replaces what is on screen with a saved arrangement. One
+# implementation, because what makes it graceful is a POLICY — ask, wait, and
+# give up if anything stayed — and a policy with two copies is a policy that
+# will disagree with itself the first time one of them is tuned.
+#
+# `close` is the window's own X button (`hl.dsp.window.close`), so an editor with
+# unsaved work pops its "Save changes?" dialog and the dialog stays fully
+# reachable. That last part is the whole reason W does not use hyprshutdown: it
+# triggers the same dialogs and then paints a full-screen overlay on top of them,
+# leaving them visible and unclickable. Nothing is painted over anything here —
+# and the layouts panel must be closed before it calls this, for exactly the same
+# reason (see w-session.md).
+#
+# Windows that stay open mean the user cancelled a save dialog, which is a
+# decision: nothing is force-killed, and the caller aborts. The wait is long
+# because a save dialog is answered at human speed, and the only thing a shorter
+# one would buy is losing somebody's work.
+
+CLOSE_TIMEOUT = 60.0     # a cancelled save dialog is answered at human speed
+
+
+def open_windows(workspace=None):
+    """Addresses of the toplevels a close would target, optionally on one
+    workspace.
+
+    Layer surfaces are not clients, so the bar — and the panel that asked for
+    this — are not in here and cannot be closed by accident.
+    """
+    try:
+        clients = hypr_json("clients")
+    except (RuntimeError, OSError, ValueError):
+        return []
+    return [c["address"] for c in clients if c.get("address")
+            and (workspace is None
+                 or (c.get("workspace") or {}).get("name") == workspace)]
+
+
+def close_windows(workspace=None, timeout=CLOSE_TIMEOUT):
+    """Ask every window to close and wait until it has. True if they all did.
+
+    False means at least one window is still open — a cancelled save dialog, all
+    but always — and every caller treats that as "the user chose to keep working"
+    and abandons whatever it was about to do.
+    """
+    addrs = open_windows(workspace)
+    if not addrs:
+        return True
+    for addr in addrs:
+        dispatch("hl.dsp.window.close", {"window": f"address:{addr}"})
+
+    deadline = time.time() + timeout
+    while open_windows(workspace) and time.time() < deadline:
+        time.sleep(0.5)
+
+    if open_windows(workspace):
+        # The notification lives here rather than in the callers because what the
+        # user needs to know is the same in both: the thing they asked for did
+        # not happen, and their windows are untouched.
+        subprocess.run(["notify-send", "Session", "Cancelled — windows still open"],
+                       capture_output=True, check=False)
+        return False
+    return True
+
+
+# ── The curtain: a frozen frame, and the shell's card over it ────────────────
+#
+# Phase 2 has to walk the workspaces (focusing a window elsewhere switches to it,
+# fact 7 above), so the desktop flicks through them for as long as the restore
+# takes. Animations are already off; what is left is the flicker itself, and it is
+# covered in two layers — the same pair the theme crossfade uses (see w-theme):
+#
+#   the freeze   a grim capture of the desktop, one frame per output, shown by
+#                `w-windowblind` as a layer surface on the overlay level. The live
+#                desktop keeps flicking underneath, where nobody can see it.
+#   the card     the shell's ordinary infobox over its ordinary backdrop — the
+#                same tint, the same blur, the same fade as the launcher or the
+#                Hub. It must map AFTER the freeze: layer surfaces on one level
+#                stack in map order (measured), so the freeze goes up first and
+#                ends up beneath.
+#
+# Why not simply make the backdrop opaque and skip the capture: because that is a
+# flat wash of colour where the rest of the shell shows blurred wallpaper, and on
+# a machine with blur off (a laptop, deliberately) a translucent tint alone would
+# let the flicker straight through. The freeze is what makes the standard, correct
+# looking backdrop possible at all — behind it there is simply nothing moving.
+#
+# THE ORDER IS AN INVARIANT, AND IT IS ASKED OF THE COMPOSITOR, NOT TIMED. Every
+# step below waits for a fact — a compositor query or a process exiting — and the
+# timeouts are failsafes for a step that hung, never a pause anything is expected
+# to need. This is the difference that cost a laptop its curtain: the readiness
+# fifo the blind writes is `gtk_window_present()`, i.e. "the toolkit ASKED for a
+# mapping", and the compositor maps on some later commit. Its cap was therefore a
+# race — on a slow machine GTK4 took longer to start than the cap, this ran on
+# regardless, and the card mapped FIRST, which put the freeze on top of it. What
+# the user then saw was a bare desktop, the blind, and no card at all. So the
+# blind's own signal is now only the first half; the second is `hyprctl layers`,
+# which is the compositor's answer to "is this surface on screen", and there is
+# no window between it and the truth.
+#
+#   1. the shell is loaded          `hyprctl globalshortcuts` lists its shortcut
+#   2. the wallpaper is painted     `hyprctl layers`, background level non-empty
+#   3. the frames exist             grim exited
+#   4. THE FREEZE IS MAPPED         `hyprctl layers`, w-windowblind on overlay
+#   5. its fade-in is over          duration asked of `hyprctl animations`
+#   6. THE CARD IS MAPPED, ABOVE IT `hyprctl layers`, order within the level
+#   7. its fade-in is over          the shell touches a file (it owns Motion.fast)
+#
+# None of them may hold a restore hostage — each degrades to "restore without
+# that layer", which is what every version before the curtain did anyway:
+#
+#   • grim / w-windowblind missing, or the capture empty → no freeze.
+#   • the shell still loading at login (measured: quickshell's QML finished ~2s
+#     after the compositor came up, inside the window where this unit runs) → its
+#     shortcut is absent from `hyprctl globalshortcuts`. The wait for it is long,
+#     because the only thing it costs on a healthy machine is nothing, and it
+#     ends immediately when there is no quickshell process to wait for at all.
+#   • the wallpaper not painted yet → the freeze is a photograph of a black
+#     screen and the card's backdrop has nothing to blur (see wallpaper_painted).
+#   • THE FREEZE FAILING TO MAP IS THE ONE FAILURE THAT IS NOT SURVIVED IN PLACE:
+#     it is dropped outright (step 4), because a freeze that arrives after the
+#     card is worse than no freeze — it hides the very thing it exists to frame.
+#     A card alone over the live desktop is the documented degradation on a
+#     machine with blur off; a card under the blind is a blank screen.
+
+def wait_for(ready, timeout, what):
+    """Poll `ready` until it says yes. False on timeout — never an exception.
+
+    Every caller treats False as "do without that layer", so a slow or absent
+    piece of the desktop delays a login by the cap at most and never fails it.
+    """
+    deadline = time.time() + timeout
+    while True:
+        try:
+            if ready():
+                return True
+        except (RuntimeError, OSError, ValueError):
+            return False
+        if time.time() >= deadline:
+            warn(f"{what} did not arrive in {timeout:g}s; continuing without it")
+            return False
+        time.sleep(0.1)
+
+
+def shell_running():
+    """Is there a quickshell process at all?
+
+    The wait for the shell's shortcut is long on purpose, and a long wait needs
+    an answer to "or is it never coming". A shell that has not been started (or
+    has died) will not register anything however long we sit there, and making
+    the restore pay the full cap for that is how a generous failsafe turns into
+    a stall. Matched on the exact command name: `pgrep -x` compares against the
+    kernel's `comm`, and `quickshell` is well inside its 15-character limit.
+    """
+    return subprocess.run(["pgrep", "-x", "quickshell"], capture_output=True,
+                          check=False).returncode == 0
+
+
+def shell_has_curtain():
+    return f"{CURTAIN}-on" in hypr("globalshortcuts")
+
+
+def overlay_namespaces():
+    """Namespaces on the overlay level, per monitor, in stacking order.
+
+    `hyprctl layers` reports each level as a list, and the compositor keeps that
+    list in map order — which is also bottom-to-top on screen (measured:
+    blind → overlay-scrim → infobox, with the infobox visibly on top). So the
+    whole ordering question the curtain rests on is answerable here, exactly,
+    instead of being inferred from how long two processes took to start.
+    """
+    layers = hypr_json("layers") or {}
+    return {mon: [s.get("namespace", "")
+                  for s in ((data.get("levels") or {}).get(OVERLAY_LEVEL) or [])]
+            for mon, data in layers.items()}
+
+
+def mapped(namespace):
+    """Is this layer surface on the overlay level of any output?"""
+    return any(namespace in names for names in overlay_namespaces().values())
+
+
+def card_is_above_freeze():
+    """Is the card above the freeze everywhere both of them are?
+
+    A verification, not a hope: after freeze_begin() has confirmed the blind is
+    mapped, the card cannot map before it, so this can only fail if the
+    compositor stops stacking a level in map order. That would be an upstream
+    change silently breaking the curtain, so it is worth one round trip to catch
+    it — and it has a deterministic remedy (remap the card), no timing involved.
+    """
+    for names in overlay_namespaces().values():
+        if (BLIND_NS in names and CURTAIN_NS in names
+                and names.index(CURTAIN_NS) < names.index(BLIND_NS)):
+            return False
+    return True
+
+
+def wallpaper_painted():
+    """Is anything drawn on the background layer yet?
+
+    THE reason the curtain looked wrong at login. This unit runs within
+    milliseconds of the compositor coming up — measured: hyprpaper logged its
+    first frame 30 ms AFTER the unit had started — so a freeze taken straight
+    away photographs a black screen, and the card's backdrop (whose blur is
+    cached when its surface is created) has no wallpaper to blur. The curtain
+    then reads as a flat wash of tint where every other W surface shows blurred
+    wallpaper — reproduced exactly by killing hyprpaper and raising it by hand.
+    Asked of the background LEVEL rather than of hyprpaper by name: the level is
+    what "the wallpaper is on screen" means, whichever daemon painted it.
+    """
+    layers = hypr_json("layers") or {}
+    return any((mon.get("levels") or {}).get("0") for mon in layers.values())
+
+
+def layer_fade_seconds():
+    """How long a layer surface takes to fade in, asked of the compositor.
+
+    Not read from the theme's motion.conf, which is where the number is authored:
+    the compositor holds the EFFECTIVE value, already resolved through the
+    animation tree's inheritance, and asking it costs one round trip instead of a
+    third copy of the theme-file resolver. Hyprland reports speed in deciseconds.
+    """
+    try:
+        leaves = (hypr_json("animations") or [[]])[0]
+    except (RuntimeError, OSError, ValueError, IndexError):
+        return DEFAULT_LAYER_FADE
+    by_name = {a.get("name"): a for a in leaves if isinstance(a, dict)}
+    for name in ("layersIn", "layers", "global"):
+        leaf = by_name.get(name)
+        if leaf and leaf.get("overridden") and leaf.get("speed"):
+            return float(leaf["speed"]) / 10.0
+    return DEFAULT_LAYER_FADE
+
+
+def freeze_begin():
+    """Capture the screen and hold it up. The Popen of the blind, or None.
+
+    Captures run in parallel so the frames are as close to one instant as possible,
+    and a partial capture is still worth showing — an output with no frame simply
+    goes uncovered, exactly as in w-theme.
+    """
+    if not shutil.which("grim") or not shutil.which("w-windowblind"):
+        return None
+    try:
+        outputs = [m.get("name") for m in hypr_json("monitors") if m.get("name")]
+    except (RuntimeError, OSError, ValueError):
+        return None
+    if not outputs:
+        return None
+
+    shutil.rmtree(FREEZE_DIR, ignore_errors=True)
+    try:
+        os.makedirs(FREEZE_DIR, mode=0o700)
+    except OSError:
+        return None
+    shots = [subprocess.Popen(["grim", "-o", name, os.path.join(FREEZE_DIR, f"{name}.png")],
+                              stderr=subprocess.DEVNULL)
+             for name in outputs]
+    for sh in shots:
+        sh.wait()
+    if not any(f.endswith(".png") for f in os.listdir(FREEZE_DIR)):
+        shutil.rmtree(FREEZE_DIR, ignore_errors=True)
+        return None
+
+    # A fifo opened O_RDWR never blocks on open(2) (POSIX special-cases it), so
+    # there is no race between creating it and the blind connecting as writer.
+    fifo = os.path.join(FREEZE_DIR, ".ready")
+    try:
+        os.mkfifo(fifo)
+        fd = os.open(fifo, os.O_RDWR | os.O_NONBLOCK)
+    except OSError:
+        shutil.rmtree(FREEZE_DIR, ignore_errors=True)
+        return None
+
+    try:
+        blind = subprocess.Popen(
+            ["w-windowblind", str(FREEZE_SAFETY_MS), "--image-dir", FREEZE_DIR,
+             "--ready-fifo", fifo], stderr=subprocess.DEVNULL)
+    except OSError:
+        os.close(fd)
+        shutil.rmtree(FREEZE_DIR, ignore_errors=True)
+        return None
+
+    # Two halves of one question. The fifo absorbs the variable part — fork,
+    # exec, dynamic linking, GTK4 init — and says "the toolkit asked for a
+    # mapping". Only the compositor knows when that mapping happened, and it is
+    # THAT which the card must not beat, so the answer comes from `hyprctl
+    # layers` and not from how long the first half took.
+    if not select.select([fd], [], [], FREEZE_READY_WAIT)[0]:
+        warn("the freeze did not report ready; asking the compositor instead")
+    os.close(fd)
+
+    if not wait_for(lambda: mapped(BLIND_NS), FREEZE_MAP_WAIT, "the freeze"):
+        # Not survivable in place: a freeze that maps after the card covers the
+        # card. Better no freeze — the card over the live desktop is the same
+        # degradation as a machine with blur switched off.
+        freeze_end(blind)
+        return None
+    return blind
+
+
+def freeze_end(blind):
+    """Drop the freeze. Its fade-out is what reveals the finished layout."""
+    if blind is not None:
+        blind.terminate()
+        try:
+            blind.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            blind.kill()
+    shutil.rmtree(FREEZE_DIR, ignore_errors=True)
+
+
+def curtain_raise(blind):
+    """Show the card and wait for it. True if it went up.
+
+    Three answers, in the order they become true: the surface reaches the
+    compositor's stack, it is above the freeze there, and its fade has finished.
+    Only the last one is a duration, and it is the shell that owns it (Motion.fast
+    is a theme value, so the number lives on the side that reads the theme) —
+    which is why that step is a file the shell touches rather than a sleep here.
+    """
+    try:
+        os.unlink(CURTAIN_READY)       # a leftover would read as "already opaque"
+    except OSError:
+        pass
+    if not dispatch_raw(f'hl.dsp.global({lua_str(CURTAIN + "-on")})'):
+        return False
+
+    # From the dispatch on, this function OWNS the card: every way out below has
+    # to lower it. A card left up because we stopped waiting for it would sit
+    # there until its own 120 s safety timer — an unusable desktop, and the one
+    # failure mode worse than having no curtain at all.
+    if not wait_for(lambda: mapped(CURTAIN_NS), CURTAIN_MAP_WAIT, "the card"):
+        curtain_end()
+        return False
+
+    # Cannot happen while the freeze is confirmed mapped first (map order is the
+    # stacking order), so reaching this means the compositor changed under us.
+    # One remap puts the card back on top — that is the same mechanism, applied
+    # deliberately, and it is checked rather than assumed.
+    if blind is not None and not card_is_above_freeze():
+        warn("the card mapped below the freeze; remapping it")
+        dispatch_raw(f'hl.dsp.global({lua_str(CURTAIN + "-off")})')
+        dispatch_raw(f'hl.dsp.global({lua_str(CURTAIN + "-on")})')
+        if not wait_for(lambda: mapped(CURTAIN_NS) and card_is_above_freeze(),
+                        CURTAIN_MAP_WAIT, "the card above the freeze"):
+            curtain_end()
+            return False
+
+    deadline = time.time() + CURTAIN_READY_WAIT
+    while not os.path.exists(CURTAIN_READY):
+        if time.time() >= deadline:
+            warn("the curtain did not report ready; restoring under it anyway")
+            break
+        time.sleep(0.05)
+    return True
+
+
+def curtain_end():
+    dispatch_raw(f'hl.dsp.global({lua_str(CURTAIN + "-off")})')
+    try:
+        os.unlink(CURTAIN_READY)
+    except OSError:
+        pass
+
+
+def rescue_parked():
+    """Nothing may be left on the staging workspace, whatever went wrong.
+
+    The staging workspace is hidden, so a window abandoned there is a window the
+    user has lost: it is running, it is invisible, and nothing points at it.
+    This runs from a finally block for exactly that reason.
+    """
+    try:
+        clients = hypr_json("clients")
+    except (RuntimeError, OSError, ValueError):
+        return
+    stranded = [c for c in clients
+                if (c.get("workspace") or {}).get("name") == PARK_WORKSPACE]
+    if not stranded:
+        return
+    warn(f"{len(stranded)} window(s) left staged; bringing them to the current workspace")
+    try:
+        target = str(hypr_json("activeworkspace").get("id", 1))
+    except (RuntimeError, OSError, ValueError):
+        target = "1"
+    for c in stranded:
+        move_to(c["address"], target)
+
+
+def do_restore(snap, dry_run=False, target_ws=None):
+    """Put a snapshot back on screen. The same code for both sources.
+
+    `snap` is the automatic session memory or a named layout — they are the same
+    format, which is the point. `target_ws` collapses every workspace in it onto
+    one existing workspace, which is how a workspace layout applies without
+    carrying a number around.
+    """
+    if snap is None:
+        print("w-session: nothing saved to restore")
+        return 0
+    if target_ws:
+        snap = retarget(snap, target_ws)
+    elif any(not ws.get("name") for ws in (snap.get("workspaces") or [])):
+        # A workspace layout carries no workspace name by design, so restoring one
+        # without saying where would move windows to a workspace called "". Only
+        # reachable by hand-editing a file, which is exactly why it is checked.
+        die("this layout has no workspace of its own — apply it onto one")
+    windows = snap.get("windows") or []
+    if not windows:
+        print("w-session: the saved session had no windows")
+        return 0
+    by_id = {w["id"]: w for w in windows}
+
+    if dry_run:
+        for ws in snap.get("workspaces") or []:
+            for wid in (ws.get("order") or []) + (ws.get("floating") or []):
+                w = by_id.get(wid)
+                if w:
+                    kind = "float" if w["floating"] else "tiled"
+                    print(f"ws {ws['name']}\t{kind}\t{w['class']}\t{w['cmd']}")
+        return 0
+
+    origins = monitor_origins()
+    replayable = active_layout() == "dwindle" and snap.get("layout") == "dwindle"
+    if not replayable:
+        warn("layout is not dwindle: windows are dealt in saved order, without "
+             "split directions or ratios")
+
+    os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
+    with open(RESTORE_LOCK, "w", encoding="utf-8") as fh:
+        fh.write(str(os.getpid()))
+    # Order is load-bearing. The freeze goes up FIRST so the shell's card stacks
+    # above it, and both go up while animations are still ON — their fades are
+    # compositor layer animations, and the freeze's fade-out at the end is what
+    # reveals the finished layout. Only then are animations killed for the placement
+    # itself, which is the part that would otherwise play a workspace slide per
+    # window.
+    # Both waits come BEFORE the capture, and that order is the fix for a curtain
+    # that looked wrong at login: the freeze is a photograph, so everything that
+    # belongs on screen — the shell's bar, the wallpaper — has to be on it first.
+    # A shell that was never started will not register a shortcut however long we
+    # wait, so the generous cap only applies while there is one loading.
+    curtain = shell_running() and wait_for(shell_has_curtain, CURTAIN_WAIT,
+                                           "the shell's curtain")
+    wait_for(wallpaper_painted, WALLPAPER_WAIT, "the wallpaper")
+
+    blind = freeze_begin()
+    settle_until = (time.time() + layer_fade_seconds() + FADE_SETTLE_MARGIN
+                    if blind is not None else 0)
+    curtain = curtain and curtain_raise(blind)
+    # The two fades ran concurrently; wait out whatever is left of the longer one.
+    time.sleep(max(0.0, settle_until - time.time()))
+
+    animate = animations_enabled()
+    if animate:
+        set_animations(False)
+
+    try:
+        addr_of = Parker(windows).run()
+
+        for ws in snap.get("workspaces") or []:
+            name = ws["name"]
+            tree = prune_tree(ws.get("tree"), set(addr_of)) if replayable else None
+            if tree is not None:
+                head = addr_of.get(first_leaf(tree))
+                if head:
+                    move_to(head, name)
+                place_tree(tree, name, addr_of)
+            else:
+                # No replayable tree (non-dwindle layout, or an arrangement that
+                # is not a tree of straight cuts): saved spatial order is all
+                # there is left to honour, and it still beats arrival order.
+                for wid in ws.get("order") or []:
+                    if wid in addr_of:
+                        move_to(addr_of[wid], name)
+            for wid in ws.get("floating") or []:
+                if wid in addr_of:
+                    move_to(addr_of[wid], name)
+                    place_floating(by_id[wid], addr_of[wid], origins)
+
+        for wid, addr in addr_of.items():
+            apply_states(by_id[wid], addr)
+
+        # Focus last, once everything has landed and stopped moving. A retargeted
+        # restore carries no monitors (they were dropped when its workspace was
+        # blanked), so this simply does not run and the user stays where they are
+        # — which for "fill THIS workspace" is the only correct answer.
+        for m in snap.get("monitors") or []:
+            if m.get("workspace") and m.get("monitor"):
+                dispatch("hl.dsp.focus", {"monitor": m["monitor"]})
+                dispatch("hl.dsp.focus",
+                         {"workspace": str(m["workspace"]), "on_current_monitor": True})
+        focused = snap.get("focused")
+        if focused is not None and focused in addr_of:
+            dispatch("hl.dsp.focus", {"window": f"address:{addr_of[focused]}"})
+    finally:
+        rescue_parked()
+        # Animations back on BEFORE the curtain comes down: without them the freeze
+        # would vanish in one frame and the restored windows would pop into being
+        # instead of fading up. Card and freeze then dissolve together.
+        if animate:
+            set_animations(True)
+        if curtain:
+            curtain_end()
+        freeze_end(blind)
+        try:
+            os.unlink(RESTORE_LOCK)
+        except OSError:
+            pass
+
+    print(f"w-session: restored {len(addr_of)} of {len(windows)} window(s)")
+    return 0
+
+
+# ── Layout verbs ─────────────────────────────────────────────────────────────
+
+def do_layout_save(name, scope):
+    """Snapshot the desktop under a name. Not gated on MODE — see the section
+    comment on named layouts."""
+    slug = slugify(name)
+    if not slug:
+        die("a layout needs a name with at least one letter or digit in it")
+    values = conf_load()
+    try:
+        snap = take_snapshot(values)
+    except (RuntimeError, OSError, ValueError) as e:
+        die(f"could not read the session: {e}")
+    if scope == "workspace":
+        ws = active_workspace_name()
+        if not ws:
+            die("could not tell which workspace is focused")
+        snap = only_workspace(snap, ws)
+    if not snap.get("windows"):
+        die("nothing to save: no windows here that can be reopened")
+    snap["name"] = name.strip()
+    snap["scope"] = scope
+    try:
+        layout_write(slug, snap)
+    except OSError as e:
+        die(f"could not save the layout: {e}")
+    print(f"w-session: saved {scope} '{snap['name']}' "
+          f"({len(snap['windows'])} window(s)) as {slug}")
+    return 0
+
+
+def detach():
+    """Outlive the terminal this was typed in. False in the parent, True in the child.
+
+    An apply closes every window it was told to — INCLUDING the terminal running
+    it. Measured: the foreground process dies with the window (the shell HUPs its
+    jobs), while a `setsid` child survives, ghostty's per-surface systemd scope
+    included. So the work moves into a session of its own and the parent returns
+    at once, which is also exactly what the layouts panel needs: it fires this and
+    closes itself before the first window is asked to go.
+
+    SIGHUP is ignored as well, for the instant between fork and setsid.
+    """
+    if os.fork() > 0:
+        return False
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    os.setsid()
+    devnull = os.open(os.devnull, os.O_RDWR)
+    for fd in (0, 1, 2):
+        os.dup2(devnull, fd)
+    if devnull > 2:
+        os.close(devnull)
+    return True
+
+
+def do_layout_apply(slug, dry_run=False, foreground=False):
+    """Replace what is on screen with a saved layout.
+
+    Two phases, and the first one is deliberately NOT hidden behind the curtain:
+    closing windows is where "Save changes?" dialogs appear, and a dialog the user
+    cannot see or click is the exact failure W refuses to ship (see the closing
+    section). Only once the screen is actually clear does the restore raise its
+    freeze and card.
+
+    A cancelled dialog aborts the whole thing with nothing changed — the windows
+    that did close are the user's own doing, and the saved layout is untouched.
+    The abort is announced by a desktop notification rather than by this function's
+    exit status, because by then nobody is reading its exit status: the work runs
+    detached (see detach), and it has to.
+    """
+    snap = layout_read(slug)
+    if snap is None:
+        die(f"no such layout: {slug}")
+    target = active_workspace_name() if snap.get("scope") == "workspace" else None
+    if snap.get("scope") == "workspace" and not target:
+        die("could not tell which workspace is focused")
+
+    if dry_run:
+        # What the confirmation dialog asks about: how many windows this closes.
+        # Answered here rather than in the panel so there is one definition of
+        # "what this is about to replace".
+        print(len(open_windows(target)))
+        return 0
+
+    # Everything that can be told to the user is said BEFORE the screen goes: a
+    # bad name, a missing layout, an empty workspace. What follows cannot report
+    # anything, so it must not be able to fail on anything answerable here.
+    if not foreground:
+        print(f"w-session: applying '{snap.get('name') or slug}'")
+        if not detach():
+            return 0
+
+    if not close_windows(target):
+        print("w-session: cancelled — windows are still open", file=sys.stderr)
+        return 1
+    return do_restore(snap, target_ws=target)
+
+
+def do_layout_list(porcelain):
+    entries = layout_list()
+    if porcelain:
+        for e in entries:
+            print(f"{e['slug']}\t{e['scope']}\t{e['windows']}\t{e['savedAt']}\t{e['name']}")
+        return 0
+    if not entries:
+        print("w-session: no saved layouts")
+        return 0
+    for e in entries:
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(e["savedAt"]))
+        print(f"{e['slug']:<24} {e['scope']:<10} {e['windows']:>3} window(s)  "
+              f"{when}  {e['name']}")
+    return 0
+
+
+def do_layout_delete(slug):
+    try:
+        os.unlink(layout_path(slug))
+    except FileNotFoundError:
+        die(f"no such layout: {slug}")
+    except OSError as e:
+        die(f"could not delete the layout: {e}")
+    return 0
+
+
+def cmd_layout(args):
+    if not args or args[0] == "list":
+        return do_layout_list("--porcelain" in args)
+    action, rest = args[0], args[1:]
+
+    if action == "save":
+        name = " ".join(a for a in rest if not a.startswith("--"))
+        scope = "workspace" if "--workspace" in rest else "layout"
+        if not name:
+            print(USAGE, file=sys.stderr); return 2
+        if not hypr_alive():
+            die("no Hyprland session to save")
+        return do_layout_save(name, scope)
+
+    if action in ("apply", "delete") and len(rest) >= 1:
+        slug = rest[0]
+        if slug != os.path.basename(slug) or slug.startswith("."):
+            die(f"not a layout name: {slug}")
+        if action == "delete":
+            return do_layout_delete(slug)
+        if not hypr_alive():
+            die("no Hyprland session to apply into")
+        return do_layout_apply(slug, dry_run="--dry-run" in rest,
+                               foreground="--foreground" in rest)
+
+    print(USAGE, file=sys.stderr)
+    return 2
+
+
+# ── Daemon ───────────────────────────────────────────────────────────────────
+
+# Events that change what a snapshot would say. Everything else on socket2
+# (mouse crossings, layer surfaces, submaps, the active keyboard layout) leaves
+# the session's shape untouched and must not cost a disk write.
+WATCHED = {
+    "openwindow", "closewindow", "movewindowv2", "windowtitlev2", "fullscreen",
+    "pin", "changefloatingmode", "movewindow", "workspacev2", "focusedmonv2",
+    "moveworkspacev2", "monitoraddedv2", "monitorremovedv2", "activewindowv2",
+}
+
+
+def do_daemon():
+    values = conf_load()
+    if values.get("MODE", "off") == "off":
+        print("w-session: MODE=off, nothing to record")
+        return 0
+    interval = conf_int(values, "AUTOSAVE_SEC", 0, 86400)
+    if interval == 0:
+        print("w-session: AUTOSAVE_SEC=0, snapshots are taken on graceful exit only")
+        return 0
+    if not hypr_alive():
+        die("no Hyprland session to watch")
+
+    reload_flag = {"pending": False}
+
+    def on_hup(_sig, _frm):
+        reload_flag["pending"] = True
+
+    signal.signal(signal.SIGHUP, on_hup)
+
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(event_socket())
+    sock.settimeout(1.0)
+
+    buf = b""
+    dirty_since = None
+    last_write = 0.0
+    while True:
+        if reload_flag["pending"]:
+            reload_flag["pending"] = False
+            values = conf_load()
+            if values.get("MODE", "off") == "off":
+                return 0
+            interval = conf_int(values, "AUTOSAVE_SEC", 0, 86400)
+            if interval == 0:
+                return 0
+        try:
+            chunk = sock.recv(8192)
+            if not chunk:
+                return 0                   # compositor gone: so is the session
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                name = line.decode("utf-8", "replace").partition(">>")[0]
+                if name in WATCHED and dirty_since is None:
+                    dirty_since = time.monotonic()
+        except TimeoutError:
+            pass
+        except OSError:
+            return 0
+
+        now = time.monotonic()
+        if dirty_since is None:
+            continue
+        # Two gates, and both matter: the debounce keeps a burst of events (a
+        # workspace switch moving five windows) to one write, the interval keeps
+        # a busy session from writing continuously.
+        if now - dirty_since < DEBOUNCE_SEC or now - last_write < interval:
+            continue
+        if restore_lock_held():
+            dirty_since = None             # a restore in flight is not the session
+            continue
+        try:
+            write_snapshot(take_snapshot(values))
+            last_write = now
+        except (RuntimeError, OSError, ValueError) as e:
+            warn(f"snapshot failed: {e}")
+        dirty_since = None
+
+
+# ── Status ───────────────────────────────────────────────────────────────────
+
+def do_status(porcelain):
+    values = conf_load()
+    snap = read_snapshot()
+    saved_windows = snap.get("windows") or [] if snap else []
+    count = len(saved_windows)
+    terms = sum(1 for w in saved_windows if w.get("term"))
+    saved = snap.get("savedAt", 0) if snap else 0
+    if porcelain:
+        print(f"MODE\t{values['MODE']}")
+        print(f"AUTOSAVE_SEC\t{values['AUTOSAVE_SEC']}")
+        print(f"EXCLUDE_CLASSES\t{values['EXCLUDE_CLASSES']}")
+        print(f"MAX_WINDOWS\t{values['MAX_WINDOWS']}")
+        print(f"TERMINAL_APPS\t{values['TERMINAL_APPS']}")
+        print(f"SNAPSHOT\t{'yes' if snap else 'no'}")
+        print(f"SNAPSHOT_WINDOWS\t{count}")
+        print(f"SNAPSHOT_TERMINAL_APPS\t{terms}")
+        print(f"SNAPSHOT_AT\t{saved}")
+        return 0
+    print(f"Mode:            {values['MODE']}")
+    print(f"Autosave:        {values['AUTOSAVE_SEC']}s" if values["AUTOSAVE_SEC"] != "0"
+          else "Autosave:        on graceful exit only")
+    print(f"Excluded:        {values['EXCLUDE_CLASSES'] or '(none)'}")
+    print(f"Max windows:     {values['MAX_WINDOWS']}")
+    print(f"Terminal apps:   {values['TERMINAL_APPS']}")
+    if snap:
+        when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(saved))
+        extra = f", {terms} running a program" if terms else ""
+        print(f"Saved session:   {count} window(s){extra}, {when}")
+    else:
+        print("Saved session:   (none)")
+    print("Settings:        w-conf cat session")
+    return 0
+
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+
+USAGE = """Usage: w-session <command> [args]
+
+Info: Remember the graphical session (windows, workspaces, split layout) and
+      put it back at the next login.
+
+Commands:
+  status [--porcelain]        Show the mode and what is currently saved
+  save                        Snapshot the session now
+  restore [--dry-run]         Reopen the saved session (--dry-run just lists it)
+  close [--workspace <name>] [--timeout <sec>] [--dry-run]
+                              Ask every window to close and wait for it, leaving
+                              any "Save changes?" dialog reachable. Exit 1 if a
+                              window stayed open (the user cancelled a dialog).
+                              --dry-run only prints how many would be asked.
+  forget                      Delete the saved session
+  layout list [--porcelain]   Show the saved named layouts
+  layout save <name> [--workspace]
+                              Save every workspace under <name>, or just the
+                              focused one (--workspace), which then applies onto
+                              whatever workspace is focused later
+  layout apply <slug> [--dry-run] [--foreground]
+                              Close what is open (save dialogs stay reachable,
+                              cancelling one aborts) and reopen the layout. Runs
+                              detached, because it closes the terminal it was
+                              typed in; --foreground keeps it attached, for
+                              watching it work over ssh.
+                              --dry-run only prints how many windows would close
+  layout delete <slug>        Delete a saved layout
+  mode <off|save|restore>     off: record nothing · save: record only ·
+                              restore: record and reopen at login
+  autosave <seconds>          Background snapshot floor (0 = graceful exit only)
+  terminal <off|allowlist|all>
+                              Reopen the program running inside a terminal
+  exclude list                Show the never-record class patterns
+  exclude add <regex>         Never record windows of this class
+  exclude remove <regex>      Drop a pattern again
+  daemon                      Run the snapshot daemon (w-session-save.service)
+  help                        Show this help
+
+Snapshot: ~/.local/state/w/session.json   Settings: w-conf cat session
+Named layouts: ~/.local/share/w/layouts/
+Relaunch overrides: ~/.config/w/session-apps.tsv
+Terminal allowlist: ~/.config/w/session-terminal.list
+
+Exit codes: 0 success · 1 runtime/validation error · 2 usage
+
+Examples:
+  w-session mode restore
+  w-session exclude add 'steam_app_.*'
+  w-session restore --dry-run
+  w-session layout save 'Работа'
+  w-session layout save 'Чтение' --workspace"""
+
+
+def cmd_exclude(args):
+    values = conf_load()
+    current = str(values.get("EXCLUDE_CLASSES", "")).split()
+    if not args or args[0] == "list":
+        for p in current:
+            print(p)
+        return 0
+    action = args[0]
+    if action not in ("add", "remove") or len(args) < 2:
+        print(USAGE, file=sys.stderr); return 2
+    pattern = args[1]
+    try:
+        re.compile(pattern)
+    except re.error as e:
+        die(f"not a valid regex: {e}")
+    if action == "add":
+        if pattern in current:
+            return 0
+        current.append(pattern)
+    else:
+        if pattern not in current:
+            die(f"not excluded: {pattern}")
+        current.remove(pattern)
+    conf_set("EXCLUDE_CLASSES", " ".join(current))
+    return 0
+
+
+def restart_daemon():
+    """Re-read the config in the running daemon, or start/stop it as needed.
+
+    A setting that only takes effect at the next login is a setting the user
+    will believe is broken, so every setter lands here. Best-effort by design:
+    changing the mode from a TTY, with no graphical session running, must still
+    succeed.
+    """
+    values = conf_load()
+    want = values.get("MODE", "off") != "off" and conf_int(values, "AUTOSAVE_SEC", 0, 86400) > 0
+    verb = "restart" if want else "stop"
+    subprocess.run(["systemctl", "--user", verb, "w-session-save.service"],
+                   capture_output=True, check=False)
+
+
+def main(argv):
+    if not argv or argv[0] in ("help", "-h", "--help"):
+        print(USAGE); return 0
+    cmd, args = argv[0], argv[1:]
+
+    if cmd == "status":
+        return do_status("--porcelain" in args)
+
+    if cmd == "save":
+        values = conf_load()
+        if values.get("MODE", "off") == "off":
+            return 0                       # off means off, silently
+        if not hypr_alive():
+            die("no Hyprland session to save")
+        try:
+            write_snapshot(take_snapshot(values))
+        except (RuntimeError, OSError, ValueError) as e:
+            die(f"could not save: {e}")
+        return 0
+
+    if cmd == "restore":
+        if not hypr_alive():
+            die("no Hyprland session to restore into")
+        return do_restore(read_snapshot(), dry_run="--dry-run" in args)
+
+    if cmd == "autologin-restore":
+        # Called by w-session-restore.service at every session start: the mode
+        # gate lives here, not in the unit, so switching the setting takes
+        # effect without touching a unit file.
+        values = conf_load()
+        if values.get("MODE", "off") != "restore":
+            return 0
+        if not hypr_alive():
+            return 0
+        return do_restore(read_snapshot())
+
+    if cmd == "close":
+        ws, timeout = None, CLOSE_TIMEOUT
+        rest = list(args)
+        while rest:
+            a = rest.pop(0)
+            if a == "--dry-run":
+                continue
+            if a == "--workspace" and rest:
+                ws = rest.pop(0)
+            elif a == "--timeout" and rest:
+                try:
+                    timeout = float(rest.pop(0))
+                except ValueError:
+                    die("--timeout takes a number of seconds")
+            else:
+                print(USAGE, file=sys.stderr); return 2
+        if not hypr_alive():
+            die("no Hyprland session")
+        if "--dry-run" in args:
+            print(len(open_windows(ws)))
+            return 0
+        return 0 if close_windows(ws, timeout) else 1
+
+    if cmd == "forget":
+        for path in (SNAPSHOT, RESTORE_LOCK):
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                die(f"could not delete {path}: {e}")
+        return 0
+
+    if cmd == "mode":
+        if len(args) != 1 or args[0] not in ("off", "save", "restore"):
+            print(USAGE, file=sys.stderr); return 2
+        conf_set("MODE", args[0])
+        restart_daemon()
+        return 0
+
+    if cmd == "autosave":
+        if len(args) != 1:
+            print(USAGE, file=sys.stderr); return 2
+        try:
+            n = int(args[0])
+        except ValueError:
+            die("autosave takes a whole number of seconds")
+        if not 0 <= n <= 86400:
+            die("autosave must be between 0 and 86400 seconds")
+        conf_set("AUTOSAVE_SEC", str(n))
+        restart_daemon()
+        return 0
+
+    if cmd == "terminal":
+        if len(args) != 1 or args[0] not in ("off", "allowlist", "all"):
+            print(USAGE, file=sys.stderr); return 2
+        conf_set("TERMINAL_APPS", args[0])
+        return 0
+
+    if cmd == "layout":
+        return cmd_layout(args)
+
+    if cmd == "exclude":
+        return cmd_exclude(args)
+
+    if cmd == "daemon":
+        return do_daemon()
+
+    print(USAGE, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except BrokenPipeError:
+        sys.exit(0)

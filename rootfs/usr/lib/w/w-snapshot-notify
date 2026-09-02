@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# w-snapshot-notify — tell the user, at login, that this session is running from a
+# read-only snapshot, and offer the rollback in one click.
+#
+# Helper, not a command: started only by w-snapshot-notify.service, by absolute path.
+#
+# Why W ships this at all. Booting a snapshot is the recovery path, and a snapshot
+# root is read-only: the desktop comes up looking completely normal, but nothing the
+# user saves outside /home survives. Without a notification that is a silent trap —
+# they work for an hour and lose it. On the encrypted path limine-snapper-sync ships
+# exactly such a notification; on the plain path grub-btrfs ships NOTHING (it builds
+# menu entries and stops there), so that user got no indication at all.
+#
+# It defers to the vendor where the vendor exists: limine-snapper-restore's notification
+# offers the same one-click restore and additionally puts the snapshot's kernel back on
+# the ESP, which only it knows how to do. One notification per path, the better one on
+# each.
+#
+# The body stays SHORT on purpose — the shell's notification surface clips long bodies,
+# and the instruction belongs on the button, not in prose the user may never see.
+
+set -euo pipefail
+
+# Not in a snapshot → nothing to say. w-rollback owns the detection, so this helper
+# and the tool can never disagree about what "in a snapshot" means.
+eval "$(w-rollback status --porcelain 2>/dev/null | grep '^booted_snapshot=')" || exit 0
+[[ -n "${booted_snapshot:-}" ]] || exit 0
+
+# The vendor's notifier is present (encrypted path) → let it speak instead.
+command -v limine-snapper-restore &>/dev/null && exit 0
+
+command -v notify-send &>/dev/null || exit 0
+
+# The session's notification server may not have claimed the bus name yet; the same
+# wait the vendor's unit needs, for the same reason.
+/usr/lib/w/w-wait-notifications 45 || true
+
+# Blocks until the user acts or dismisses (--expire-time=0). Prints the chosen
+# action id; a dismissal prints nothing.
+#
+# `default` MUST be registered, and is the one that actually fires: W's notification
+# server (Quickshell) reports the click as the `default` action, so a notification
+# offering only a named action gets dismissed with nothing returned — which is exactly
+# what happened on the first cut of this (verified 2026-09-02: the same probe with both
+# registered returns `default` on a button press). The named action stays as well, for
+# servers that render named buttons; either is accepted.
+#
+# The icon is a THEME NAME, not a path, so it follows the active icon theme instead of
+# pinning one file — `document-revert` is Papirus's revert arrow.
+action="$(notify-send --urgency=critical --app-name="W" --expire-time=0 \
+  --icon=document-revert \
+  --action="default=Restore this snapshot" \
+  --action="restore=Restore this snapshot" \
+  "Running from snapshot #${booted_snapshot}" \
+  "Recovery boot — the system is read-only and changes outside /home are lost." \
+  2>/dev/null)" || exit 0
+
+[[ "$action" == "default" || "$action" == "restore" ]] || exit 0
+
+# `w-rollback launch` owns opening the rollback in a terminal — the same call the AI's
+# rollback tool makes. Keeping the escalation in one place is not tidiness: two copies
+# of one action drifting apart is exactly the defect this session already found once.
+exec w-rollback launch
+

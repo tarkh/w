@@ -1,0 +1,11 @@
+{
+  "_comment": "W Linux greeter strings. key → { lang: text }. Active lang = 2-letter $LANG, fallback en.",
+  "password":       { "en": "Password",                       "ru": "Пароль" },
+  "login":          { "en": "Log In",                         "ru": "Войти" },
+  "authenticating": { "en": "Authenticating…",                "ru": "Аутентификация…" },
+  "authFailed":     { "en": "Incorrect login or password",    "ru": "Неверный логин или пароль" },
+  "error":          { "en": "Login error, please try again",  "ru": "Ошибка входа, попробуйте ещё раз" },
+  "session":        { "en": "Session",                        "ru": "Сессия" },
+  "reboot":         { "en": "Restart",                        "ru": "Перезагрузка" },
+  "shutdown":       { "en": "Poweroff",                       "ru": "Выключение" }
+}

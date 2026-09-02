@@ -1,0 +1,65 @@
+# W Linux — dialog color theme (magenta accent, dark background)
+
+aspect = 0
+separate_widget = ""
+tab_len = 0
+visit_items = OFF
+use_shadow = ON
+use_colors = ON
+
+screen_color             = (WHITE,BLACK,OFF)
+shadow_color             = (BLACK,BLACK,ON)
+
+dialog_color             = (WHITE,BLACK,OFF)
+title_color              = (MAGENTA,BLACK,ON)
+border_color             = (MAGENTA,BLACK,ON)
+border2_color            = (MAGENTA,BLACK,OFF)
+
+button_active_color      = (WHITE,MAGENTA,ON)
+button_inactive_color    = (WHITE,BLACK,OFF)
+button_key_active_color  = (WHITE,MAGENTA,ON)
+button_key_inactive_color= (MAGENTA,BLACK,OFF)
+button_label_active_color= (WHITE,MAGENTA,ON)
+button_label_inactive_color=(WHITE,BLACK,ON)
+
+menubox_color            = (WHITE,BLACK,OFF)
+menubox_border_color     = (MAGENTA,BLACK,ON)
+menubox_border2_color    = (MAGENTA,BLACK,OFF)
+item_color               = (WHITE,BLACK,OFF)
+item_selected_color      = (WHITE,MAGENTA,ON)
+tag_color                = (MAGENTA,BLACK,ON)
+tag_selected_color       = (WHITE,MAGENTA,ON)
+tag_key_color            = (MAGENTA,BLACK,ON)
+tag_key_selected_color   = (WHITE,MAGENTA,ON)
+
+inputbox_color           = (WHITE,BLACK,OFF)
+inputbox_border_color    = (MAGENTA,BLACK,ON)
+inputbox_border2_color   = (MAGENTA,BLACK,OFF)
+
+searchbox_color          = (WHITE,BLACK,OFF)
+searchbox_title_color    = (MAGENTA,BLACK,ON)
+searchbox_border_color   = (MAGENTA,BLACK,ON)
+searchbox_border2_color  = (MAGENTA,BLACK,OFF)
+
+check_color              = (WHITE,BLACK,OFF)
+check_selected_color     = (WHITE,MAGENTA,ON)
+
+uarrow_color             = (MAGENTA,BLACK,ON)
+darrow_color             = (MAGENTA,BLACK,ON)
+
+position_indicator_color = (MAGENTA,BLACK,ON)
+
+form_active_text_color   = (WHITE,MAGENTA,ON)
+form_text_color          = (WHITE,BLACK,OFF)
+form_item_readonly_color = (WHITE,BLACK,ON)
+
+# dialog draws the gauge as one reversible (fg,bg) pair: the unfilled trough uses
+# it as-is (fg on bg), the filled portion swaps it (bg becomes the fill color, fg
+# becomes the text drawn over that fill). That forces trough-text and fill-bg to
+# share one slot, and trough-bg and fill-text to share the other — "always white
+# text + dark track + magenta fill" needs 3 independent colors, dialog only gives
+# 2. Picked full contrast + a dark track over keeping magenta in the gauge:
+# trough = white text on black (matches the rest of the dark theme), filled
+# portion = black text on white (loses the brand accent here, but never a
+# contrast problem in either state).
+gauge_color              = (WHITE,BLACK,ON)

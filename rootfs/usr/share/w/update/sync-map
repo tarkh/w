@@ -1,0 +1,176 @@
+# sync-map — path → apply flag routing for `w-sync` selective apply.
+#
+# update-system.md axis 1+2 (edge channel). After `git pull`, w-sync diffs the
+# changed files and routes each through this map to decide which apply.sh modules
+# to run — instead of a slow full `--all`. STATIC data: written once, committed to
+# the repo, touched only when a NEW module is added. Normal day-to-day pushes need
+# no edit here.
+#
+# Format: <glob>\t<flag>   (first matching rule wins; '#'/blank lines ignored)
+#   glob : matched with `[[ path == glob ]]`, so a single `*` spans '/' too.
+#   flag : a real apply flag (--dns)  → run that module
+#          AUTO                       → path is modules/<m>.sh; run --<m> IFF apply.sh
+#                                       accepts it (post-boot module), else skip
+#          --all                      → force a full apply (core paths)
+#          --skip                     → nothing to apply on the target
+# An unmatched path falls through to --all (the trailing catch-all): forgetting a
+# rule is slow, never broken.
+
+# ── shipped Markdown IS payload (must precede the `*.md` skip below) ────────────
+# Markdown under these two trees is not documentation — it is the AI knowledge
+# layer (skills, AGENTS.md, per-host READMEs) that the on-box assistant reads.
+# Caught by the generic `*.md --skip` it would never reach an edge machine: a
+# knowledge-only push reports "no target modules affected" and drifts silently.
+#
+# The rule is deliberately about the TREE, not the file type: everything under
+# rootfs/ and scripts/packs/ ships by definition (apply_rootfs and mod_packs rsync
+# the whole trees), so no file there may ever be skipped. `check/routing.sh`
+# enforces exactly that, so this cannot regress a third time.
+#
+# Trade-off of sitting above the skip block: a .md under a tree with a more
+# specific rule further down (e.g. rootfs/usr/share/w/update/*) lands on --rootfs
+# instead of that module's flag. It is still deployed — apply_rootfs copies the
+# whole tree — it just skips the module's extra steps. Slow-and-correct beats
+# fast-and-missing, same principle as the trailing --all fallback.
+rootfs/*.md			--rootfs
+scripts/packs/*.md		--packs
+
+# ── skip: no effect on an already-installed target ──────────────────────────────
+.claude/*			--skip
+vm/*				--skip
+archiso/*			--skip
+docs/*				--skip
+*.md				--skip
+LICENSE*			--skip
+.gitignore			--skip
+release.conf			--skip
+scripts/install.sh		--skip
+scripts/install/steps.conf	--skip
+scripts/install/dialogrc	--skip
+scripts/install/i18n/*		--skip
+scripts/install/modules/base.sh		--skip
+scripts/install/modules/network.sh	--skip
+scripts/install/modules/wifi.sh		--skip
+scripts/install/modules/zram.sh		--skip
+scripts/install/modules/snapshots.sh	--skip
+scripts/install/modules/bootloader.sh	--skip
+scripts/install/modules/firstboot.sh	--skip
+scripts/install/modules/devtools.sh	--skip
+# Repo furniture and dev-only tooling: none of it exists on, or affects, an
+# installed machine. Without these rules each one falls through to the trailing
+# catch-all and a README typo would force a full apply on every edge machine.
+# This block is also load-bearing for publication: scripts/check/publish.sh
+# enforces that everything scripts/publish.exclude removes from the public tree is
+# routed --skip here, so a path can never be both "not shipped" and "shipped".
+.github/*			--skip
+COPYING*			--skip
+opencode.json			--skip
+dev-install-cheat-sheet.txt	--skip
+ruff.toml			--skip
+.shellcheckrc			--skip
+ci/*				--skip
+devtools/*			--skip
+scripts/check.sh		--skip
+scripts/check/*			--skip
+scripts/test.sh			--skip
+scripts/publish.sh		--skip
+scripts/publish.exclude		--skip
+scripts/hooks/*			--skip
+
+# ── core: changes to the apply engine → full apply ──────────────────────────────
+scripts/apply.sh		--all
+scripts/install/lib/deploy.sh	--all
+scripts/install/lib/*		--all
+
+# ── module logic: modules/<m>.sh → its own flag (validated against apply.sh) ─────
+scripts/install/modules/*	AUTO
+
+# ── package lists ───────────────────────────────────────────────────────────────
+packages/*			--packages
+
+# ── W-Packs bundle tree → restage it (mod_packs rsyncs scripts/packs → /usr/share) ─
+# Only the framework/staging step is automatic: installing or re-applying a bundle
+# stays an explicit `w-pack install <bundle>` (it pulls packages and may take long).
+scripts/packs/*			--packs
+
+# ── rootfs config → owning module (needs reload/seed, not just a file drop) ─────
+rootfs/usr/share/plymouth/*		--plymouth
+# The copy that matters lives INSIDE the initramfs: this drop-in brackets the LUKS
+# passphrase prompt, which only ever happens there. The catch-all --rootfs would put
+# the file in /etc and never rebuild, leaving the boot that needs it on the old one.
+# (Its sibling plymouth-quit.service.d needs no such rule — that unit runs from the
+# real root after switch-root, so a plain file drop IS the activation.)
+rootfs/etc/systemd/system/systemd-ask-password-plymouth.service.d/*	--plymouth
+rootfs/etc/skel/.config/hypr/hyprlock*	--hyprlock
+rootfs/etc/skel/.config/hypr/*		--hyprland
+rootfs/etc/skel/.config/quickshell*	--quickshell
+rootfs/usr/bin/w-style*		--style
+rootfs/usr/share/w/style/*		--style
+# w-theme's authoring library (palette engine + wallpaper pipeline) is deployed by
+# mod_style, so it has to ride --style; the catch-all --rootfs would drop the files
+# in place without reinstalling them next to the CLI that sources them.
+rootfs/usr/lib/w/w-theme/*	--style
+# The per-axis modules w-style discovers. Same "copy is not activation" rule: an
+# axis IS a renderer, so dropping a fixed module without re-running it leaves the
+# machine on the old output. Caught by the retint that stayed dead after P9 —
+# --rootfs delivered the module and nothing ever rendered it again.
+rootfs/usr/lib/w/w-style/*	--style
+# C source, not a file drop: --rootfs would copy it and never run gcc, so the
+# built binary would silently stay at the previous version.
+rootfs/usr/share/w/src/w-windowblind.c	--windowblind
+# Layered config (update-system.md phase 2+): the vendor layer and the scope schema
+# decide effective values, so a subsystem that RENDERS something from them must
+# re-render — the same "copy is not activation" rule as the Plymouth theme above.
+# One rule per subsystem, added as each is split. Subsystems deliberately absent:
+#   terminal — w-term reads the config at every launch, a file drop is enough;
+#   crypt    — a changed PCR set needs a human `w-crypt reenroll-tpm` regardless;
+#   ai       — w-ai and w-mcp read the config on every invocation; nothing is
+#              rendered from it, so the file drop IS the activation.
+rootfs/usr/share/w/defaults/power.*	--power
+rootfs/usr/share/w/defaults/kbdlight.*	--kbdlight
+# The keyboard-backlight boot light lives INSIDE the initramfs: dropping the hook
+# or its setter onto the disk changes nothing until the image is rebuilt, which is
+# what mod_kbdlight does (stamped, so it rebuilds only when it must).
+rootfs/etc/initcpio/*/w-kbdlight	--kbdlight
+rootfs/usr/lib/w/w-kbdlight-boot	--kbdlight
+rootfs/usr/bin/w-kbdlight		--kbdlight
+# The night light is a rendered file too: hyprsunset only ever reads
+# ~/.config/hypr/hyprsunset.conf, so a new vendor default (or a fixed renderer)
+# means nothing until w-nightlight regenerates it and restarts the daemon.
+rootfs/usr/share/w/defaults/nightlight.*	--nightlight
+rootfs/usr/bin/w-nightlight	--nightlight
+rootfs/usr/lib/systemd/user/w-nightlight-*	--nightlight
+# Session memory renders nothing, so its config alone would be fine on --rootfs —
+# but the subsystem ships a systemd USER unit, and a unit rsynced onto the disk is
+# a unit systemd has never been told about. mod_session is what makes it visible
+# and restarts it inside sessions that are already running, so everything the
+# subsystem owns routes there (the "copy is not activation" rule again). The
+# two data tables need their own lines: `session.*` matches neither
+# `session-apps.tsv` nor `session-terminal.list`.
+# The binary is listed WITHOUT a trailing glob on purpose — `w-session*` would
+# swallow w-session-exit, which is a plain file drop and belongs on --rootfs.
+rootfs/usr/share/w/defaults/session.*	--session
+rootfs/usr/share/w/defaults/session-apps.tsv	--session
+rootfs/usr/share/w/defaults/session-terminal.list	--session
+rootfs/usr/bin/w-session		--session
+rootfs/etc/systemd/user/w-session-*	--session
+rootfs/usr/share/w/defaults/dns.*	--dns
+rootfs/usr/share/w/defaults/logs.*	--logs
+rootfs/usr/share/w/defaults/time.*	--time
+# Mirrors render nothing, so the config alone would be fine on --rootfs — but the
+# subsystem ships a systemd TIMER, and a unit file dropped onto the disk by a
+# plain rsync is a unit systemd has never been told to enable. mod_mirrors is what
+# turns the files into a running schedule, so everything the subsystem owns routes
+# there (same "copy is not activation" rule as the Plymouth theme above).
+rootfs/usr/share/w/defaults/mirrors.*	--mirrors
+rootfs/usr/bin/w-mirrors		--mirrors
+rootfs/usr/lib/systemd/system/w-mirrors.*	--mirrors
+rootfs/usr/share/w/update/*		--updatesys
+rootfs/usr/bin/w-sync		--updatesys
+rootfs/etc/systemd/user/w-sync-check.*	--updatesys
+
+# ── any other rootfs change → drop files down (+ theme re-render) ────────────────
+rootfs/*			--rootfs
+
+# ── fallback: unknown path → safe full apply ────────────────────────────────────
+*				--all

@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# w-os-release-stamp — W Linux DEV-ONLY os-release build-date maintainer
+#
+# rootfs/etc/os-release ships to the target as /etc/os-release. Three fields there
+# carry version-ish information and are deliberately kept apart:
+#
+#   BUILD_ID=rolling   the distro model. Static, never stamped by anything.
+#   IMAGE_VERSION      the RELEASE, e.g. 0.1.0 — the git tag, written by
+#                      scripts/publish.sh at release time. NOT this tool's business:
+#                      hand-stamping a release number is exactly the drift the tag
+#                      exists to prevent (update-system.md, axis 2).
+#   W_BUILD_DATE       the day THIS image was assembled. scripts/build-iso.sh stamps
+#                      it into each built ISO; the repo ships it EMPTY, which
+#                      truthfully means "this system was not installed from a
+#                      stamped ISO" (a dev VM applied over virtiofs, for instance).
+#
+# This helper only ever writes W_BUILD_DATE, so a dev VM can show a sensible date
+# instead of a blank — using the same one-line sed as build-iso.sh (single stamping
+# convention). Pass an empty string to clear it back to the shipped state.
+#
+# DEV-ONLY: edits the repo's rootfs/, not an installed system. Lives in devtools/
+# (like the fake `sensors`); NEVER part of the OS build. Run it from the W repo.
+#
+# Usage: w-os-release-stamp [YYYY.MM.DD | ""]   (default: today, UTC)
+
+set -euo pipefail
+
+err() { echo "w-os-release-stamp: $*" >&2; }
+
+case "${1:-}" in
+  -h|--help)
+    echo "Usage: w-os-release-stamp [YYYY.MM.DD | \"\"]"
+    echo "Stamps W_BUILD_DATE in the repo's rootfs/etc/os-release (default: today)."
+    echo "An empty argument clears it, restoring the shipped 'not from an ISO' state."
+    exit 0 ;;
+esac
+
+version="${1-$(date -u +%Y.%m.%d)}"
+[[ -z "$version" || "$version" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}$ ]] \
+  || { err "date must be YYYY.MM.DD or empty (got: $version)"; exit 2; }
+
+# Locate the repo root by walking up until the apply engine + its overlay are both
+# found — the unmistakable signature of the W dev tree, and one that survives the
+# publish filter (an earlier version keyed on .claude/library, which does not ship
+# to the public repository and would have made this tool dead there).
+self="$(realpath "${BASH_SOURCE[0]}")"
+dir="$(dirname "$self")"
+REPO=""
+while [[ "$dir" != "/" ]]; do
+  [[ -f "$dir/scripts/apply.sh" && -d "$dir/rootfs" ]] && { REPO="$dir"; break; }
+  dir="$(dirname "$dir")"
+done
+[[ -n "$REPO" ]] || { err "not inside the W repo; this is a dev-only tool"; exit 2; }
+
+target="$REPO/rootfs/etc/os-release"
+[[ -f "$target" ]] || { err "no os-release at $target"; exit 2; }
+grep -q '^W_BUILD_DATE=' "$target" || { err "no W_BUILD_DATE line in $target"; exit 2; }
+
+sed -i "s/^W_BUILD_DATE=.*/W_BUILD_DATE=$version/" "$target"
+echo "w-os-release-stamp: W_BUILD_DATE=${version:-(cleared)} -> $target"

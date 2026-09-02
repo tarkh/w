@@ -1,0 +1,64 @@
+name: Bug report
+description: Something in W behaves wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not report security problems here — use the
+        [private advisory form](https://github.com/tarkh/w/security/advisories/new)
+        instead. See [SECURITY.md](../blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: Steps, from a state someone else can reach. "Sometimes after
+        resume" is a fine answer if that is the truth — say so rather than guessing.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The IMAGE_VERSION and W_BUILD_DATE lines from /etc/os-release.
+      placeholder: "IMAGE_VERSION=0.1.0  W_BUILD_DATE=2026.08.26"
+    validations:
+      required: true
+
+  - type: input
+    id: channel
+    attributes:
+      label: Update state
+      description: Output of `w-sync status`.
+      placeholder: "Channel: edge   Ref: main"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        W logs its own work to /var/log/w/. A full bundle comes from
+        `sudo /var/lib/w/src/scripts/collect-logs.sh`.
+
+        Read anything before you attach it — a diagnostic bundle can contain
+        hostnames, usernames, network names and paths.
+      render: shell
+
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware
+      description: Relevant when the bug looks hardware-shaped — GPU, laptop model,
+        display or input setup. Skip it otherwise.

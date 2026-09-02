@@ -1,0 +1,461 @@
+#!/usr/bin/env bash
+# w-pointer — W Linux pointer control (mouse + touchpad + swipe gestures)
+#
+# Manages the pointer settings of the running Hyprland session: mouse speed /
+# acceleration / scrolling, the whole touchpad behaviour (tap-to-click, clickfinger,
+# disable-while-typing, drag modes…) and the workspace-swipe gesture. It is the
+# user-space backend for the W Hub Input panel (Mouse / Touchpad segments).
+#
+# No root: the session is the user's own. The fragment ~/.config/hypr/pointer.lua is
+# the SOURCE OF TRUTH — it is what hyprland.lua require()s at login, so the live
+# compositor is merely its projection. Reading it (rather than hyprctl) keeps this
+# script correct headless (a TTY, the AI, a fresh account), where a live query would
+# come back empty and clobber the saved config. Every mutation writes the fragment
+# and then applies it with `hyprctl reload`, which re-runs the config wholesale — so
+# a setting that is REMOVED (a disabled gesture, a dropped device rule) really
+# disappears, unlike with `hyprctl keyword`.
+#
+# Cursor idle-hiding (cursor.inactive_timeout, seconds): `system_timeout` is the
+# session-wide default, `menu_timeout` is applied while a modal Quickshell popup
+# (launcher / hub / clipboard / …) holds the cursor lease — see hyprland.lua's
+# w_cursor_lease() watchdog. 0 = never hide. Stored with one decimal so the
+# fragment always holds a Lua float.
+#
+# Touchpad presence is answered by udev (ID_INPUT_TOUCHPAD), which works without a
+# session; the Hyprland device NAMES needed for per-device rules (speed / accel /
+# on-off have no input.touchpad key of their own) come from `hyprctl devices` and are
+# recorded in the fragment by `w-pointer detect`.
+#
+# See w-pointer.md and quickshell-hub.md (Input panel).
+
+set -euo pipefail
+
+FRAG="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/pointer.lua"
+
+err() { echo "w-pointer: $*" >&2; }
+die() { err "$*"; exit 1; }
+
+usage() {
+  cat <<EOF
+Usage: w-pointer <command> [args]
+
+Info: Manage mouse, touchpad and swipe-gesture settings of the Wayland session.
+
+Commands:
+  status [--porcelain]   Show every setting (+ whether a touchpad is present)
+  list [--porcelain]     List live pointer devices (mouse / touchpad)
+  get <key>              Print one setting
+  set <key> <value>      Change one setting (live + persisted)
+  detect                 Re-scan touchpads and record their device names
+  reset [<scope>|--all]  Restore defaults (scope: mouse | touchpad | gestures | cursor)
+  keys                   List settable keys with their accepted values
+  help                   Show this help
+
+Config persisted to: $FRAG
+
+Exit codes: 0 success · 1 runtime/validation error · 2 usage
+
+Examples:
+  w-pointer set mouse.sensitivity 0.3
+  w-pointer set touchpad.tap_to_click on
+  w-pointer set gestures.workspace_fingers 4
+  w-pointer set cursor.menu_timeout 0.1
+  w-pointer reset touchpad
+EOF
+}
+
+# ── Schema: key → kind + spec ────────────────────────────────────────────────────
+# kind: bool | int:<lo>:<hi> | float:<lo>:<hi> | enum:<a,b,…>
+# Order matters: it is the write order of the fragment, so the file stays stable.
+declare -A SCHEMA=(
+  [mouse.sensitivity]="float:-1:1"
+  [mouse.accel_profile]="enum:adaptive,flat"
+  [mouse.natural_scroll]="bool"
+  [mouse.scroll_factor]="float:0.1:10"
+  [mouse.left_handed]="bool"
+  [cursor.system_timeout]="float:0:3600"
+  [cursor.menu_timeout]="float:0:3600"
+  [touchpad.enabled]="bool"
+  [touchpad.sensitivity]="float:-1:1"
+  [touchpad.accel_profile]="enum:adaptive,flat"
+  [touchpad.natural_scroll]="bool"
+  [touchpad.scroll_factor]="float:0.1:10"
+  [touchpad.disable_while_typing]="bool"
+  [touchpad.tap_to_click]="bool"
+  [touchpad.tap_button_map]="enum:lrm,lmr"
+  [touchpad.clickfinger_behavior]="bool"
+  [touchpad.middle_button_emulation]="bool"
+  [touchpad.tap_and_drag]="bool"
+  [touchpad.drag_lock]="int:0:2"
+  [touchpad.drag_3fg]="int:0:2"
+  [gestures.workspace_fingers]="enum:0,3,4"
+  [gestures.swipe_distance]="int:50:2000"
+  [gestures.swipe_invert]="bool"
+  [gestures.swipe_create_new]="bool"
+)
+# Declaration order (bash hashes are unordered) — also the fragment's key order.
+KEYS=(
+  mouse.sensitivity mouse.accel_profile mouse.natural_scroll mouse.scroll_factor
+  mouse.left_handed
+  cursor.system_timeout cursor.menu_timeout
+  touchpad.enabled touchpad.sensitivity touchpad.accel_profile touchpad.natural_scroll
+  touchpad.scroll_factor touchpad.disable_while_typing touchpad.tap_to_click
+  touchpad.tap_button_map touchpad.clickfinger_behavior touchpad.middle_button_emulation
+  touchpad.tap_and_drag touchpad.drag_lock touchpad.drag_3fg
+  gestures.workspace_fingers gestures.swipe_distance gestures.swipe_invert
+  gestures.swipe_create_new
+)
+# Shipped defaults — also the first-run values when no fragment exists yet. Keep in
+# sync with /etc/skel/.config/hypr/pointer.lua (and the fallback in hyprland.lua).
+declare -A DEFAULT=(
+  [mouse.sensitivity]="0.0"
+  [mouse.accel_profile]="adaptive"
+  [mouse.natural_scroll]="false"
+  [mouse.scroll_factor]="1.0"
+  [mouse.left_handed]="false"
+  [cursor.system_timeout]="0.0"
+  [cursor.menu_timeout]="0.1"
+  [touchpad.enabled]="true"
+  [touchpad.sensitivity]="0.0"
+  [touchpad.accel_profile]="adaptive"
+  [touchpad.natural_scroll]="true"
+  [touchpad.scroll_factor]="1.0"
+  [touchpad.disable_while_typing]="true"
+  [touchpad.tap_to_click]="true"
+  [touchpad.tap_button_map]="lrm"
+  [touchpad.clickfinger_behavior]="false"
+  [touchpad.middle_button_emulation]="false"
+  [touchpad.tap_and_drag]="true"
+  [touchpad.drag_lock]="0"
+  [touchpad.drag_3fg]="0"
+  [gestures.workspace_fingers]="3"
+  [gestures.swipe_distance]="300"
+  [gestures.swipe_invert]="true"
+  [gestures.swipe_create_new]="true"
+)
+# Keys written as Lua strings (everything else is a number or a boolean literal).
+is_string_key() { [[ "${SCHEMA[$1]}" == enum:* && "$1" != gestures.workspace_fingers ]]; }
+
+declare -A CFG=()
+declare -a PADS=()
+
+# ── Live session ─────────────────────────────────────────────────────────────────
+have_hypr() { command -v hyprctl >/dev/null 2>&1 && hyprctl version >/dev/null 2>&1; }
+
+# Apply the fragment to the running session. `reload` re-executes the whole config
+# (hyprland.start does NOT re-fire, so nothing re-spawns) — the only way a removed
+# gesture or device rule actually goes away.
+apply_live() { have_hypr && hyprctl reload >/dev/null 2>&1 || true; }
+
+# Live pointer devices as "name<TAB>type" (type: touchpad | mouse). Empty headless.
+live_pointers() {
+  have_hypr || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  local json pads
+  json="$(hyprctl devices -j 2>/dev/null || echo '{}')"
+  pads="$(udev_touchpads | tr '\n' '|')"
+  jq -r '.mice[]?.name // empty' <<<"$json" | while read -r n; do
+    if is_touchpad_name "$n" "$pads"; then echo -e "$n\ttouchpad"; else echo -e "$n\tmouse"; fi
+  done
+}
+
+# Normalize a device name the way Hyprland does (lowercase, spaces → dashes) so a
+# udev NAME can be compared with an hyprctl device name.
+norm() { echo "$1" | tr '[:upper:]' '[:lower:]' | tr ' ' '-'; }
+
+# udev is authoritative for "is there a touchpad at all" and works with no session
+# (a TTY, the AI, first boot). Emits the event device name (eventN) of every
+# ID_INPUT_TOUCHPAD device — the FLAG alone answers presence, deliberately without
+# involving the device's name, which is a separate question with a separate source
+# (see udev_touchpads). Guarded: a container without /dev/input, or no udevadm,
+# yields nothing rather than aborting under `set -e`.
+udev_touchpad_events() {
+  command -v udevadm >/dev/null 2>&1 || return 0
+  local dev props
+  for dev in /dev/input/event*; do
+    [[ -e "$dev" ]] || continue
+    props="$(udevadm info --query=property --name="$dev" 2>/dev/null || true)"
+    # if/then, not `[[ … ]] && echo …`: as the loop's last command a false test
+    # would return 1 out of the function and abort the caller under `set -e`.
+    if [[ "$props" == *"ID_INPUT_TOUCHPAD=1"* ]]; then echo "${dev##*/}"; fi
+  done
+}
+
+# Normalized names of the touchpads found above. The name comes from SYSFS, not from
+# udev's NAME= property: that property is set by udev RULES and simply does not exist
+# on a stock Arch box (verified on a MacBookPro11,3 — not one input device had it,
+# while /sys/class/input/event8/device/name held the real "bcm5974", which is exactly
+# what Hyprland calls the device). Reading NAME= was why the touchpad segment never
+# appeared on real hardware.
+udev_touchpads() {
+  local ev name
+  while read -r ev; do
+    [[ -n "$ev" ]] || continue
+    name="$(cat "/sys/class/input/$ev/device/name" 2>/dev/null || true)"
+    if [[ -n "$name" ]]; then norm "$name"; fi
+  done < <(udev_touchpad_events)
+}
+
+# A live pointer is a touchpad if udev said so (normalized name match) or, when udev
+# gave us nothing to match against, if its name looks like one.
+is_touchpad_name() {
+  local n norm_n; n="$1"; norm_n="$(norm "$n")"
+  [[ -n "${2:-}" && "|$2" == *"|$norm_n|"* ]] && return 0
+  [[ "$norm_n" == *touchpad* || "$norm_n" == *trackpad* ]]
+}
+
+# ── Fragment I/O ─────────────────────────────────────────────────────────────────
+# Read the fragment into CFG[] / PADS[]. The format is ours (this script is its only
+# writer), so a small awk pass is enough: sections are `<name> = {`, settings are
+# `key = value,` with an optional trailing `-- comment`.
+read_cfg() {
+  local k
+  for k in "${KEYS[@]}"; do CFG["$k"]="${DEFAULT[$k]}"; done
+  PADS=()
+  [[ -r "$FRAG" ]] || return 0
+
+  # if/then rather than `[[ … ]] && CFG[…]=…`: a trailing false test as the loop's
+  # last command returns 1 out of the whole loop and aborts us under `set -e`.
+  local line key val
+  while IFS='=' read -r key val; do
+    if [[ -n "${SCHEMA[$key]:-}" ]]; then CFG["$key"]="$val"; fi
+  done < <(awk '
+    /^[[:space:]]*(mouse|touchpad|gestures|cursor)[[:space:]]*=[[:space:]]*\{/ { sec=$1; next }
+    /^[[:space:]]*\}/ { sec=""; next }
+    sec != "" && /=/ {
+      line=$0
+      sub(/--.*$/, "", line)                       # strip trailing comment
+      split(line, kv, "=")
+      k=kv[1]; v=kv[2]
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
+      gsub(/,[[:space:]]*$/, "", v)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+      gsub(/"/, "", v)
+      if (k != "" && v != "") print sec "." k "=" v
+    }
+  ' "$FRAG")
+
+  line="$(sed -n 's/^[[:space:]]*touchpads[[:space:]]*=[[:space:]]*{\(.*\)}.*/\1/p' "$FRAG" | head -n1)"
+  if [[ -n "$line" ]]; then
+    local IFS=','
+    for val in $line; do
+      val="${val//\"/}"; val="${val//[[:space:]]/}"
+      if [[ -n "$val" ]]; then PADS+=("$val"); fi
+    done
+  fi
+}
+
+# Lua literal for a key's current value: strings get quoted, numbers/bools do not.
+lua_val() { if is_string_key "$1"; then echo "\"${CFG[$1]}\""; else echo "${CFG[$1]}"; fi; }
+
+write_cfg() {
+  mkdir -p "$(dirname "$FRAG")"
+  local pads=""
+  local p
+  for p in "${PADS[@]}"; do pads+="${pads:+, }\"$p\""; done
+  local tmp; tmp="$(mktemp "${FRAG}.XXXXXX")"
+  cat > "$tmp" <<EOF
+-- W Linux — pointer devices (mouse + touchpad + touchpad gestures). Managed by
+-- \`w-pointer\` (and the W Hub Input panel); hand-edits are overwritten. Data module
+-- require()d by hyprland.lua, which threads these into input{}, input.touchpad{},
+-- gestures{}, per-device hl.device() rules and the workspace-swipe hl.gesture().
+--
+-- touchpad.enabled / .sensitivity / .accel_profile are emitted as hl.device() rules
+-- for every name in devices.touchpads (Hyprland has no input.touchpad key for them);
+-- that list is filled by \`w-pointer detect\`.
+return {
+  mouse = {
+    sensitivity = $(lua_val mouse.sensitivity),
+    accel_profile = $(lua_val mouse.accel_profile),
+    natural_scroll = $(lua_val mouse.natural_scroll),
+    scroll_factor = $(lua_val mouse.scroll_factor),
+    left_handed = $(lua_val mouse.left_handed),
+  },
+  cursor = {
+    system_timeout = $(lua_val cursor.system_timeout),
+    menu_timeout = $(lua_val cursor.menu_timeout),
+  },
+  touchpad = {
+    enabled = $(lua_val touchpad.enabled),
+    sensitivity = $(lua_val touchpad.sensitivity),
+    accel_profile = $(lua_val touchpad.accel_profile),
+    natural_scroll = $(lua_val touchpad.natural_scroll),
+    scroll_factor = $(lua_val touchpad.scroll_factor),
+    disable_while_typing = $(lua_val touchpad.disable_while_typing),
+    tap_to_click = $(lua_val touchpad.tap_to_click),
+    tap_button_map = $(lua_val touchpad.tap_button_map),
+    clickfinger_behavior = $(lua_val touchpad.clickfinger_behavior),
+    middle_button_emulation = $(lua_val touchpad.middle_button_emulation),
+    tap_and_drag = $(lua_val touchpad.tap_and_drag),
+    drag_lock = $(lua_val touchpad.drag_lock),
+    drag_3fg = $(lua_val touchpad.drag_3fg),
+  },
+  gestures = {
+    workspace_fingers = $(lua_val gestures.workspace_fingers),
+    swipe_distance = $(lua_val gestures.swipe_distance),
+    swipe_invert = $(lua_val gestures.swipe_invert),
+    swipe_create_new = $(lua_val gestures.swipe_create_new),
+  },
+  devices = {
+    touchpads = { $pads },
+  },
+}
+EOF
+  chmod 644 "$tmp"
+  mv "$tmp" "$FRAG"
+}
+
+# ── Validation ───────────────────────────────────────────────────────────────────
+# Accept the words a human (or the Hub) would type; store Lua literals.
+norm_value() {
+  local key="$1" v="$2" kind="${SCHEMA[$1]}"
+  case "$kind" in
+    bool)
+      case "${v,,}" in
+        on|true|yes|1)  echo "true" ;;
+        off|false|no|0) echo "false" ;;
+        *) die "$key: expected on|off, got: $v" ;;
+      esac ;;
+    enum:*)
+      local allowed="${kind#enum:}"
+      [[ ",$allowed," == *",$v,"* ]] || die "$key: expected one of ${allowed//,/ | }, got: $v"
+      echo "$v" ;;
+    int:*)
+      local lo hi; IFS=':' read -r _ lo hi <<< "$kind"
+      [[ "$v" =~ ^-?[0-9]+$ ]] || die "$key: expected an integer, got: $v"
+      (( v >= lo && v <= hi )) || die "$key: out of range $lo..$hi: $v"
+      echo "$v" ;;
+    float:*)
+      local lo hi; IFS=':' read -r _ lo hi <<< "$kind"
+      [[ "$v" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] || die "$key: expected a number, got: $v"
+      awk -v v="$v" -v lo="$lo" -v hi="$hi" 'BEGIN { exit !(v+0 >= lo+0 && v+0 <= hi+0) }' \
+        || die "$key: out of range $lo..$hi: $v"
+      # Keep one decimal so the fragment always holds a Lua float, never an int
+      # (hl.config's sensitivity/scroll_factor are float fields).
+      awk -v v="$v" 'BEGIN { if (v+0 == int(v+0)) printf "%.1f", v+0; else printf "%s", v }' ;;
+  esac
+}
+
+# ── Commands ─────────────────────────────────────────────────────────────────────
+# A touchpad is present if udev sees one (authoritative, works headless), or if we
+# already recorded device names, or if a live pointer looks like one.
+touchpad_present() {
+  # By the udev FLAG, not by a resolvable name: a touchpad whose name we cannot read
+  # is still a touchpad, and hiding the whole segment because of it is exactly the
+  # bug this used to have.
+  [[ -n "$(udev_touchpad_events | head -n1)" ]] && return 0
+  (( ${#PADS[@]} )) && return 0
+  [[ -n "$(live_pointers | awk -F'\t' '$2=="touchpad"' | head -n1)" ]]
+}
+
+cmd_status() {
+  read_cfg
+  local present="no"; touchpad_present && present="yes"
+  local devs=""; local p
+  for p in "${PADS[@]}"; do devs+="${devs:+,}$p"; done
+
+  if [[ "${1:-}" == "--porcelain" ]]; then
+    echo "touchpad_present=$present"
+    echo "touchpad_devices=$devs"
+    local k
+    for k in "${KEYS[@]}"; do echo "$k=${CFG[$k]}"; done
+  else
+    printf '%-34s %s\n' "touchpad present" "$present"
+    printf '%-34s %s\n' "touchpad devices" "${devs:-—}"
+    local k
+    for k in "${KEYS[@]}"; do printf '%-34s %s\n' "$k" "${CFG[$k]}"; done
+  fi
+}
+
+cmd_list() {
+  local out; out="$(live_pointers)"
+  if [[ "${1:-}" == "--porcelain" ]]; then
+    if [[ -n "$out" ]]; then echo "$out"; fi
+  elif [[ -z "$out" ]]; then
+    echo "  (no live session — pointer devices are only listable from inside Hyprland)"
+  else
+    while IFS=$'\t' read -r n t; do printf '  %-12s %s\n' "$t" "$n"; done <<< "$out"
+  fi
+}
+
+cmd_get() {
+  local key="${1:-}"; [[ -n "$key" ]] || { err "get: <key> required"; exit 2; }
+  [[ -n "${SCHEMA[$key]:-}" ]] || die "unknown key: $key (see: w-pointer keys)"
+  read_cfg
+  echo "${CFG[$key]}"
+}
+
+cmd_set() {
+  local key="${1:-}" val="${2:-}"
+  [[ -n "$key" && -n "$val" ]] || { err "set: <key> <value> required"; exit 2; }
+  [[ -n "${SCHEMA[$key]:-}" ]] || die "unknown key: $key (see: w-pointer keys)"
+  read_cfg
+  CFG["$key"]="$(norm_value "$key" "$val")"
+  write_cfg
+  apply_live
+  echo "w-pointer: $key = ${CFG[$key]}"
+}
+
+# Re-scan touchpads and record their Hyprland device names. Needs a live session for
+# the names themselves (udev alone answers "is there one", not "what does Hyprland
+# call it"); without one it is an honest no-op rather than a wrong guess.
+cmd_detect() {
+  have_hypr || die "no live Hyprland session — device names can only be read from inside it"
+  read_cfg
+  local -a found=()
+  local n t
+  while IFS=$'\t' read -r n t; do
+    [[ "$t" == "touchpad" ]] && found+=("$n")
+  done < <(live_pointers)
+  PADS=("${found[@]}")
+  write_cfg
+  apply_live
+  if (( ${#PADS[@]} )); then
+    echo "w-pointer: touchpads: ${PADS[*]}"
+  else
+    echo "w-pointer: no touchpad found"
+  fi
+}
+
+cmd_reset() {
+  local scope="${1:---all}"
+  case "$scope" in
+    --all|all|mouse|touchpad|gestures|cursor) ;;
+    *) err "reset: expected mouse | touchpad | gestures | cursor | --all"; exit 2 ;;
+  esac
+  read_cfg
+  local k
+  for k in "${KEYS[@]}"; do
+    [[ "$scope" == "--all" || "$scope" == "all" || "$k" == "$scope".* ]] && CFG["$k"]="${DEFAULT[$k]}"
+  done
+  write_cfg
+  apply_live
+  echo "w-pointer: reset ${scope#--}"
+}
+
+cmd_keys() {
+  local k
+  for k in "${KEYS[@]}"; do
+    local kind="${SCHEMA[$k]}" spec
+    case "$kind" in
+      bool)    spec="on | off" ;;
+      enum:*)  spec="${kind#enum:}"; spec="${spec//,/ | }" ;;
+      int:*)   spec="integer ${kind#int:}"; spec="${spec/:/..}" ;;
+      float:*) spec="number ${kind#float:}"; spec="${spec/:/..}" ;;
+    esac
+    printf '  %-38s %-24s (default: %s)\n' "$k" "$spec" "${DEFAULT[$k]}"
+  done
+}
+
+case "${1:-}" in
+  status) shift; cmd_status "$@" ;;
+  list)   shift; cmd_list "$@" ;;
+  get)    shift; cmd_get "$@" ;;
+  set)    shift; cmd_set "$@" ;;
+  detect) shift; cmd_detect "$@" ;;
+  reset)  shift; cmd_reset "$@" ;;
+  keys)   shift; cmd_keys "$@" ;;
+  help|-h|--help) usage ;;
+  "")     usage; exit 2 ;;
+  *)      err "unknown command: $1"; usage; exit 2 ;;
+esac

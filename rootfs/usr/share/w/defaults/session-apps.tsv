@@ -1,0 +1,39 @@
+# /usr/share/w/defaults/session-apps.tsv — relaunch overrides for `w-session`.
+#
+# W's own defaults. Do NOT edit: every update overwrites this file wholesale.
+# Personal entries belong in ~/.config/w/session-apps.tsv, which the update
+# never touches; both files are read, and the user's file wins on a tie.
+#
+# WHAT THIS IS FOR
+#
+# `w-session save` recovers each window's relaunch command from
+# /proc/<pid>/cmdline, which is right for the overwhelming majority of programs:
+# the argv a window's process was started with is exactly what reopens it, down
+# to the document it has open. This table is the escape hatch for the cases
+# where it is not:
+#
+#   • the cmdline is meaningless — the window belongs to a D-Bus-activated
+#     service, a portal, or a wrapper that has already exec'd away;
+#   • the cmdline is correct but WRONG FOR W — see the terminals below.
+#
+# Format: <initialClass regex>\t<command>
+#   The regex is anchored (`foot` matches `foot`, not `footclient`) and matched
+#   against the window's `initialClass`, never its live class: a program that
+#   renames itself at runtime must still be recognisable a reboot later.
+#   The command is run through `sh -c` in the window's saved working directory,
+#   so a relative path in it means what it meant when the window was open.
+#   First match wins; a command of `-` means "never relaunch this class".
+#   '#' and blank lines are ignored.
+
+# Terminals resolve to `w-term`, not to the binary they happened to be.
+#
+# This is the one entry that is not about a broken cmdline. `w-term` is W's
+# single terminal entry point: it maps to whichever terminal the machine is
+# configured for (/etc/w/terminal.conf) and launches it the systemd/D-Bus-
+# correct way. Recording `ghostty` verbatim would pin the restored session to
+# the terminal that was active the day it was saved — switch terminals and every
+# saved window reopens the old one, or fails to reopen at all once it is
+# uninstalled. The working directory, which is the part that actually carries
+# your work (a shell in a repo, yazi, nvim), is preserved either way.
+com\.mitchellh\.ghostty	w-term
+foot	w-term

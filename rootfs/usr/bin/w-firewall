@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# w-firewall — W Linux firewall zone control
+#
+# Thin front over firewalld for the home<->public default-zone toggle (the W
+# baseline is `home`; switch to `public` on untrusted networks). The rich GUI
+# (firewall-config) and raw `firewall-cmd` remain the source of truth for
+# per-connection zones, services and rules. See security.md (point В).
+
+set -euo pipefail
+
+err() { echo "w-firewall: $*" >&2; }
+need_root() { [[ $EUID -eq 0 ]] || { err "this command requires root"; exit 1; }; }
+need_daemon() {
+  command -v firewall-cmd &>/dev/null || { err "firewalld not installed"; exit 1; }
+  firewall-cmd --state &>/dev/null || { err "firewalld is not running"; exit 1; }
+}
+
+usage() {
+  cat <<EOF
+Usage: w-firewall <command>
+
+Info: Toggle the firewall zone between home and public (firewalld).
+
+Commands:
+  status        Show default zone, active zones and the default zone's ruleset
+  home          Set default zone to 'home'  (W baseline: inbound ssh + mdns)
+  public        Set default zone to 'public' (untrusted networks; inbound ssh only)
+  help          Show this help
+
+Exit codes:
+  0  Success
+  1  Runtime error
+  2  Usage error
+
+Examples:
+  w-firewall status
+  sudo w-firewall public
+EOF
+}
+
+cmd_status() {
+  need_daemon
+  echo "Default zone : $(firewall-cmd --get-default-zone)"
+  echo "Active zones :"; firewall-cmd --get-active-zones | sed 's/^/  /'
+  echo
+  firewall-cmd --list-all
+}
+
+cmd_set() {
+  local zone="$1"
+  need_root
+  need_daemon
+  # Changing the default zone takes effect immediately (no reload needed).
+  firewall-cmd --set-default-zone="$zone" >/dev/null
+  echo "w-firewall: default zone -> $zone"
+}
+
+case "${1:-}" in
+  status)      cmd_status            ;;
+  home|public) cmd_set "$1"          ;;
+  help|-h|--help) usage              ;;
+  "")          usage; exit 2         ;;
+  *)           err "unknown command: $1"; usage; exit 2 ;;
+esac

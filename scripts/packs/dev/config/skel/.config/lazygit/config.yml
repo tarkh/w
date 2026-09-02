@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/jesseduffield/lazygit/master/schema/config.json
+#
+# W Linux — lazygit config seeded by the `dev` W-Pack.
+#
+# OWNERSHIP: this file is yours (manifest class `user`, seed-if-absent). W writes it
+# once and never again. Colours are NOT here: they live in
+# ~/.config/w/lazygit-theme.yml, rendered by the w-style axis `500-lazygit` from the
+# active W theme. The two files are merged by LG_CONFIG_FILE (set in
+# /etc/w/env.d/dev.sh, lazygit's own documented comma-separated merge), theme last,
+# so W owns the palette and you own everything else — including any `gui.theme` key
+# you set here, which the theme file will then win over. Drop the env var (or the
+# theme file) and lazygit falls back to its stock colours.
+
+git:
+  paging:
+    # delta needs colour to already be in the stream it pages.
+    colorArg: always
+    # No --dark/--light here: light-vs-dark is decided by the W theme, in the
+    # `[delta "w"]` block of ~/.config/w/git-theme.conf.
+    pager: delta --paging=never

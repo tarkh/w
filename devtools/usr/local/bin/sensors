@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# W Linux DEV-ONLY fake `sensors` — overlays the real lm_sensors binary in PATH
+# (/usr/local/bin precedes /usr/bin) so the Quickshell bar temp block has data to
+# render inside a VM, where no hardware sensors are passed through. Deployed by
+# `apply.sh --devtools` from the devtools/ overlay; NEVER part of the real OS build.
+#
+# Emits the same `sensors -j` JSON shape the temp block parses (Temp.qml): a
+# coretemp chip with a "Package id 0" feature carrying tempN_input in °C.
+#
+# Live value: write a number to /run/w/dev/temp to drive the reading on the fly
+# (e.g. `echo 95 > /run/w/dev/temp` to cross highThreshold), otherwise a default.
+# Lets the bar block's thresholds / highColor / °F / anti-jitter be exercised
+# without editing this script.
+set -euo pipefail
+
+DEFAULT_TEMP=41
+VALUE_FILE=/run/w/dev/temp
+
+read_temp() {
+  if [[ -r "$VALUE_FILE" ]]; then
+    local v
+    v=$(<"$VALUE_FILE")
+    # Accept an integer or decimal; fall back to default on anything else.
+    [[ "$v" =~ ^[0-9]+(\.[0-9]+)?$ ]] && { echo "$v"; return; }
+  fi
+  echo "$DEFAULT_TEMP"
+}
+
+emit_json() {
+  local t; t=$(read_temp)
+  cat <<EOF
+{
+   "coretemp-isa-0000":{
+      "Adapter": "ISA adapter",
+      "Package id 0":{
+         "temp1_input": $t,
+         "temp1_max": 100.000,
+         "temp1_crit": 100.000,
+         "temp1_crit_alarm": 0.000
+      }
+   }
+}
+EOF
+}
+
+case "${1:-}" in
+  -j|--json) emit_json ;;
+  # Plain `sensors` (no JSON): a minimal human-readable echo, enough for eyeballing.
+  "")        echo "coretemp-isa-0000"; echo "Adapter: ISA adapter"; echo "Package id 0:  +$(read_temp)°C  (high = +100.0°C, crit = +100.0°C)" ;;
+  *)         emit_json ;;
+esac

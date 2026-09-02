@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# w-info — W Linux tool catalog
+#
+# Lists all user-facing w-* utilities with a one-line description extracted
+# from each tool's `help` output (Info: line).
+
+set -euo pipefail
+
+BIN_DIR="${W_BIN_DIR:-/usr/bin}"
+
+# Tools excluded from the catalog — internal / daemon / no user-facing help.
+# Only names that actually sit in BIN_DIR belong here: since P9 the helpers that
+# are never invoked as a command (w-authd, w-update-refresh, papirus-folders)
+# live in /usr/lib/w, which this never scans, so listing them would be a rule
+# protecting nothing. The four below are in /usr/bin because something calls them
+# by name — a unit, an alpm hook, hyprland.lua, a Quickshell surface.
+BLACKLIST=(
+  w-cliphist-store
+  w-mcp
+  w-mkinitcpio
+  w-session-exit
+)
+
+is_blacklisted() {
+  local name="$1"
+  local item
+  for item in "${BLACKLIST[@]}"; do
+    [[ "$item" == "$name" ]] && return 0
+  done
+  return 1
+}
+
+usage() {
+  cat <<EOF
+Usage: w-info [help]
+
+Info: List all W tools with a one-line description of each.
+
+W Linux — tool catalog and system overview.
+
+Calling without arguments lists all user-facing w-* utilities with a
+short description extracted from each tool's help output.
+
+Commands:
+  help    Show this help
+
+Exit codes:
+  0  Success
+  2  Usage error
+EOF
+}
+
+main() {
+  case "${1:-}" in
+    help|--help|-h) usage; exit 0 ;;
+    "")             ;;
+    *)              echo "w-info: unknown command: $1" >&2; usage >&2; exit 2 ;;
+  esac
+
+  local total=0
+  local entries=()
+
+  for script in "$BIN_DIR"/w-*; do
+    [[ -f "$script" ]] || continue
+
+    local name
+    name=$(basename "$script")
+
+    is_blacklisted "$name" && continue
+
+    # Read the Info: line straight from the file — it's a static line in the
+    # help heredoc, so parsing beats executing every tool (faster, no side
+    # effects, no runtime deps); a missing Info: line self-excludes the tool.
+    local info
+    info=$(sed -n 's/^Info: //p' "$script" | head -1) || true
+
+    [[ -z "$info" ]] && continue
+
+    entries+=("$(printf '  %-22s %s' "$name" "$info")")
+    total=$((total + 1))
+  done
+
+  if ((total == 0)); then
+    echo "No w-* tools with Info: descriptions found." >&2
+    echo "Run 'w-<tool> help' on a specific tool for usage." >&2
+    exit 1
+  fi
+
+  echo "W Linux — available tools (run '<tool> help' for details):"
+  echo ""
+  printf '%s\n' "${entries[@]}" | sort
+  echo ""
+  echo "$total tool(s)"
+}
+
+main "$@"

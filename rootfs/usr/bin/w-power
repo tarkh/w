@@ -1,0 +1,907 @@
+#!/usr/bin/env bash
+# w-power — W Linux power management
+#
+# One thin front over the whole power stack:
+#   • power profiles      -> power-profiles-daemon (powerprofilesctl)
+#   • idle policy         -> renders the user's ~/.config/hypr/hypridle.conf
+#                            (display-off / auto-lock / auto-suspend; AC vs battery)
+#   • lid / power key     -> /etc/systemd/logind.conf.d/10-w-power.conf
+#   • battery charge limit-> the w-charge-limit.service oneshot (sysfs threshold)
+#   • machine mode        -> laptop|desktop preset selector for every knob above
+#
+# Two-layer source-of-truth: the ROOT-domain knobs live in /etc/w/power.conf; the idle
+# timers come from the built-in per-MODE preset table merged with the USER overrides in
+# ~/.config/w/power.conf (so tweaking a timeout never needs root). w-power is the
+# privileged backend for the W Hub Power panel (pkexec + com.w.hub.actuate caps
+# power-charge-limit / power-lid / power-key / power-mode) and the AI's w_power_* tools.
+# See w-power.md and w-scripts.md.
+
+set -euo pipefail
+
+CONF="/etc/w/power.conf"                        # admin layer: deviations only
+VENDOR_CONF="/usr/share/w/defaults/power.conf"  # vendor layer: generated, W-owned
+MIGRATED_MARK="/var/lib/w/power.migrated"
+LOGIND_DROPIN="/etc/systemd/logind.conf.d/10-w-power.conf"
+CHARGE_UNIT="w-charge-limit.service"
+SUBSYS="power"
+
+err() { echo "w-power: $*" >&2; }
+die() { err "$*"; exit 1; }
+need_root() { [[ $EUID -eq 0 ]] || die "this command requires root"; }
+need_conf() { [[ -r "$CONF" ]] || die "$CONF not found"; }
+
+# ---- layered config ---------------------------------------------------------
+# shellcheck source=../lib/w/w-conf-lib.sh
+source /usr/lib/w/w-conf-lib.sh
+
+# `--user <name>` may appear anywhere in the command line, so it is stripped here
+# rather than in each subcommand: mod_power iterates every account of the machine
+# and calls us once per user, and a rendering command has to be able to say whose
+# home it is rendering. Root-only, enforced by the resolver.
+ARG_USER=""
+_ARGV=()
+while (($#)); do
+  case "$1" in
+    --user)   ARG_USER="${2:-}"; shift 2 ;;
+    --user=*) ARG_USER="${1#*=}"; shift ;;
+    *)        _ARGV+=("$1"); shift ;;
+  esac
+done
+set -- "${_ARGV[@]}"
+
+# Whose session config we render: the invoker (sudo/pkexec), an explicit --user,
+# or — at firstboot only — the machine's single account. The resolver exports
+# WCONF_HOME, which MUST happen before the load pass below: running as root the
+# user layer would otherwise resolve to /root/.config. See w-conf-lib.sh.
+TARGET_USER=""; TARGET_HOME=""
+_rc=0; wconf_resolve_target "$ARG_USER" || _rc=$?
+# `if`, not `[[…]] && die`: a false test at the end of an AND-list returns 1 and
+# `set -e` would kill the script right here (checks.md, landmines rule 2).
+if [[ $_rc -eq 2 ]]; then exit 1; fi
+TARGET_USER="$WCONF_TARGET_USER"; TARGET_HOME="$WCONF_TARGET_HOME"
+USER_CONF="${TARGET_HOME:-$HOME}/.config/w/power.conf"
+HYPRIDLE="${TARGET_HOME:-$HOME}/.config/hypr/hypridle.conf"
+
+# Reads are EFFECTIVE across the layer chain (phase 2 of update-system.md): the
+# vendor defaults now live in their own generated file, /etc/w/power.conf holds
+# only the admin's deviations, and ~/.config/w/power.conf may speak to exactly
+# the keys power.schema marks user-overridable (the reader drops the rest — the
+# old "idle timers yes, lid no" folklore is now a declaration, not a habit).
+# One load pass up front: every read below runs inside $(…), and a subshell that
+# inherits a POPULATED cache just looks the key up instead of re-parsing every
+# layer (render_hypridle reads a dozen keys per AC/battery flip).
+wconf_load "$SUBSYS"
+sys_get() { wconf_get "$SUBSYS" "$1"; }
+# Both writers go through the shared library, exactly like w-dns/w-time/w-logs.
+# It writes atomically, appends when the key is absent (a conf seeded before the
+# key existed must still take a setter), keeps the aligned trailing comment, and
+# creates the file with the right mode and owner. The reason that matters MOST
+# here: it refuses a key locked by fleet policy (/etc/w/policy.d) instead of
+# writing a value the next read would silently shadow — power is the subsystem
+# with the richest scope model, so a hand-rolled sed here would have made the
+# fleet mandate a lie precisely where it counts. It also reloads the cached load
+# pass, so everything downstream in this same run (render_all, status) sees the
+# new value rather than the pre-write state.
+set_kv()      { need_root; wconf_set "$SUBSYS" "$1" "$2"; }
+set_user_kv() { wconf_set "$SUBSYS" "$1" "$2" user; }   # <key> <val>
+
+# ---- validation -------------------------------------------------------------
+PROFILES_STATIC="performance balanced power-saver"
+# What THIS machine offers. `performance` needs a platform driver (intel_pstate /
+# amd-pstate / ACPI platform_profile), so a VM and plenty of desktops expose only
+# balanced + power-saver — which is why this is queried, never assumed.
+profiles_available() {
+  local list
+  # `|| true`: a failing/absent PPD must not abort the caller under set -e/pipefail.
+  list="$(powerprofilesctl list 2>/dev/null | sed -n 's/^[* ] \([a-z-]*\):.*/\1/p' || true)"
+  printf '%s' "${list:-$PROFILES_STATIC}" | tr '\n' ' ' | sed 's/ *$//'
+}
+profile_valid() { # accept anything power-profiles-daemon actually offers, else the static set
+  grep -qwF "$1" <<<"$(profiles_available)"
+}
+lid_valid()  { case "$1" in lock|suspend|ignore) return 0;; *) return 1;; esac; }
+pkey_valid() { case "$1" in poweroff|suspend|menu|ignore) return 0;; *) return 1;; esac; }
+lidwake_valid() { case "$1" in auto|keep) return 0;; *) return 1;; esac; }
+
+# ---- machine-mode presets ---------------------------------------------------
+# System-knob defaults per mode (seeded into CONF by `mode`). Idle timers below.
+preset_sys() { # <mode> <key>
+  local mode="$1" key="$2"
+  case "$key" in
+    DEFAULT_PROFILE)    echo balanced ;;
+    PROFILE_ON_AC)      echo balanced ;;
+    PROFILE_ON_BATTERY) echo power-saver ;;
+    CHARGE_LIMIT)       echo 100 ;;
+    # A desktop has no lid — every lid action is inert, so keep them ignore (also
+    # keeps `w-power status` honest). Laptop closes to suspend on battery, lock on AC.
+    LID_ON_BATTERY)     [[ "$mode" == laptop ]] && echo suspend || echo ignore ;;
+    LID_ON_AC)          [[ "$mode" == laptop ]] && echo lock    || echo ignore ;;
+    LID_DOCKED)         echo ignore ;;
+    POWER_KEY)          echo menu ;;
+    AUTO_PROFILE)       [[ "$mode" == laptop ]] && echo on || echo off ;;
+    LID_WAKE)           echo auto ;;
+    *)                  echo "" ;;
+  esac
+}
+# Every key the generated vendor layer carries. System-domain knobs come from
+# preset_sys, the six idle links from preset_idle; MODE is deliberately absent —
+# it is the admin's selector that CHOOSES this file's content, so it lives one
+# layer up (and putting it here would make the file define its own input).
+PRESET_SYS_KEYS=(DEFAULT_PROFILE AUTO_PROFILE PROFILE_ON_AC PROFILE_ON_BATTERY
+                 CHARGE_LIMIT LID_ON_BATTERY LID_ON_AC LID_DOCKED POWER_KEY LID_WAKE)
+# Idle-timer defaults (seconds; 0 = off). Values are RELATIVE cascade links, not
+# absolute idle points: lock counts from last activity, display from the lock
+# firing (or from last activity if lock=0), suspend from display firing (or from
+# whichever earlier link is on). See cascade_at() below. Desktop ignores the source.
+#
+# `kbdlight` is the odd one out and deliberately so: it is NOT a cascade link but
+# an INDEPENDENT listener counting from last activity, because a keyboard light is
+# useful exactly while you are not touching the keyboard-adjacent screen, and it
+# should go dark long before anything locks. Folding it into cascade_at() would
+# also have silently shifted the absolute lock/display/suspend points on every
+# already-installed machine. Desktops get 0 (they have no lit keyboard to speak of;
+# a machine that does still honours an explicit value).
+preset_idle() { # <mode> <ac|bat> <lock|display|suspend|kbdlight>
+  local mode="$1" src="$2" key="$3"
+  if [[ "$mode" == desktop ]]; then
+    case "$key" in lock) echo 900;; display) echo 300;; suspend) echo 0;; kbdlight) echo 0;; esac
+    return
+  fi
+  case "$src:$key" in
+    ac:lock)  echo 600 ;;  ac:display)  echo 120 ;;  ac:suspend)  echo 0 ;;   ac:kbdlight)  echo 120 ;;
+    bat:lock) echo 120 ;;  bat:display) echo 60  ;;  bat:suspend) echo 720 ;; bat:kbdlight) echo 60  ;;
+  esac
+}
+
+# Cascade arithmetic — the single source of truth for turning relative link
+# values into absolute idle-time firing points. base accumulates only over links
+# that are actually on, so the cascade order (lock -> display -> suspend) holds
+# without any hardcoded padding. Prints "T_lock T_display T_suspend" (0 = off).
+cascade_at() { # <lock> <display> <suspend>
+  local lock="$1" disp="$2" susp="$3" base=0 tl=0 td=0 ts=0
+  if [[ "$lock" -gt 0 ]]; then tl=$lock; base=$tl; fi
+  if [[ "$disp" -gt 0 ]]; then td=$((base + disp)); base=$td; fi
+  if [[ "$susp" -gt 0 ]]; then ts=$((base + susp)); fi
+  echo "$tl $td $ts"
+}
+
+# Human cascade chain for `w-power status` — always shows all three links, in order.
+# lock (the chain's start) prints its raw value; display/suspend show the relative
+# "+Ns" plus either the absolute "(at Ts)" firing point when on, or "(off)" when 0.
+cascade_str() { # <lock> <display> <suspend>
+  local lock="${1:-0}" disp="${2:-0}" susp="${3:-0}" tl td ts out
+  read -r tl td ts <<<"$(cascade_at "$lock" "$disp" "$susp")"
+  if [[ "$lock" -gt 0 ]]; then out="lock ${lock}s"; else out="lock 0s (off)"; fi
+  if [[ "$disp" -gt 0 ]]; then out="$out -> display +${disp}s (at ${td}s)"
+  else out="$out -> display +0s (off)"; fi
+  if [[ "$susp" -gt 0 ]]; then out="$out -> suspend +${susp}s (at ${ts}s)"
+  else out="$out -> suspend +0s (off)"; fi
+  echo "$out"
+}
+
+# The keyboard-backlight timer for `w-power status`. Independent of the cascade,
+# so it gets a plain "Ns / off" rather than a "+Ns (at Ts)" link.
+kbd_str() { # <seconds>
+  local s="${1:-0}"
+  if [[ "$s" =~ ^[0-9]+$ ]] && (( s > 0 )); then echo "${s}s"; else echo "off"; fi
+}
+
+# ---- power-source detection -------------------------------------------------
+on_battery() { # true = discharging on battery
+  local s f
+  for f in /sys/class/power_supply/AC*/online /sys/class/power_supply/ADP*/online; do
+    [[ -r "$f" ]] && { [[ "$(cat "$f")" == 1 ]] && return 1 || return 0; }
+  done
+  for f in /sys/class/power_supply/BAT*/status; do
+    [[ -r "$f" ]] && { s="$(cat "$f")"; [[ "$s" == Discharging ]] && return 0 || return 1; }
+  done
+  return 1   # no battery / unknown -> treat as AC
+}
+cur_src() { on_battery && echo bat || echo ac; }
+has_battery() { compgen -G "/sys/class/power_supply/BAT*" >/dev/null 2>&1; }
+# Only "is there one at all" — WHICH led is the keyboard backlight is w-kbdlight's
+# call, and w-power never needs to know. Asked directly rather than by shelling out
+# so the idle render keeps working no matter the module order during a fresh apply.
+# Without this gate, the majority of laptops (a keyboard that simply is not lit)
+# would get an idle listener whose every firing logs a w-kbdlight error.
+has_kbdlight() { compgen -G "/sys/class/leds/*kbd_backlight*" >/dev/null 2>&1; }
+
+detect_mode() { # echo laptop|desktop from chassis / DMI / battery
+  local c t
+  c="$(hostnamectl chassis 2>/dev/null || true)"
+  case "$c" in laptop|notebook|portable|convertible|tablet|handset) echo laptop; return;; esac
+  t="$(cat /sys/class/dmi/id/chassis_type 2>/dev/null || true)"
+  case "$t" in 8|9|10|11|14|30|31|32) echo laptop; return;; esac   # portable/laptop/notebook/handheld/subnote/tablet/convertible/detachable
+  has_battery && { echo laptop; return; }
+  echo desktop
+}
+
+# ---- effective idle value ---------------------------------------------------
+# No merge logic left here: the vendor layer carries the per-MODE presets as real
+# keys (AC_LOCK, BAT_DISPLAY, …) and the user's file overrides them by name, so
+# "effective" is simply what the shared reader already computed.
+mode_now() { wconf_layer_get "$SUBSYS" system MODE; }
+eff_idle() { # <ac|bat> <lock|display|suspend|kbdlight>
+  local k; k="$(echo "${1}_${2}" | tr '[:lower:]' '[:upper:]')"
+  sys_get "$k"
+}
+
+# ---- renderers --------------------------------------------------------------
+# hypridle.conf for the given power source (which timer set is live). hypridle has no
+# native AC/battery awareness, so w-power-monitor re-renders + reloads on source change.
+#
+# ⚠️ The lock screen is started in its OWN systemd scope, not as a plain child of
+# hypridle. hypridle spawns lock_cmd inside its own cgroup and hypridle.service
+# runs with systemd's default KillMode=control-group, so ANY restart of hypridle
+# — an apply, a fleet policy, or w-power _sync on an AC/battery flip — killed the
+# running lock screen. What the user sees then is the worst possible outcome: the
+# compositor stays session-locked with no client left to authenticate against
+# ("the lockscreen app died"), recoverable only from another TTY. Reproduced on
+# the dev VM 2026-08-07 — hyprlock up since the idle timer fired at 17:17, killed
+# at 17:30:47 by apply.sh --power.
+#
+# A scope inherits THIS process's environment, and hypridle is a live session
+# process, so WAYLAND_DISPLAY and HYPRLAND_INSTANCE_SIGNATURE are right by
+# construction (a systemd --user service would take the manager's environment
+# instead — correct today, but one uwsm finalize race away from a lock screen
+# that cannot reach the compositor). The bare trailing fallback to plain hyprlock
+# is deliberate: if systemd-run is unavailable for any reason the screen must
+# still lock. Failing to lock is not an acceptable degradation.
+#
+# NB: keep prose OUT of the heredoc below — it is unquoted, so a backtick there
+# becomes command substitution (checks.md, landmines rule 3).
+render_hypridle() { # <ac|bat>
+  local src="$1" lock disp susp kbd tl td ts dir
+  lock="$(eff_idle "$src" lock)"; disp="$(eff_idle "$src" display)"; susp="$(eff_idle "$src" suspend)"
+  kbd="$(eff_idle "$src" kbdlight)"
+  lock="${lock:-0}"; disp="${disp:-0}"; susp="${susp:-0}"; kbd="${kbd:-0}"   # coerce empties for the -gt tests
+  read -r tl td ts <<<"$(cascade_at "$lock" "$disp" "$susp")"
+  # Rendering into ANOTHER user's home is now the normal case (mod_power iterates
+  # every account), so the parent chain has to end up owned by that user: a bare
+  # `install -d` leaves a freshly created ~/.config root-owned and their session
+  # can no longer write beside our file — the trap lib/deploy.sh guards in
+  # seed_user_file. Skipped when rendering the /etc/skel template (no owner).
+  dir="$(dirname "$HYPRIDLE")"
+  if [[ $EUID -eq 0 && -n "$TARGET_USER" ]]; then
+    install -d -m755 -o "$TARGET_USER" -g "$TARGET_USER" "$(dirname "$dir")" "$dir"
+  else
+    install -d -m755 "$dir"
+  fi
+  {
+    cat <<EOF
+# W Linux — GENERATED by w-power (idle set: $src). Cascade: lock -> display -> suspend,
+# each link's value is RELATIVE to the previous one firing (or to last activity if the
+# earlier links are off) — 'w-power status' shows the resulting absolute idle points.
+# Do NOT edit; change links with 'w-power idle <ac|bat> <lock|display|suspend> <sec>'
+# (or the Hub Power panel), or set the machine mode with 'w-power mode <laptop|desktop>'.
+# See w-power.md.
+
+general {
+  # Single hyprlock instance; lock the session on idle and before sleep. The
+  # scope keeps it out of hypridle's cgroup so a hypridle restart cannot kill it.
+  lock_cmd = pidof hyprlock || systemd-run --user --scope --quiet --collect hyprlock || hyprlock
+  before_sleep_cmd = loginctl lock-session
+  # Turn DPMS back on after waking (avoids a dead screen until a keypress), then
+  # force the night light to re-assert whatever it should show right now — a
+  # plain IPC push (apply_target --force), no restart needed: hyprsunset is
+  # given no profile of its own to ever resurrect (see w-nightlight.md for the
+  # 2026-08-11 incident that taught us this), so there is nothing here for a
+  # resume to silently undo, and a live IPC push stays smooth either way.
+  after_sleep_cmd = hyprctl dispatch 'hl.dsp.dpms({ action = "on" })' ; w-nightlight apply
+}
+EOF
+    [[ "$lock" -gt 0 ]] && cat <<EOF
+
+# Auto-lock after $lock s of inactivity (fires at ${tl}s).
+listener {
+  timeout = $tl
+  on-timeout = loginctl lock-session
+}
+EOF
+    [[ "$disp" -gt 0 ]] && cat <<EOF
+
+# Turn the display off $disp s after the lock fires (fires at ${td}s); back on when
+# activity resumes.
+listener {
+  timeout = $td
+  on-timeout = hyprctl dispatch 'hl.dsp.dpms({ action = "off" })'
+  on-resume  = hyprctl dispatch 'hl.dsp.dpms({ action = "on" })'
+}
+EOF
+    [[ "$susp" -gt 0 ]] && cat <<EOF
+
+# Suspend $susp s after the display turns off (fires at ${ts}s).
+listener {
+  timeout = $ts
+  on-timeout = systemctl suspend
+}
+EOF
+    # Keyboard backlight: an INDEPENDENT timer, not a cascade link — it counts from
+    # last activity and is meant to fire well before anything locks. `w-kbdlight off`
+    # stashes the level so on-resume puts back exactly what the user had; both are
+    # no-ops on a machine with no keyboard light, so this block is harmless there.
+    [[ "$kbd" -gt 0 ]] && has_kbdlight && cat <<EOF
+
+# Turn the keyboard backlight off after $kbd s of inactivity; restore it on activity.
+listener {
+  timeout = $kbd
+  on-timeout = w-kbdlight off
+  on-resume  = w-kbdlight restore
+}
+EOF
+    [[ "$lock" -gt 0 && "$disp" -gt 0 ]] && cat <<EOF
+
+# While locked, ANY activity blanks the screen again after the plain '$disp's display
+# value (not the cascaded absolute point) — catches "wiggled the mouse, walked away"
+# on an already-locked screen. Gated on hyprlock so ordinary idle never double-fires.
+listener {
+  timeout = $disp
+  on-timeout = pidof hyprlock && hyprctl dispatch 'hl.dsp.dpms({ action = "off" })'
+  on-resume  = hyprctl dispatch 'hl.dsp.dpms({ action = "on" })'
+}
+EOF
+  } > "$HYPRIDLE"
+  [[ $EUID -eq 0 && -n "$TARGET_USER" ]] && chown "$TARGET_USER:$TARGET_USER" "$HYPRIDLE"
+  return 0
+}
+
+lid_map() { echo "$1"; }        # lock|suspend|ignore map 1:1 to logind
+pkey_map() { case "$1" in menu) echo ignore;; *) echo "$1";; esac; }
+
+render_logind() { # root; writes the logind drop-in from CONF
+  need_root; need_conf
+  local lb la ld pk
+  lb="$(sys_get LID_ON_BATTERY)"; la="$(sys_get LID_ON_AC)"
+  ld="$(sys_get LID_DOCKED)";     pk="$(sys_get POWER_KEY)"
+  install -d -m755 "$(dirname "$LOGIND_DROPIN")"
+  cat > "$LOGIND_DROPIN" <<EOF
+# W Linux — GENERATED by w-power. Do NOT edit; change with 'w-power lid ...' /
+# 'w-power power-key ...' (or the Hub Power panel). See w-power.md.
+[Login]
+HandleLidSwitch=$(lid_map "${lb:-suspend}")
+HandleLidSwitchExternalPower=$(lid_map "${la:-lock}")
+HandleLidSwitchDocked=$(lid_map "${ld:-ignore}")
+HandlePowerKey=$(pkey_map "${pk:-menu}")
+EOF
+}
+
+reload_logind() { # SIGHUP re-reads logind config without dropping sessions
+  [[ -d /run/systemd/system ]] && systemctl kill -s HUP systemd-logind 2>/dev/null || true
+}
+reload_hypridle() { # best-effort live restart of the hypridle.service user unit
+  # NEVER restart under a live lock screen. See the lock_cmd comment in
+  # render_hypridle: a lock screen started before this release still lives in
+  # hypridle's cgroup, and restarting the unit kills it, leaving a locked
+  # compositor with nothing to type a password into. The new scope-based lock_cmd
+  # fixes that structurally for lock screens started from now on; this guard
+  # covers the ones already running (an update lands mid-session by definition)
+  # and any hyprlock started by hand. The cost — an idle policy that only takes
+  # effect after the next unlock/login — is not comparable.
+  if hyprlock_running; then return 0; fi
+  if [[ $EUID -eq 0 ]]; then
+    [[ -n "$TARGET_USER" && -d /run/systemd/system ]] || return 0
+    systemctl --user --machine="${TARGET_USER}@.host" try-restart hypridle.service 2>/dev/null || true
+  else
+    systemctl --user try-restart hypridle.service 2>/dev/null || true
+  fi
+}
+
+# WHOSE hypridle. A bare `pgrep -x hypridle` answers "somebody's on this machine":
+# on a multi-user box the second account's status would report the first user's
+# daemon as its own. Same reason w-nightlight scopes its daemon check.
+hypridle_running() { pgrep -x -u "${TARGET_USER:-$(id -un)}" hypridle >/dev/null 2>&1; }
+# Is THIS account's screen locked right now? Same per-user scoping: another
+# user's lock screen is not a reason to hold back a restart in this session.
+hyprlock_running() { pgrep -x -u "${TARGET_USER:-$(id -un)}" hyprlock >/dev/null 2>&1; }
+
+# Write CHARGE_LIMIT to every battery threshold sysfs. No-op where unsupported.
+charge_apply() { # root
+  local lim f
+  lim="$(sys_get CHARGE_LIMIT)"; lim="${lim:-100}"
+  for f in /sys/class/power_supply/BAT*/charge_control_end_threshold; do
+    [[ -w "$f" ]] && echo "$lim" > "$f"
+  done
+  return 0
+}
+
+# ---- commands ---------------------------------------------------------------
+usage() {
+  cat <<EOF
+Usage: w-power <command> [args]
+
+Info: Power profiles, idle policy (lock/display/suspend), lid/power key, charge limit.
+
+Commands:
+  status                     Show mode, profile, battery, idle timers, hypridle state
+  profile <name>             Switch power profile live (performance|balanced|power-saver)
+  profile auto on|off        Auto-switch profile on AC<->battery (root)
+  idle <ac|bat> <lock|display|suspend> <seconds>
+                             Set a cascade link (0 = off), RELATIVE to the previous
+  idle <ac|bat> kbdlight <seconds>
+                             Keyboard backlight off after N s idle (0 = never);
+                             independent of the cascade, counts from last activity
+                             link: lock counts from last activity, display from the
+                             lock firing, suspend from the display firing; re-renders
+                             hypridle (user). display < 5 is accepted but warns
+                             (hyprlock needs the screen on to grab its background)
+  charge-limit <0..100>      Battery charge ceiling, e.g. 80 (root; laptop firmware)
+  lid <ac|bat|docked> <lock|suspend|ignore>
+                             Lid-close action per power state (root)
+  lid-wake <auto|keep>       Whether the lid may wake the machine (root). auto (default)
+                             drops it from the ACPI wake sources while suspending with
+                             the lid ALREADY OPEN — where it can serve no purpose and on
+                             some firmware wakes the machine within seconds — and
+                             restores it on resume, so lid-close/lid-open still wakes.
+                             keep never touches the wake sources.
+  power-key <poweroff|suspend|menu|ignore>
+                             Power-button action (root; menu = open the W power menu)
+  mode <laptop|desktop|auto> Apply a machine-mode preset to every knob (root)
+  apply                      Re-render every node from $CONF (root)
+  help                       Show this help
+
+Options:
+  --user <name>              Act for that account instead of the invoker (root).
+                             apply.sh --power uses it to render every account's
+                             idle policy, not just the first one.
+
+System policy: $CONF   User idle overrides: ~/.config/w/power.conf
+
+Exit codes: 0 success · 1 runtime/validation error · 2 usage
+
+Examples:
+  w-power status
+  w-power profile performance
+  w-power idle bat suspend 600
+  sudo w-power charge-limit 80
+  sudo w-power lid ac ignore
+  sudo w-power lid-wake keep
+  sudo w-power mode laptop
+EOF
+}
+
+# Machine-readable KEY=VALUE dump for the Hub Power panel (one Process, easy parse).
+power_porcelain() {
+  local f pct state ff fd lock disp susp tl td ts
+  echo "MODE=$(mode_now)"
+  echo "SOURCE=$(cur_src)"
+  echo "HAS_BATTERY=$(has_battery && echo 1 || echo 0)"
+  echo "PPD_AVAIL=$(command -v powerprofilesctl >/dev/null 2>&1 && echo 1 || echo 0)"
+  echo "PROFILE=$(powerprofilesctl get 2>/dev/null)"
+  # The Hub builds its dropdown from this instead of hard-coding three entries:
+  # offering a profile the daemon does not have means a click that visibly does
+  # nothing (the CLI refuses it, correctly, but the panel had already promised it).
+  echo "PROFILES=$(profiles_available)"
+  echo "AUTO_PROFILE=$(sys_get AUTO_PROFILE)"
+  echo "CHARGE_LIMIT=$(sys_get CHARGE_LIMIT)"
+  echo "LID_ON_BATTERY=$(sys_get LID_ON_BATTERY)"
+  echo "LID_ON_AC=$(sys_get LID_ON_AC)"
+  echo "LID_DOCKED=$(sys_get LID_DOCKED)"
+  echo "LID_WAKE=$(lidwake_mode)"
+  echo "POWER_KEY=$(sys_get POWER_KEY)"
+  echo "AC_DISPLAY=$(eff_idle ac display)"
+  echo "AC_KBDLIGHT=$(eff_idle ac kbdlight)"
+  echo "AC_LOCK=$(eff_idle ac lock)"
+  echo "AC_SUSPEND=$(eff_idle ac suspend)"
+  echo "BAT_DISPLAY=$(eff_idle bat display)"
+  echo "BAT_KBDLIGHT=$(eff_idle bat kbdlight)"
+  echo "BAT_LOCK=$(eff_idle bat lock)"
+  echo "BAT_SUSPEND=$(eff_idle bat suspend)"
+  # Whether the Hub should show the keyboard-backlight rows at all: no LED, no row
+  # (same rule as the laptop-only battery controls).
+  echo "HAS_KBDLIGHT=$(has_kbdlight && echo 1 || echo 0)"
+  lock="$(eff_idle ac lock)"; disp="$(eff_idle ac display)"; susp="$(eff_idle ac suspend)"
+  lock="${lock:-0}"; disp="${disp:-0}"; susp="${susp:-0}"
+  read -r tl td ts <<<"$(cascade_at "$lock" "$disp" "$susp")"
+  echo "AC_LOCK_AT=$tl"
+  echo "AC_DISPLAY_AT=$td"
+  echo "AC_SUSPEND_AT=$ts"
+  lock="$(eff_idle bat lock)"; disp="$(eff_idle bat display)"; susp="$(eff_idle bat suspend)"
+  lock="${lock:-0}"; disp="${disp:-0}"; susp="${susp:-0}"
+  read -r tl td ts <<<"$(cascade_at "$lock" "$disp" "$susp")"
+  echo "BAT_LOCK_AT=$tl"
+  echo "BAT_DISPLAY_AT=$td"
+  echo "BAT_SUSPEND_AT=$ts"
+  echo "HYPRIDLE=$(hypridle_running && echo 1 || echo 0)"
+  if has_battery; then
+    for f in /sys/class/power_supply/BAT*/capacity; do [[ -r "$f" ]] && { pct="$(cat "$f")"; break; }; done
+    for f in /sys/class/power_supply/BAT*/status;   do [[ -r "$f" ]] && { state="$(cat "$f")"; break; }; done
+    echo "BAT_PCT=${pct:-}"
+    echo "BAT_STATE=${state:-}"
+    for f in /sys/class/power_supply/BAT*; do
+      if [[ -r "$f/charge_full" && -r "$f/charge_full_design" ]]; then
+        ff="$(cat "$f/charge_full")"; fd="$(cat "$f/charge_full_design")"
+      elif [[ -r "$f/energy_full" && -r "$f/energy_full_design" ]]; then
+        ff="$(cat "$f/energy_full")"; fd="$(cat "$f/energy_full_design")"
+      else continue; fi
+      [[ "${fd:-0}" -gt 0 ]] && { echo "BAT_HEALTH=$(( ff * 100 / fd ))"; break; }
+    done
+  fi
+}
+
+cmd_status() {
+  [[ "${1:-}" == --porcelain ]] && { power_porcelain; return; }
+  local mode src lw
+  mode="$(mode_now)"; mode="${mode:-?}"; src="$(cur_src)"
+  echo "== Machine mode =="
+  echo "mode: $mode   power source: $([[ "$src" == bat ]] && echo battery || echo AC)   battery present: $(has_battery && echo yes || echo no)"
+  echo
+  echo "== Power profile (power-profiles-daemon) =="
+  if command -v powerprofilesctl >/dev/null 2>&1; then
+    powerprofilesctl list 2>/dev/null || echo "(power-profiles-daemon not running)"
+    echo "auto-switch: $(sys_get AUTO_PROFILE)  (AC=$(sys_get PROFILE_ON_AC) battery=$(sys_get PROFILE_ON_BATTERY))"
+  else
+    echo "(powerprofilesctl not installed)"
+  fi
+  echo
+  echo "== Idle timers (relative seconds; 0 = off; cascade lock -> display -> suspend; active set: $src) =="
+  echo "  AC:      $(cascade_str "$(eff_idle ac lock)" "$(eff_idle ac display)" "$(eff_idle ac suspend)")"
+  echo "  battery: $(cascade_str "$(eff_idle bat lock)" "$(eff_idle bat display)" "$(eff_idle bat suspend)")"
+  # Not a cascade link — its own timer from last activity, so it is listed apart.
+  # Silent on machines with no keyboard light: the values exist but decide nothing.
+  if has_kbdlight; then
+    echo "  keyboard backlight off: AC $(kbd_str "$(eff_idle ac kbdlight)"), battery $(kbd_str "$(eff_idle bat kbdlight)")"
+  fi
+  echo "  hypridle: $(hypridle_running && echo running || echo 'NOT running')"
+  echo
+  echo "== Lid / power key =="
+  echo "  lid: ac=$(sys_get LID_ON_AC) battery=$(sys_get LID_ON_BATTERY) docked=$(sys_get LID_DOCKED)   power-key: $(sys_get POWER_KEY)"
+  lw="$(lidwake_mode)"
+  if [[ "$lw" == auto ]]; then
+    echo "  lid-wake: auto   (lid dropped from the ACPI wake sources while suspending with the lid open)"
+  else
+    echo "  lid-wake: keep   (lid always left as a wake source)"
+  fi
+  echo "  charge-limit: $(sys_get CHARGE_LIMIT)%"
+  echo
+  # Which layer each value came from. Without this the three files are invisible
+  # and "why is my lock timer 1800 when the default is 600" has no mechanical
+  # answer; `w-conf cat power` is the full view, this is the summary.
+  echo "== Config layers =="
+  local lay n
+  for lay in vendor site-default system user policy; do
+    n=0
+    while IFS=$'\t' read -r _ _ o _; do [[ "$o" == "$lay" ]] && n=$((n + 1)); done \
+      < <(wconf_list_porcelain "$SUBSYS")
+    [[ "$n" -gt 0 ]] && printf '  %-13s %d key(s) in effect\n' "$lay" "$n"
+  done
+  echo "  full view: w-conf cat power"
+  if has_battery; then
+    echo
+    echo "== Battery (upower) =="
+    upower -i /org/freedesktop/UPower/devices/DisplayDevice 2>/dev/null || true
+  fi
+}
+
+cmd_profile() {
+  local a="${1:-}"
+  [[ -n "$a" ]] || { err "profile: <name> or 'auto on|off' required"; exit 2; }
+  if [[ "$a" == auto ]]; then
+    local s="${2:-}"; case "$s" in on|off) ;; *) err "profile auto: expected on|off"; exit 2;; esac
+    set_kv AUTO_PROFILE "$s"
+    echo "w-power: auto profile-switch $s"
+    return
+  fi
+  profile_valid "$a" || die "unknown profile '$a' (see: w-power status)"
+  command -v powerprofilesctl >/dev/null 2>&1 || die "power-profiles-daemon not installed"
+  powerprofilesctl set "$a" || die "failed to set profile (is power-profiles-daemon running?)"
+  echo "w-power: power profile -> $a"
+}
+
+cmd_idle() {
+  local src="${1:-}" key="${2:-}" sec="${3:-}" lock disp susp tl td ts at
+  case "$src" in ac|bat) ;; *) err "idle: <ac|bat> required"; exit 2;; esac
+  case "$key" in lock|display|suspend|kbdlight) ;; *) err "idle: <lock|display|suspend|kbdlight> required"; exit 2;; esac
+  [[ "$sec" =~ ^[0-9]+$ ]] || { err "idle: <seconds> must be a non-negative integer"; exit 2; }
+  set_user_kv "$(echo "${src}_${key}" | tr '[:lower:]' '[:upper:]')" "$sec"
+  render_hypridle "$(cur_src)"; reload_hypridle
+  lock="$(eff_idle "$src" lock)"; disp="$(eff_idle "$src" display)"; susp="$(eff_idle "$src" suspend)"
+  lock="${lock:-0}"; disp="${disp:-0}"; susp="${susp:-0}"
+  read -r tl td ts <<<"$(cascade_at "$lock" "$disp" "$susp")"
+  # kbdlight is not part of the cascade: it fires at its own value, from last activity.
+  case "$key" in lock) at="$tl";; display) at="$td";; suspend) at="$ts";; kbdlight) at="$sec";; esac
+  if [[ "$sec" -eq 0 ]]; then
+    echo "w-power: idle $src/$key = 0s (off)"
+  else
+    echo "w-power: idle $src/$key = ${sec}s (fires at ${at}s)"
+  fi
+  if [[ "$key" == display ]] && (( 10#$sec != 0 )) && (( 10#$sec < 5 )); then
+    err "warning: display must be 0 (off) or >= 5 seconds for a clean hyprlock screenshot (hyprlock needs the screen on to grab its background) — value accepted anyway"
+  fi
+}
+
+cmd_charge_limit() {
+  local n="${1:-}"
+  [[ "$n" =~ ^[0-9]+$ ]] && (( n >= 0 && n <= 100 )) || { err "charge-limit: 0..100 required"; exit 2; }
+  set_kv CHARGE_LIMIT "$n"
+  charge_apply
+  [[ -d /run/systemd/system ]] && systemctl enable --now "$CHARGE_UNIT" >/dev/null 2>&1 || true
+  if has_battery; then echo "w-power: charge limit -> ${n}%"
+  else echo "w-power: charge limit stored (${n}%); no battery threshold sysfs on this machine"; fi
+}
+
+cmd_lid() {
+  local which="${1:-}" act="${2:-}" key
+  case "$which" in ac) key=LID_ON_AC;; bat) key=LID_ON_BATTERY;; docked) key=LID_DOCKED;; *) err "lid: <ac|bat|docked> required"; exit 2;; esac
+  lid_valid "$act" || { err "lid: action must be lock|suspend|ignore"; exit 2; }
+  set_kv "$key" "$act"; render_logind; reload_logind
+  echo "w-power: lid $which -> $act"
+}
+
+cmd_lid_wake() {
+  local v="${1:-}"
+  lidwake_valid "$v" || { err "lid-wake: expected auto|keep"; exit 2; }
+  set_kv LID_WAKE "$v"
+  echo "w-power: lid-wake -> $v"
+}
+
+cmd_power_key() {
+  local act="${1:-}"
+  pkey_valid "$act" || { err "power-key: action must be poweroff|suspend|menu|ignore"; exit 2; }
+  set_kv POWER_KEY "$act"; render_logind; reload_logind
+  echo "w-power: power key -> $act"
+}
+
+# ── Lid as a wake source ──────────────────────────────────────────────────────
+# An already-open lid cannot be opened again, so while the lid is up its ACPI wake
+# source has no function to serve. On some firmware it is worse than useless: the
+# wake GPE is level-triggered on "lid open" rather than edge-triggered on "lid
+# opening", so the condition is already asserted when we reach S3 and the machine
+# bounces awake within seconds (observed on Apple hardware: 13-38 s, every time).
+# So drop the lid from the wake sources for the duration of a suspend that starts
+# with the lid open, and restore it on resume. A user-initiated suspend then holds,
+# while "close the lid, open it to wake" keeps working — that path suspends with
+# the lid shut, and we leave it alone. LID_WAKE=keep opts out entirely.
+# /proc/acpi/wakeup is a TOGGLE, not a setter: writing a device name flips it, so
+# every write here is guarded by the state we actually read.
+WAKEUP_PROC="/proc/acpi/wakeup"
+LIDWAKE_FLAG="/run/w/lidwake-disabled"
+
+lidwake_mode() {
+  local v; v="$(sys_get LID_WAKE)"
+  lidwake_valid "${v:-}" && echo "$v" || echo auto
+}
+# Wake-ENABLED ACPI lid devices. Matched on the PNP0C0D sysfs node rather than the
+# name, which is LID0/LID/LID_ depending on the vendor's DSDT.
+lid_wake_enabled() {
+  [[ -r "$WAKEUP_PROC" ]] || return 0
+  awk '$4 ~ /^platform:PNP0C0D/ && $3 == "*enabled" {print $1}' "$WAKEUP_PROC"
+}
+# 0 = a lid exists and is open. A machine without a lid (desktop) returns 1, so
+# every caller below no-ops there without needing a mode check.
+lid_is_open() {
+  local f
+  for f in /proc/acpi/button/lid/*/state; do
+    [[ -r "$f" ]] || continue
+    grep -qi open "$f" && return 0
+    return 1
+  done
+  return 1
+}
+
+lidwake_pre() {
+  need_root
+  rm -f "$LIDWAKE_FLAG"
+  [[ "$(lidwake_mode)" == auto ]] || return 0
+  lid_is_open || return 0
+  local d touched=() devs=()
+  mapfile -t devs < <(lid_wake_enabled)
+  for d in "${devs[@]}"; do
+    if echo "$d" > "$WAKEUP_PROC" 2>/dev/null; then touched+=("$d"); fi
+  done
+  (( ${#touched[@]} )) || return 0
+  install -d -m755 "${LIDWAKE_FLAG%/*}"
+  printf '%s\n' "${touched[@]}" > "$LIDWAKE_FLAG"
+}
+
+lidwake_post() {
+  need_root
+  [[ -f "$LIDWAKE_FLAG" ]] || return 0
+  local d
+  while read -r d || [[ -n "$d" ]]; do
+    [[ -n "$d" ]] || continue
+    # Re-enable only what is still disabled, so a concurrent change during the
+    # sleep wins over our restore instead of being toggled back on top of it.
+    if awk -v d="$d" '$1 == d && $3 == "*disabled" {f=1} END {exit !f}' "$WAKEUP_PROC"; then
+      echo "$d" > "$WAKEUP_PROC" 2>/dev/null || true
+    fi
+  done < "$LIDWAKE_FLAG"
+  rm -f "$LIDWAKE_FLAG"
+}
+
+# ---- vendor layer (generated) -----------------------------------------------
+# W's power defaults are CODE (preset_sys/preset_idle), not a shipped file: they
+# depend on MODE, which is a per-machine fact. So the vendor layer is materialised
+# here on every apply — a real file the reader, `w-conf origin`, the Hub and a
+# future drift check can all see, while the single source of truth stays the
+# preset tables. This is what makes improved defaults REACH installed machines:
+# the file is rewritten wholesale precisely because nobody's edits live in it.
+render_vendor() {
+  local mode="$1" k src link
+  install -d -m755 "$(dirname "$VENDOR_CONF")"
+  {
+    echo "# W Linux — GENERATED by w-power for MODE=$mode. Do NOT edit."
+    echo "# Vendor defaults (lowest layer). Admin deviations go to $CONF"
+    echo "# (sudo w-power …), per-user idle overrides to ~/.config/w/power.conf."
+    echo "# Change the distro defaults in preset_sys()/preset_idle() in w-power."
+    for k in "${PRESET_SYS_KEYS[@]}"; do
+      printf '%s=%s\n' "$k" "$(preset_sys "$mode" "$k")"
+    done
+    for src in ac bat; do
+      for link in lock display suspend kbdlight; do
+        printf '%s_%s=%s\n' "${src^^}" "${link^^}" "$(preset_idle "$mode" "$src" "$link")"
+      done
+    done
+  } > "$VENDOR_CONF.tmp"
+  mv -f "$VENDOR_CONF.tmp" "$VENDOR_CONF"
+  chmod 644 "$VENDOR_CONF"
+  wconf_reload "$SUBSYS"
+}
+
+# ---- one-shot migration to the split layout ---------------------------------
+# An installed machine's /etc/w/power.conf is a full copy of the presets with a
+# couple of real edits in it — written that way by the pre-split `w-power mode`.
+# Left alone it would pin every one of those values forever (the update preserves
+# this file), so improved defaults would still never arrive. So diff it against
+# the baseline it came from — the preset table for its own recorded MODE, which
+# is on the machine, needs no network and no git history — and keep only what
+# actually deviates.
+#
+# Anything we cannot explain stays: an unknown key, or a value that differs, is
+# treated as an admin decision. The failure mode is "keeps a redundant line", not
+# "loses a setting".
+migrate_admin_conf() {
+  [[ -e "$MIGRATED_MARK" ]] && return 0
+  [[ -f "$CONF" ]] || { install -d -m755 "$(dirname "$MIGRATED_MARK")"; : > "$MIGRATED_MARK"; return 0; }
+
+  local mode; mode="$(wconf_layer_get "$SUBSYS" system MODE)"; mode="${mode:-desktop}"
+  local line key val base src link dropped=0 kept=0 out
+  out="$(mktemp)"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ ! "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      printf '%s\n' "$line" >> "$out"; continue          # comments/blank: keep
+    fi
+    key="${BASH_REMATCH[1]}"
+    val="$(wconf_layer_get "$SUBSYS" system "$key")"
+    # MODE is the selector, never a preset copy — it always stays.
+    if [[ "$key" == MODE ]]; then printf '%s\n' "$line" >> "$out"; kept=$((kept + 1)); continue; fi
+    base=""
+    case " ${PRESET_SYS_KEYS[*]} " in *" $key "*) base="$(preset_sys "$mode" "$key")" ;; esac
+    case "$key" in
+      AC_LOCK|AC_DISPLAY|AC_SUSPEND|AC_KBDLIGHT|BAT_LOCK|BAT_DISPLAY|BAT_SUSPEND|BAT_KBDLIGHT)
+        src="${key%%_*}"; link="${key#*_}"
+        base="$(preset_idle "$mode" "${src,,}" "${link,,}")" ;;
+    esac
+    if [[ -n "$base" && "$val" == "$base" ]]; then
+      dropped=$((dropped + 1))                            # identical to vendor → drop
+    else
+      printf '%s\n' "$line" >> "$out"; kept=$((kept + 1))
+    fi
+  done < "$CONF"
+
+  # Keep a copy next to w-reset's own backups before rewriting admin state.
+  install -d -m755 /var/lib/w/reset-backups
+  cp -a "$CONF" "/var/lib/w/reset-backups/power.conf.pre-split.$(date +%Y%m%d%H%M%S)"
+  cat "$out" > "$CONF"; rm -f "$out"
+  install -d -m755 "$(dirname "$MIGRATED_MARK")"; : > "$MIGRATED_MARK"
+  wconf_reload "$SUBSYS"
+  if [[ "$dropped" -gt 0 ]]; then
+    echo "w-power: migrated $CONF to the split layout — dropped $dropped key(s) identical to the W default for mode '$mode' (they now follow the vendor layer), kept $kept."
+  fi
+}
+
+# Re-render every system node + the target user's hypridle from CONF.
+render_all() {
+  need_root; need_conf
+  migrate_admin_conf
+  # MODE is this subsystem's own invariant, so it re-seeds itself rather than
+  # relying on anyone else: `w-reset power` deliberately strips every assignment
+  # from the admin file, and without this a laptop would come back as a desktop
+  # (the generic fallback) instead of re-detecting its chassis.
+  local m; m="$(mode_now)"
+  if [[ -z "$m" ]]; then m="$(detect_mode)"; set_kv MODE "$m"; fi
+  # The vendor layer is regenerated first: everything below reads through it, and
+  # a stale file would silently pin last release's defaults.
+  render_vendor "$m"
+  render_logind; reload_logind
+  charge_apply
+  [[ -d /run/systemd/system ]] && systemctl enable --now "$CHARGE_UNIT" >/dev/null 2>&1 || true
+  [[ -n "$TARGET_HOME" ]] && { render_hypridle "$(cur_src)"; reload_hypridle; }
+  # Keep the AC<->battery monitor (user service) in step with the mode: laptop needs it
+  # (auto profile-switch + hypridle re-render on source flips), a desktop never flips so
+  # it stays off. Global enable so it starts in every user's graphical session. This runs
+  # on `mode`/`apply` too, so a runtime `w-power mode laptop` (Hub) starts it, not only
+  # mod_power at install.
+  if [[ -d /run/systemd/system ]]; then
+    if [[ "$(sys_get MODE)" == laptop ]]; then
+      systemctl --global enable w-power-monitor.service >/dev/null 2>&1 || true
+    else
+      systemctl --global disable w-power-monitor.service >/dev/null 2>&1 || true
+    fi
+  fi
+  # Apply the boot-default profile + auto-switch policy live if PPD is up.
+  if [[ -d /run/systemd/system ]] && command -v powerprofilesctl >/dev/null 2>&1; then
+    local prof; prof="$(sys_get DEFAULT_PROFILE)"
+    [[ "$(sys_get AUTO_PROFILE)" == on ]] && { on_battery && prof="$(sys_get PROFILE_ON_BATTERY)" || prof="$(sys_get PROFILE_ON_AC)"; }
+    profile_valid "${prof:-balanced}" && powerprofilesctl set "${prof:-balanced}" 2>/dev/null || true
+  fi
+}
+
+cmd_mode() {
+  local m="${1:-}"
+  [[ "$m" == auto ]] && m="$(detect_mode)"
+  case "$m" in laptop|desktop) ;; *) err "mode: <laptop|desktop|auto> required"; exit 2;; esac
+  need_root; need_conf
+  # BEFORE the write: the migration diffs the old file against the presets of the
+  # mode it was written for. Doing it after would compare desktop values against
+  # laptop defaults and keep every stale line as a false "deviation".
+  migrate_admin_conf
+  # ONE key is written. Before the vendor/admin split this copied all nine preset
+  # values into /etc/w/power.conf, which is exactly how improved defaults stopped
+  # reaching installed machines: every key looked like an admin decision, so the
+  # update had to preserve it. Now the presets live in the regenerated vendor
+  # layer and the admin file keeps only what the admin actually chose.
+  set_kv MODE "$m"
+  render_all
+  echo "w-power: machine mode -> $m (preset applied)"
+}
+
+# Render ONE account's hypridle and nothing else — the per-user half of `apply`,
+# split out so mod_power can iterate w_home_users without re-running the machine
+# nodes (logind, charge threshold, PPD) once per account. The target comes from
+# --user; everything about WHAT is rendered is already resolved by the load pass.
+cmd_render_user() {
+  [[ -n "$TARGET_HOME" ]] || return 0
+  render_hypridle "$(cur_src)"
+  reload_hypridle
+}
+
+# Render the /etc/skel template. An account created between two applies gets its
+# hypridle.conf from skel at useradd time, and until this existed that copy was
+# whatever the repo shipped months ago — a machine whose power policy had since
+# changed handed new accounts a stale idle cascade (and `w-reset` never touches
+# it: the file is generated output, absent from every manifest, so nothing else
+# was going to refresh it either).
+#
+# No user layer applies to a template — pointing WCONF_HOME at /etc/skel is what
+# makes the render come out of vendor+admin only — and the result stays
+# root-owned, exactly like every other file in skel.
+cmd_render_skel() {
+  need_root
+  export WCONF_HOME=/etc/skel
+  wconf_reload "$SUBSYS"
+  TARGET_USER=""
+  HYPRIDLE=/etc/skel/.config/hypr/hypridle.conf
+  render_hypridle "$(cur_src)"
+}
+
+# User-scope re-sync on a power-source change (called by w-power-monitor): re-render
+# the user's hypridle for the live source + apply the auto-switch profile. No root.
+cmd_sync() {
+  [[ -n "$TARGET_HOME" ]] && { render_hypridle "$(cur_src)"; reload_hypridle; }
+  if [[ "$(sys_get AUTO_PROFILE)" == on ]] && command -v powerprofilesctl >/dev/null 2>&1; then
+    local prof
+    on_battery && prof="$(sys_get PROFILE_ON_BATTERY)" || prof="$(sys_get PROFILE_ON_AC)"
+    profile_valid "${prof:-balanced}" && powerprofilesctl set "${prof:-balanced}" 2>/dev/null || true
+  fi
+}
+
+case "${1:-}" in
+  status)         shift; cmd_status "$@" ;;
+  profile)        shift; cmd_profile "$@" ;;
+  idle)           shift; cmd_idle "$@" ;;
+  charge-limit)   shift; cmd_charge_limit "$@" ;;
+  lid)            shift; cmd_lid "$@" ;;
+  lid-wake)       shift; cmd_lid_wake "$@" ;;
+  power-key)      shift; cmd_power_key "$@" ;;
+  mode)           shift; cmd_mode "$@" ;;
+  apply)          render_all ;;
+  _render-user)   cmd_render_user ;;            # internal: mod_power, once per account
+  _render-skel)   cmd_render_skel ;;            # internal: mod_power, the useradd template
+  _sync)          cmd_sync ;;                   # internal: w-power-monitor (user, on AC<->battery)
+  _charge-apply)  need_root; charge_apply ;;   # internal: w-charge-limit.service / sleep hook
+  _lidwake-pre)   lidwake_pre ;;               # internal: sleep hook (pre)
+  _lidwake-post)  lidwake_post ;;              # internal: sleep hook (post)
+  help|-h|--help) usage ;;
+  "")             usage; exit 2 ;;
+  *)              err "unknown command: $1"; usage; exit 2 ;;
+esac

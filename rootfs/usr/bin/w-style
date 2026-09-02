@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+# w-style — W Linux color renderer
+#
+# Renders a theme's color tokens into a subsystem. The theme source is a
+# directory holding theme.conf (see /etc/w/themes/<name>/). Which theme is
+# "active" is resolved per scope:
+#
+#   user-scope   (hyprland, ghostty, quickshell) → the invoking user's effective theme
+#                                        (~/.config/w/theme/active, else system)
+#   system-scope (greeter, grub, plymouth) → the system fallback
+#                                        (/etc/w/active-theme, else themes/w)
+#
+# w-style is the low-level renderer; w-theme orchestrates switching (pointers,
+# wallpaper, crossfade). Edit a theme.conf, run `w-style apply ...`, re-skin.
+#
+# Multi-user note: run as root, user-scope renders into /etc/skel only (the
+# template for new accounts). Existing users get their effective theme rendered
+# at login by hyprland-session, or instantly via `w-theme set`. w-style never
+# clobbers other users' homes.
+
+set -euo pipefail
+
+# ── Load shared SDK ───────────────────────────────────────────────────────────
+# Theme resolution, config loaders, scope-aware writers, guards and converters live
+# in the core library; per-axis logic lives in ../lib/w/w-style/modules/. This file
+# is the orchestrator + the axes not yet migrated to modules (shrinks over time).
+LIB_DIR="/usr/lib/w/w-style"
+MODULES_DIR="$LIB_DIR/modules"
+# Drop-in root for axes shipped OUTSIDE core — W-Packs bundles deploy their
+# wstyle/<band>-<name> here on `w-pack install` and remove it on uninstall (see
+# packs.md). Scanned identically to MODULES_DIR; empty/absent = no-op. A bundle's
+# axis exists ⟺ the bundle is installed, so core carries no dead axes / presence
+# guards. Both roots merge into one execution order (band, then token).
+MODULES_EXTRA_DIR="$LIB_DIR/modules.d"
+# shellcheck source=/dev/null
+source "$LIB_DIR/lib/core.sh"
+
+# ── Orchestration ─────────────────────────────────────────────────────────────
+# Every axis now lives as an on-disk module under ../lib/w/w-style/modules/ — this
+# file is a pure orchestrator. LEGACY_AXES is the (now empty) escape hatch for an
+# axis kept inline: each row "<band> <token> <scope>", scope ∈ user | system | dual.
+# Band = execution order (100s, gaps for insertion); order matters only BETWEEN bands
+# (gtk 200 must precede appearance 300) — within a band it is irrelevant. On-disk
+# modules carry their band in the dir name (<band>-<token>); both registries merge
+# and sort into one order.
+LEGACY_AXES=()
+
+# Resolve a module token → its directory (matches <band>-<token>). Fails if absent.
+module_dir() {
+  local token="$1" root d
+  for root in "$MODULES_DIR" "$MODULES_EXTRA_DIR"; do
+    for d in "$root"/*-"$token"/; do
+      if [[ -d "$d" ]]; then printf '%s\n' "${d%/}"; return 0; fi
+    done
+  done
+  return 1
+}
+
+# Emit "<band>\t<token>\t<kind>" for every axis — on-disk modules + legacy rows.
+# kind = "module" or "legacy:<scope>".
+axis_rows() {
+  local root d name row
+  for root in "$MODULES_DIR" "$MODULES_EXTRA_DIR"; do
+    for d in "$root"/*/; do
+      [[ -d "$d" ]] || continue
+      name="$(basename "$d")"
+      printf '%s\t%s\tmodule\n' "${name%%-*}" "${name#*-}"
+    done
+  done
+  for row in "${LEGACY_AXES[@]}"; do
+    # shellcheck disable=SC2086
+    set -- $row
+    printf '%s\t%s\tlegacy:%s\n' "$1" "$2" "$3"
+  done
+}
+
+# All axes in execution order (band, then token; C locale = deterministic).
+axes_sorted() { axis_rows | LC_ALL=C sort -t$'\t' -k1,1 -k2,2; }
+
+# Run one axis in an isolated subshell so a failure is logged + contained instead
+# of silently aborting the rest of the batch (the historical set -e landmine).
+# Sets BATCH_RC=1 on failure but always returns 0 so the loop continues.
+BATCH_RC=0
+run_axis() {
+  local label="$1"; shift
+  if ( "$@" ); then return 0; fi
+  echo "w-style: axis '$label' FAILED — continuing" >&2
+  BATCH_RC=1
+}
+
+# Source a module in THIS (already-isolated) subshell and run its hooks for a
+# phase. phase=user → render_user only; phase=all → render_user + render_system.
+run_module_phase() {
+  local token="$1" phase="$2" dir
+  dir="$(module_dir "$token")" || { echo "w-style: module not found: $token" >&2; return 1; }
+  # shellcheck source=/dev/null
+  source "$dir/module.sh"
+  if [[ "$phase" != user ]] && declare -F render_system >/dev/null; then
+    # `all`: user channel (skel) first, then system channel.
+    declare -F render_user >/dev/null && render_user
+    render_system
+  else
+    if declare -F render_user >/dev/null; then render_user; fi
+  fi
+  return 0
+}
+
+# Apply a bundle. $1 = user | all.
+#   user → every axis' user channel (login render; skips system-only axes).
+#   all  → user channels into skel + system channels (root; install-time).
+cmd_apply_bundle() {
+  local mode="$1" band token kind scope
+  if [[ "$mode" == all ]]; then require_root "apply all"; fi
+  BATCH_RC=0
+  # Several axes feed the same Hyprland config; collect their reload requests and
+  # fire one at the end instead of re-executing hyprland.lua once per axis (see
+  # hypr_reload in core.sh).
+  hypr_reload_defer
+  while IFS=$'\t' read -r band token kind; do
+    if [[ "$kind" == module ]]; then
+      run_axis "$token" run_module_phase "$token" "$mode"
+    else
+      scope="${kind#legacy:}"
+      # system-only legacy axes have no user channel → skip in a user render.
+      if [[ "$mode" == user && "$scope" == system ]]; then continue; fi
+      run_axis "$token" cmd_apply_"$token"
+    fi
+  done < <(axes_sorted)
+  hypr_reload_flush
+  return "$BATCH_RC"
+}
+
+# Dispatch a single `apply <token>` — an on-disk module or a legacy inline axis.
+dispatch_apply() {
+  local token="$1"
+  if module_dir "$token" >/dev/null 2>&1; then
+    # EUID picks the phase, mirroring the old per-axis behaviour: a user renders
+    # the user channel; root renders user (skel) + system, like `all`.
+    BATCH_RC=0
+    if [[ $EUID -eq 0 ]]; then run_axis "$token" run_module_phase "$token" all
+    else run_axis "$token" run_module_phase "$token" user; fi
+    return "$BATCH_RC"
+  fi
+  if declare -F cmd_apply_"$token" >/dev/null; then cmd_apply_"$token"; return; fi
+  echo "w-style: unknown subsystem: $token" >&2; usage >&2; exit 2
+}
+
+# ── Set: patch one token in the system theme + re-apply ────────────────────────
+cmd_set() {
+  require_root "set"
+  local token="${1:-}" value="${2:-}"
+  [[ -n "$token" && -n "$value" ]] \
+    || { echo "w-style: usage: w-style set <TOKEN> <#hexvalue>" >&2; exit 2; }
+
+  local conf; conf="$(w_system_theme_dir)/theme.conf"
+  grep -q "^${token}=" "$conf" \
+    || { echo "w-style: unknown token: $token (in $conf)" >&2; exit 2; }
+
+  sed -i "s|^${token}=.*|${token}=\"${value}\"|" "$conf"
+  echo "w-style: ${token} = ${value}"
+  cmd_apply_bundle all
+}
+
+# ── Status ────────────────────────────────────────────────────────────────────
+cmd_status() {
+  load_conf "$(w_system_theme_dir)"
+  echo "W Linux theme (system source: $(w_system_theme_dir)/theme.conf)"
+  echo ""
+  echo "  Palette:"
+  echo "    primary          $W_PRIMARY"
+  echo "    primary_container $W_PRIMARY_CONTAINER"
+  echo "    surface          $W_SURFACE"
+  echo "    background        $W_BG"
+  echo "    on_surface        $W_ON_SURFACE"
+  echo "    error            $W_ERROR"
+  echo ""
+  echo "  Terminal:"
+  echo "    bg/fg            $W_TERM_BG / $W_TERM_FG"
+  echo "    accent (magenta) $W_TERM_ANSI_MAGENTA"
+}
+
+# ── Usage (subsystem list generated from the axis registry) ───────────────────
+usage() {
+  cat <<EOF
+Usage: w-style <command> [options]
+
+Info: Render the active theme across all themed subsystems.
+
+Commands:
+  apply [<subsystem>|user|all]   Re-render the active theme (default: all)
+  set <TOKEN> <#hex>             Patch one token in the system theme and re-apply
+  status                         Show key resolved colors (system theme)
+
+Subsystems (in apply order — [scope] user | system | dual):
+EOF
+  local band token kind dir desc
+  while IFS=$'\t' read -r band token kind; do
+    if [[ "$kind" == module ]]; then
+      dir="$(module_dir "$token")" && desc="$( ( source "$dir/module.sh"; echo "${DESC:-}" ) )" || desc=""
+      printf '  %-11s %s\n' "$token" "$desc"
+    else
+      printf '  %-11s [%s]\n' "$token" "${kind#legacy:}"
+    fi
+  done < <(axes_sorted)
+  cat <<EOF
+
+  user   = all user-scope axes into \$HOME (or /etc/skel as root); login render, no system work
+  all    = user-scope (skel) + system axes; requires root (install-time)
+
+Scope: user axes → invoking user's effective theme; system axes → system fallback
+       (/etc/w/active-theme); dual axes → user channels + system channels when root.
+
+Exit codes:
+  0  Success
+  1  Runtime error
+  2  Usage error
+
+Examples:
+  w-style apply hyprland
+  w-style apply all
+  w-style set W_PALETTE_ACCENT "#9d6fa8"
+  w-style status
+EOF
+}
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────
+case "${1:-}" in
+  apply)
+    case "${2:-all}" in
+      user) cmd_apply_bundle user ;;
+      all)  cmd_apply_bundle all ;;
+      *)    dispatch_apply "$2" ;;
+    esac ;;
+  set)             shift; cmd_set "$@" ;;
+  status)          cmd_status ;;
+  help|--help|-h)  usage; exit 0 ;;
+  "")              usage >&2; exit 2 ;;
+  *)               echo "w-style: unknown command: $1" >&2; usage >&2; exit 2 ;;
+esac

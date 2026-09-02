@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# w-crypt — W Linux disk-encryption control (LUKS2 + TPM2 + recovery key)
+#
+# Thin front over cryptsetup + systemd-cryptenroll for the W encrypted stack. The
+# LUKS passphrase (enrolled at install) is the mandatory fallback; this tool adds and
+# manages the convenience/recovery factors on the running system:
+#   - TPM2 auto-unlock (no passphrase at boot when PCRs match the sealed boot chain),
+#   - a high-entropy recovery key (printed once — store it offline).
+# Re-enroll TPM2 after a firmware/Secure-Boot change (PCR mismatch → passphrase fallback).
+# Source-of-truth for the PCR set lives in /etc/w/crypt.conf. See package-limine.md.
+
+set -euo pipefail
+
+LUKS_NAME="cryptroot"
+CONF="/etc/w/crypt.conf"
+
+# shellcheck source=../lib/w/w-conf-lib.sh
+source /usr/lib/w/w-conf-lib.sh
+# PCR set sealing the LUKS auto-unlock key. W's default (7 = Secure Boot policy)
+# lives in the vendor layer; /etc/w/crypt.conf overrides it per machine. crypt.schema
+# marks it system-scope, so no user file can quietly relax a TPM2 binding.
+W_CRYPT_TPM2_PCRS="$(wconf_get crypt W_CRYPT_TPM2_PCRS 7)"
+
+err()       { echo "w-crypt: $*" >&2; }
+need_root() { [[ $EUID -eq 0 ]] || { err "this command requires root"; exit 1; }; }
+
+# Backing LUKS partition of the active root mapping (systemd-cryptenroll operates on
+# the partition, not the /dev/mapper node).
+luks_device() {
+  local d
+  d="$(cryptsetup status "$LUKS_NAME" 2>/dev/null | awk '/^[[:space:]]*device:/{print $2; exit}')"
+  [[ -n "$d" ]] || { err "no active LUKS mapping '$LUKS_NAME' (is this an encrypted install?)"; exit 1; }
+  echo "$d"
+}
+
+usage() {
+  cat <<EOF
+Usage: w-crypt <command>
+
+Info: Manage disk-encryption factors — TPM2 auto-unlock and recovery keys.
+
+Commands:
+  status         Show LUKS device, key slots and enrolled tokens (TPM2/recovery)
+  enroll-tpm     Enroll TPM2 auto-unlock (PCRs: ${W_CRYPT_TPM2_PCRS}); asks for the passphrase once
+  reenroll-tpm   Re-seal TPM2 to the current boot state (after firmware/Secure Boot change)
+  recovery-add   Generate and print a one-time recovery key (store it offline)
+  wipe-tpm       Remove the TPM2 token (revert to passphrase-only unlock)
+  help           Show this help
+
+Exit codes:
+  0 Success   1 Runtime error   2 Usage error
+
+Examples:
+  w-crypt status
+  sudo w-crypt enroll-tpm
+  sudo w-crypt recovery-add
+EOF
+}
+
+cmd_status() {
+  need_root
+  local dev; dev="$(luks_device)"
+  echo "LUKS device : $dev"
+  echo "Mapping     : /dev/mapper/$LUKS_NAME"
+  echo "TPM2 PCRs   : $W_CRYPT_TPM2_PCRS"
+  echo
+  echo "Enrolled slots/tokens:"
+  # systemd-cryptenroll lists tokens (tpm2/recovery/password) in a compact table.
+  systemd-cryptenroll "$dev" 2>/dev/null | sed 's/^/  /' || \
+    cryptsetup luksDump "$dev" | awk '/Keyslots:/{p=1} p' | sed 's/^/  /'
+}
+
+cmd_enroll_tpm() {
+  need_root
+  local dev; dev="$(luks_device)"
+  echo "Enrolling TPM2 auto-unlock (PCRs ${W_CRYPT_TPM2_PCRS}). Enter the existing passphrase when asked."
+  systemd-cryptenroll "$dev" --tpm2-device=auto --tpm2-pcrs="$W_CRYPT_TPM2_PCRS"
+  echo "w-crypt: TPM2 enrolled. The disk now unlocks automatically while the boot chain is unchanged."
+}
+
+cmd_reenroll_tpm() {
+  need_root
+  local dev; dev="$(luks_device)"
+  echo "Re-sealing TPM2 to the current boot state..."
+  systemd-cryptenroll "$dev" --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs="$W_CRYPT_TPM2_PCRS"
+  echo "w-crypt: TPM2 re-enrolled against the current PCRs."
+}
+
+cmd_recovery_add() {
+  need_root
+  local dev; dev="$(luks_device)"
+  echo "Generating a recovery key. Enter an existing passphrase when asked, then STORE the key offline:"
+  systemd-cryptenroll "$dev" --recovery-key
+}
+
+cmd_wipe_tpm() {
+  need_root
+  local dev; dev="$(luks_device)"
+  systemd-cryptenroll "$dev" --wipe-slot=tpm2
+  echo "w-crypt: TPM2 token removed. Unlock is passphrase-only again."
+}
+
+case "${1:-}" in
+  status)         cmd_status        ;;
+  enroll-tpm)     cmd_enroll_tpm    ;;
+  reenroll-tpm)   cmd_reenroll_tpm  ;;
+  recovery-add)   cmd_recovery_add  ;;
+  wipe-tpm)       cmd_wipe_tpm      ;;
+  help|-h|--help) usage             ;;
+  "")             usage; exit 2     ;;
+  *)              err "unknown command: $1"; usage; exit 2 ;;
+esac

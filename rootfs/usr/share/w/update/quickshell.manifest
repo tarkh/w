@@ -1,0 +1,20 @@
+# quickshell.manifest — config owned by mod_quickshell.
+# Single source of truth: deploy seeds the `user` rows; w-reset/drift use all rows.
+# Format: <path>\t<class>   class: user | managed | override  (trailing '/' = dir)
+#   user    — seed-if-absent on deploy; restore-from-skel on reset.
+#   managed — static W content (QML tree, cliphist) restored from skel on reset.
+# The theme-derived core/*.json is w-style output, re-rendered by `w-style apply
+# user` (run automatically after any home reset), so it is not listed here.
+.config/quickshell/w/config/auth.json	user
+.config/quickshell/w/config/bar.json	user
+.config/quickshell/w/config/clipboard.json	user
+.config/quickshell/w/config/hub.json	user
+.config/quickshell/w/config/launcher.json	user
+.config/quickshell/w/config/notifications.json	user
+.config/quickshell/w/config/powermenu.json	user
+.config/quickshell/w/config/traymenu.json	user
+.config/quickshell/w/config/volume.json	user
+.config/quickshell/w/core/	managed
+.config/quickshell/w/modules/	managed
+.config/quickshell/w/shell.qml	managed
+.config/cliphist/config	managed

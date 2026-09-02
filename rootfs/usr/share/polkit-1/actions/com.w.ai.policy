@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+<!--
+  W Linux — polkit action for the OS AI assistant's privileged (Tier-2) actuation.
+
+  w-mcp runs as the ordinary user and can never gain privilege on its own. When a
+  Tier-2 tool needs root it execs the w-ai-actuate dispatcher through pkexec, and
+  this action makes hyprpolkitagent prompt the user (fingerprint or password) and
+  journald audit it (tag w-ai-actuate). One action covers every Tier-2 capability;
+  the specific operation (dns / firewall / pacman / …) is recorded in the audit
+  log, not encoded here. auth_admin (no _keep) so every privileged step gets its
+  own consent prompt. See ai-integration.md §3.
+-->
+<policyconfig>
+  <vendor>W Linux</vendor>
+
+  <action id="com.w.ai.actuate">
+    <description>Perform a privileged system action requested by the W AI assistant</description>
+    <message>The W AI assistant is requesting to perform a privileged system action</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/w/w-ai-actuate</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+</policyconfig>

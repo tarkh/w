@@ -1,0 +1,770 @@
+#!/usr/bin/env bash
+# w-monitor — W Linux monitor layout control (Hyprland)
+#
+# Manages the display layout of the running Hyprland session: resolution/refresh,
+# scale, rotation, on/off, and native auto-* placement (no pixel arithmetic — the
+# compositor computes the layout, so overlap is structurally impossible). It is the
+# user-space backend for the W Hub Displays panel (session tab) and the multi-monitor
+# bar (primary monitor).
+#
+# No root: the Hyprland session is the user's own. Every mutation is written to
+# ~/.config/hypr/monitors.lua — a small data fragment require()d by hyprland.lua — AND
+# applied LIVE via `hyprctl reload` (which re-runs the config; a dropped rule really
+# disappears, unlike `hyprctl keyword`). The fragment is the source of truth — read it
+# (not hyprctl), so w-monitor is correct even headless (a TTY / the AI), where the live
+# session is unavailable and reading hyprctl would return empty and clobber the config.
+# `primary` (which monitor carries the main bar) is a W concept, not a Hyprland one, so
+# it is also mirrored to a JSON state file the Quickshell bar can read directly.
+#
+# See quickshell-hub.md (Displays) and w-monitor.md.
+
+set -euo pipefail
+
+# FRAG/STATE are per-user and so are resolved below, once wconf_resolve_target has
+# said whose they are — NOT here off a bare $HOME. A systemd SYSTEM unit runs with
+# no HOME at all (systemd exports it only for units with User=), and this script runs
+# `set -u`, so a bare $HOME aborts it on line one. That is not hypothetical: it is
+# how `greeter sanity` failed from greetd's ExecStartPre the first time it ran on the
+# VM, and the same landmine had already cost a firstboot in `apply --dns` (the story
+# is in w-conf-lib.sh's own header).
+#
+# Greeter scope: system-wide, root-owned, world-readable (the `greeter` user's
+# Hyprland instance requires() the .lua directly; Quickshell reads the .json).
+# Class `override` in greeter.manifest — no vendor default, born at runtime.
+GREETER_FRAG="/etc/w/monitors-greeter.lua"
+GREETER_STATE="/etc/w/monitors-greeter.json"
+
+err()  { echo "w-monitor: $*" >&2; }
+die()  { err "$*"; exit 1; }
+need_root() { [[ $EUID -eq 0 ]] || die "this command requires root"; }
+
+# Target user/home for root-invoked greeter commands (`greeter sync` copies the
+# SESSION user's monitors.lua — never the root/pkexec caller's own $HOME).
+#
+# WHOSE layout becomes the greeter's is a real decision, not an accident: the
+# greeter is machine-scope, but "sync it from a session" only means anything for
+# the session that asked. So it follows the INVOKER (sudo/pkexec) and falls back
+# to the machine's first account only where there is no invoker to speak of —
+# firstboot. Until this was made explicit it was always the first account, which
+# on a multi-user machine handed a second admin the other user's layout without
+# saying so. The rule itself lives in w-conf-lib.sh, shared with w-power and
+# w-nightlight; `--user <name>` overrides it, as everywhere else.
+# W_CONF_LIB override + the source-guard before the dispatch: the same pair w-ai
+# carries, so scripts/check/tests can source this file for the pure guard logic
+# without a W installation on the machine.
+# shellcheck source=../lib/w/w-conf-lib.sh
+source "${W_CONF_LIB:-/usr/lib/w/w-conf-lib.sh}"
+ARG_USER=""
+_ARGV=()
+while (($#)); do
+  case "$1" in
+    --user)   ARG_USER="${2:-}"; shift 2 ;;
+    --user=*) ARG_USER="${1#*=}"; shift ;;
+    *)        _ARGV+=("$1"); shift ;;
+  esac
+done
+set -- "${_ARGV[@]}"
+TARGET_USER=""; TARGET_HOME=""
+_rc=0; wconf_resolve_target "$ARG_USER" || _rc=$?
+if [[ $_rc -eq 2 ]]; then exit 1; fi
+TARGET_USER="$WCONF_TARGET_USER"; TARGET_HOME="$WCONF_TARGET_HOME"
+# Now that the target is known, the session-scope paths. `${TARGET_HOME:-$HOME}` is
+# the shape w-power and w-nightlight use for the same reason: TARGET_HOME comes from
+# passwd, so it is populated where the environment is not. Both fall back to an empty
+# string rather than an unset one: on a machine with no regular account at all there
+# is no session scope to speak of, and the greeter commands — the ones a system unit
+# actually calls — never touch these paths. Failing a later read beats aborting here.
+# XDG_CONFIG_HOME still wins where it is set, as before.
+FRAG="${XDG_CONFIG_HOME:-${TARGET_HOME:-${HOME:-}}/.config}/hypr/monitors.lua"
+STATE="${XDG_STATE_HOME:-${TARGET_HOME:-${HOME:-}}/.local/state}/w/displays.json"
+
+usage() {
+  cat <<EOF
+Usage: w-monitor <command> [args]
+
+Info: Configure monitors (resolution, scale, rotation, layout).
+
+Commands:
+  list [--porcelain]              Show live outputs (name, mode, scale, layout...)
+  modes <output> [--porcelain]    List available modes for a live output
+  status [--porcelain]            Show saved rules from the fragment + primary
+  mode <output> <WxH@Hz|preferred>    Set resolution / refresh rate
+  scale <output> <float|auto>         Set scale factor
+  transform <output> <0|90|180|270>   Set rotation
+  place <output> <right|left|above|below|auto>   Set layout position
+  enable <output>                 Re-enable a disabled output
+  disable <output>                Disable an output (blocked on primary or the last enabled one)
+  primary <output>                Set the primary monitor (auto-enables it; where the main bar lives)
+  sanity                          Re-enable one output if EVERY connected one is disabled
+                                   (run before the compositor starts; no-op otherwise)
+  reset <output>|--all            Drop saved rule(s), fall back to auto
+  greeter status [--porcelain]        Show the greeter's effective config (no root needed)
+  greeter sync                        Copy the session layout to the greeter (root)
+  greeter primary <output>            Set the greeter's primary monitor (root, auto-enables it)
+  greeter apply <spec>...             Set the whole greeter layout in one shot (root); spec =
+                                       <output>:<mode>:<scale>:<transform>:<position>:<on|off|primary>
+                                       (at most one spec may say "primary" — implies on, and
+                                       is written as the greeter's primary monitor)
+  greeter reset                       Drop the greeter override, fall back to auto (root)
+  greeter sanity                      Same rescue as "sanity", for the login screen (root)
+  help                            Show this help
+
+Rules persisted to: $FRAG   State mirror: $STATE
+Greeter rules: $GREETER_FRAG   Greeter state: $GREETER_STATE
+
+Exit codes: 0 success · 1 runtime/validation error · 2 usage
+
+Examples:
+  w-monitor mode eDP-1 1920x1080@60
+  w-monitor scale eDP-1 1.5
+  w-monitor place HDMI-A-1 right
+  w-monitor primary eDP-1
+  w-monitor reset HDMI-A-1
+EOF
+}
+
+# ── Live session ────────────────────────────────────────────────────────────────
+have_hypr() { command -v hyprctl >/dev/null 2>&1 && hyprctl version >/dev/null 2>&1; }
+reload()    { have_hypr && hyprctl reload >/dev/null 2>&1 || true; }
+# Best-effort wallpaper resync after a layout change that can leave a monitor bare
+# (new output, or one whose width crossed a wallpaper tier boundary). Never fails
+# the command it's called from.
+sync_wallpaper() {
+  w-wallpaper set >/dev/null 2>&1 || true
+  w-wallpaper apply >/dev/null 2>&1 || true
+}
+
+# Best-effort hyprlock geometry resync after a layout change that can affect the
+# primary output's scale or identity (hyprlock widgets are scoped to primary and
+# sized off its scale — see 100-hyprlock/module.sh). hyprlock re-reads its config
+# fresh on every lock, so this just keeps the rendered file current for the next
+# one; never fails the command it's called from.
+sync_hyprlock() {
+  w-style apply hyprlock >/dev/null 2>&1 || true
+}
+require_jq() { command -v jq >/dev/null 2>&1 || die "jq not found"; }
+# All connected outputs, live+disabled ones included. Guarded so a missing/failing
+# hyprctl (headless) yields "[]" instead of tripping `set -o pipefail`.
+live_json() { have_hypr && hyprctl monitors all -j 2>/dev/null || echo '[]'; }
+
+validate_output() { [[ "$1" =~ ^[A-Za-z0-9@._-]+$ ]] || die "invalid output name: $1"; }
+
+# ── Which outputs physically exist (works with no compositor) ────────────────────
+# The kernel knows what is plugged in whether or not anything is drawing on it, so
+# this is the one monitor fact that still holds on a TTY, in a system unit, and in
+# the pre-session hook that runs before Hyprland has parsed a single line. Connector
+# names are Hyprland's own ("card1-DP-2" -> "DP-2"), and requiring "connected" drops
+# the synthetic Writeback-* connectors, whose status reads "unknown".
+# W_DRM_ROOT is a test seam (check/tests/monitor.bats) — nothing sets it in production.
+connected_outputs() {
+  local f name
+  for f in "${W_DRM_ROOT:-/sys/class/drm}"/card*-*/status; do
+    [[ -r "$f" ]] || continue
+    [[ "$(<"$f")" == connected ]] || continue
+    name="${f%/status}"; name="${name##*/}"
+    echo "${name#card*-}"
+  done
+}
+
+# The outputs the machine can be OBSERVED to have, one per line: the live compositor
+# if there is one (it also reports the heads it is holding disabled), else the kernel.
+# Empty means "cannot tell" — a container, a bare chroot — never "there are none";
+# the two callers below disagree on what to do about that, deliberately.
+probed_outputs() {
+  if have_hypr; then
+    require_jq
+    live_json | jq -r '.[].name' 2>/dev/null || true
+  else
+    connected_outputs
+  fi
+}
+
+# What the mutation guards judge against. Where nothing can be observed they fall
+# back to the names the rule set itself mentions — the same static reasoning
+# `greeter apply` has always used — so an uninspectable machine fails shut (a
+# refused disable) rather than open (a black screen). Needs read_frag first.
+connected_source() {
+  local names; names="$(probed_outputs)"
+  [[ -n "$names" ]] || names="$(printf '%s\n' ${R_OUTPUT[@]+"${R_OUTPUT[@]}"})"
+  printf '%s\n' "$names"
+}
+
+# Of those, the ones the CURRENT rule set would leave drawing. An output with no
+# rule falls under hyprland.lua's catch-all (`output = ""`) and comes up enabled, so
+# it counts as a rescuer rather than a victim. An empty result is the black screen:
+# it is the one state hyprland.lua's boot safety net cannot recover from, because
+# Hyprland synthesises its internal FALLBACK pseudo-monitor instead of a real output
+# and never bootstraps a renderer afterwards (see the warning block in hyprland.lua).
+live_after_rules() { # [<source-fn>]
+  local src="${1:-connected_source}" out i disabled
+  while IFS= read -r out; do
+    [[ -n "$out" ]] || continue
+    disabled=false
+    for i in "${!R_OUTPUT[@]}"; do
+      [[ "${R_OUTPUT[$i]}" == "$out" ]] && { disabled="${R_DISABLED[$i]}"; break; }
+    done
+    [[ "$disabled" == "true" ]] || echo "$out"
+  done < <("$src")
+}
+
+# ── Fragment (source of truth) — primary + ordered per-output rules ─────────────
+PRIMARY=""
+declare -a R_OUTPUT=() R_MODE=() R_POSITION=() R_SCALE=() R_TRANSFORM=() R_DISABLED=()
+
+# Both read/write take an optional frag path (default $FRAG, the session scope) so
+# the same code serves the greeter scope ($GREETER_FRAG) without duplication.
+read_frag() {
+  local frag="${1:-$FRAG}"
+  PRIMARY=""; R_OUTPUT=(); R_MODE=(); R_POSITION=(); R_SCALE=(); R_TRANSFORM=(); R_DISABLED=()
+  [[ -r "$frag" ]] || return 0
+  PRIMARY="$(sed -n 's/^[[:space:]]*primary[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' "$frag" | head -1)"
+  local line o m p s t d
+  while IFS= read -r line; do
+    [[ "$line" == *'output = "'* ]] || continue
+    o="$(sed -n 's/.*output[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' <<< "$line")"
+    [[ -n "$o" ]] || continue
+    m="$(sed -n 's/.*mode[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' <<< "$line")"
+    p="$(sed -n 's/.*position[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' <<< "$line")"
+    s="$(sed -n 's/.*scale[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' <<< "$line")"
+    t="$(sed -n 's/.*transform[[:space:]]*=[[:space:]]*\([0-9]*\).*/\1/p' <<< "$line")"
+    d="$(sed -n 's/.*disabled[[:space:]]*=[[:space:]]*\(true\|false\).*/\1/p' <<< "$line")"
+    R_OUTPUT+=("$o"); R_MODE+=("${m:-preferred}"); R_POSITION+=("${p:-auto}")
+    R_SCALE+=("${s:-auto}"); R_TRANSFORM+=("${t:-0}"); R_DISABLED+=("${d:-false}")
+  done < "$frag"
+}
+
+# Reload only applies to the session scope (hyprctl reload always targets the
+# CALLER's own live compositor — meaningless, and disruptive, for a greeter write).
+write_frag() {
+  local frag="${1:-$FRAG}"
+  mkdir -p "$(dirname "$frag")"
+  local tmp; tmp="$(mktemp)"
+  {
+    echo '-- W Linux — monitor layout. Managed by `w-monitor` (and the W Hub Displays'
+    echo '-- panel); hand-edits are overwritten. Data module require()d by hyprland.lua.'
+    echo '--'
+    echo '-- primary : output whose bar is the main bar (W concept; Hyprland has no "primary").'
+    echo '-- outputs : ordered rules; declaration order drives auto-* placement chaining.'
+    echo 'return {'
+    printf '  primary = "%s",\n' "$PRIMARY"
+    echo '  outputs = {'
+    local i
+    for i in "${!R_OUTPUT[@]}"; do
+      printf '    { output = "%s", mode = "%s", position = "%s", scale = "%s", transform = %s, disabled = %s },\n' \
+        "${R_OUTPUT[$i]}" "${R_MODE[$i]}" "${R_POSITION[$i]}" "${R_SCALE[$i]}" "${R_TRANSFORM[$i]}" "${R_DISABLED[$i]}"
+    done
+    echo '  },'
+    echo '}'
+  } > "$tmp"
+  mv "$tmp" "$frag"
+  chmod 0644 "$frag"
+  [[ "$frag" == "$FRAG" ]] && reload
+  return 0
+}
+
+# Look up an output's rule index into RULE_IDX (not a subshell-returned value — this
+# and ensure_rule mutate the R_* globals, so they must run in the caller's shell, not
+# a $(...) command substitution).
+RULE_IDX=-1
+find_rule() {
+  local out="$1" i
+  RULE_IDX=-1
+  for i in "${!R_OUTPUT[@]}"; do
+    [[ "${R_OUTPUT[$i]}" == "$out" ]] && { RULE_IDX="$i"; return 0; }
+  done
+  return 1
+}
+ensure_rule() {
+  local out="$1"
+  find_rule "$out" && return 0
+  R_OUTPUT+=("$out"); R_MODE+=("preferred"); R_POSITION+=("auto"); R_SCALE+=("auto")
+  R_TRANSFORM+=("0"); R_DISABLED+=("false")
+  RULE_IDX=$(( ${#R_OUTPUT[@]} - 1 ))
+}
+# Drop the rule at index $1, shifting the rest down (order otherwise preserved).
+remove_at() {
+  local idx="$1" i
+  local -a NO=() NM=() NP=() NS=() NT=() ND=()
+  for i in "${!R_OUTPUT[@]}"; do
+    [[ "$i" == "$idx" ]] && continue
+    NO+=("${R_OUTPUT[$i]}"); NM+=("${R_MODE[$i]}"); NP+=("${R_POSITION[$i]}")
+    NS+=("${R_SCALE[$i]}"); NT+=("${R_TRANSFORM[$i]}"); ND+=("${R_DISABLED[$i]}")
+  done
+  R_OUTPUT=(${NO[@]+"${NO[@]}"}); R_MODE=(${NM[@]+"${NM[@]}"}); R_POSITION=(${NP[@]+"${NP[@]}"})
+  R_SCALE=(${NS[@]+"${NS[@]}"}); R_TRANSFORM=(${NT[@]+"${NT[@]}"}); R_DISABLED=(${ND[@]+"${ND[@]}"})
+}
+
+# ── Commands: read-only ───────────────────────────────────────────────────────────
+cmd_list() {
+  require_jq
+  read_frag
+  local porcelain=""; [[ "${1:-}" == "--porcelain" ]] && porcelain=1
+  local json; json="$(live_json)"
+  local rows
+  rows="$(jq -r '.[] | [.name, .description,
+    ("\(.width)x\(.height)@" + (((.refreshRate)+0.5)|floor|tostring)),
+    .scale, .transform, ("\(.x)x\(.y)"),
+    (if .disabled then 0 else 1 end), (if .focused then 1 else 0 end)] | @tsv' <<< "$json")"
+  local name desc mode scale transform pos enabled focused
+  while IFS=$'\t' read -r name desc mode scale transform pos enabled focused; do
+    [[ -n "${name:-}" ]] || continue
+    local configured=0
+    find_rule "$name" && configured=1
+    if [[ -n "$porcelain" ]]; then
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$name" "$desc" "$mode" "$scale" "$transform" "$pos" "$enabled" "$focused" "$configured"
+    else
+      printf '  %-12s %-28s %-16s scale=%-5s transform=%-3s pos=%-10s en=%s foc=%s cfg=%s\n' \
+        "$name" "$desc" "$mode" "$scale" "$transform" "$pos" "$enabled" "$focused" "$configured"
+    fi
+  done <<< "$rows"
+}
+
+cmd_modes() {
+  local out="${1:-}"; [[ -n "$out" ]] || { err "modes: <output> required"; exit 2; }
+  shift
+  require_jq
+  local porcelain=""; [[ "${1:-}" == "--porcelain" ]] && porcelain=1
+  local json; json="$(live_json)"
+  local modes
+  modes="$(jq -r --arg o "$out" '.[] | select(.name==$o) | .availableModes[]?' <<< "$json")"
+  [[ -n "$modes" ]] || die "no live modes for output: $out (is it connected?)"
+  local -A seen=(); local -a rows=()
+  local line w h hz
+  while IFS= read -r line; do
+    [[ "$line" =~ ^([0-9]+)x([0-9]+)@([0-9]+(\.[0-9]+)?)Hz$ ]] || continue
+    w="${BASH_REMATCH[1]}"; h="${BASH_REMATCH[2]}"
+    hz="$(awk -v x="${BASH_REMATCH[3]}" 'BEGIN{printf "%.0f", x}')"
+    local key="${w}x${h}@${hz}"
+    [[ -n "${seen[$key]:-}" ]] && continue
+    seen[$key]=1
+    rows+=("$((w * h))"$'\t'"$w"$'\t'"$h"$'\t'"$hz")
+  done <<< "$modes"
+  local area
+  printf '%s\n' "${rows[@]}" | sort -t$'\t' -k1,1nr -k4,4nr | while IFS=$'\t' read -r area w h hz; do
+    if [[ -n "$porcelain" ]]; then
+      printf '%sx%s@%s\t%sx%s\t%s\n' "$w" "$h" "$hz" "$w" "$h" "$hz"
+    else
+      printf '  %-14s %-10s %s\n' "${w}x${h}@${hz}" "${w}x${h}" "$hz"
+    fi
+  done
+}
+
+cmd_status() {
+  read_frag
+  if [[ "${1:-}" == "--porcelain" ]]; then
+    echo "primary=$PRIMARY"
+    local i dis
+    for i in "${!R_OUTPUT[@]}"; do
+      dis=0; [[ "${R_DISABLED[$i]}" == "true" ]] && dis=1
+      printf 'rule=%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "${R_OUTPUT[$i]}" "${R_MODE[$i]}" "${R_SCALE[$i]}" "${R_TRANSFORM[$i]}" "${R_POSITION[$i]}" "$dis"
+    done
+  else
+    printf 'primary: %s\n' "${PRIMARY:-<none>}"
+    local i
+    for i in "${!R_OUTPUT[@]}"; do
+      printf '  %-12s mode=%-14s scale=%-6s transform=%-3s pos=%-10s disabled=%s\n' \
+        "${R_OUTPUT[$i]}" "${R_MODE[$i]}" "${R_SCALE[$i]}" "${R_TRANSFORM[$i]}" "${R_POSITION[$i]}" "${R_DISABLED[$i]}"
+    done
+    [[ ${#R_OUTPUT[@]} -eq 0 ]] && echo "  (no saved rules — all outputs auto)"
+  fi
+  return 0
+}
+
+# ── Commands: mutations ────────────────────────────────────────────────────────────
+cmd_mode() {
+  local out="${1:-}" mode="${2:-}"
+  [[ -n "$out" && -n "$mode" ]] || { err "mode: <output> <WxH@Hz|preferred> required"; exit 2; }
+  validate_output "$out"
+  [[ "$mode" =~ ^([0-9]+x[0-9]+(@[0-9]+)?|preferred)$ ]] || die "invalid mode: $mode"
+  read_frag
+  ensure_rule "$out"
+  R_MODE[$RULE_IDX]="$mode"
+  write_frag
+  sync_wallpaper
+  sync_hyprlock
+  echo "w-monitor: $out mode = $mode"
+}
+
+cmd_scale() {
+  local out="${1:-}" scale="${2:-}"
+  [[ -n "$out" && -n "$scale" ]] || { err "scale: <output> <float|auto> required"; exit 2; }
+  validate_output "$out"
+  [[ "$scale" =~ ^([0-9]+(\.[0-9]+)?|auto)$ ]] || die "invalid scale: $scale"
+  if [[ "$scale" != "auto" ]] && have_hypr; then
+    require_jq
+    local width
+    width="$(jq -r --arg o "$out" '.[] | select(.name==$o) | .width' <<< "$(live_json)")"
+    if [[ -n "$width" && "$width" != "null" ]]; then
+      local clean; clean="$(awk -v w="$width" -v s="$scale" \
+        'BEGIN{ l=w/s; d=l-int(l); if(d<0)d=-d; print (d<0.001)?1:0 }')"
+      if [[ "$clean" != "1" ]]; then
+        local suggestion; suggestion="$(awk -v w="$width" -v s="$scale" \
+          'BEGIN{ r=int(w/s+0.5); if(r<1)r=1; printf "%.4f", w/r }' | sed -E 's/0+$//; s/\.$//')"
+        die "scale $scale does not divide $out's ${width}px cleanly (invalid logical pixels); nearest valid scale: $suggestion"
+      fi
+    fi
+  fi
+  read_frag
+  ensure_rule "$out"
+  R_SCALE[$RULE_IDX]="$scale"
+  write_frag
+  sync_wallpaper
+  sync_hyprlock
+  echo "w-monitor: $out scale = $scale"
+}
+
+cmd_transform() {
+  local out="${1:-}" deg="${2:-}"
+  [[ -n "$out" && -n "$deg" ]] || { err "transform: <output> <0|90|180|270> required"; exit 2; }
+  validate_output "$out"
+  local t
+  case "$deg" in
+    0) t=0 ;; 90) t=1 ;; 180) t=2 ;; 270) t=3 ;;
+    *) die "invalid transform: $deg (expected 0, 90, 180 or 270)" ;;
+  esac
+  read_frag
+  ensure_rule "$out"
+  R_TRANSFORM[$RULE_IDX]="$t"
+  write_frag
+  echo "w-monitor: $out transform = ${deg}°"
+}
+
+# `place` also re-declares this output's rule at the END of outputs[] — declaration
+# order drives auto-* chaining (see Monitors.md), so "place X right" means "right of
+# the existing chain", not merely "right, but still wherever it was in the list".
+cmd_place() {
+  local out="${1:-}" dir="${2:-}"
+  [[ -n "$out" && -n "$dir" ]] || { err "place: <output> <right|left|above|below|auto> required"; exit 2; }
+  validate_output "$out"
+  local pos
+  case "$dir" in
+    right) pos="auto-right" ;; left) pos="auto-left" ;;
+    above) pos="auto-up" ;; below) pos="auto-down" ;;
+    auto)  pos="auto" ;;
+    *) die "invalid position: $dir (expected right, left, above, below or auto)" ;;
+  esac
+  read_frag
+  ensure_rule "$out"
+  local o m s t d
+  o="${R_OUTPUT[$RULE_IDX]}"; m="${R_MODE[$RULE_IDX]}"; s="${R_SCALE[$RULE_IDX]}"
+  t="${R_TRANSFORM[$RULE_IDX]}"; d="${R_DISABLED[$RULE_IDX]}"
+  remove_at "$RULE_IDX"
+  R_OUTPUT+=("$o"); R_MODE+=("$m"); R_POSITION+=("$pos"); R_SCALE+=("$s")
+  R_TRANSFORM+=("$t"); R_DISABLED+=("$d")
+  write_frag
+  echo "w-monitor: $out placed $dir"
+}
+
+cmd_enable() {
+  local out="${1:-}"; [[ -n "$out" ]] || { err "enable: <output> required"; exit 2; }
+  validate_output "$out"
+  read_frag
+  ensure_rule "$out"
+  R_DISABLED[$RULE_IDX]="false"
+  write_frag
+  sync_wallpaper
+  sync_hyprlock
+  echo "w-monitor: $out enabled"
+}
+
+cmd_disable() {
+  local out="${1:-}"; [[ -n "$out" ]] || { err "disable: <output> required"; exit 2; }
+  validate_output "$out"
+  read_frag
+  # Failsafe: never let the primary output (where the bar/login card lives) be turned
+  # off — that would silently strand the user's controls on a screen that's gone dark.
+  [[ "$out" == "$PRIMARY" ]] && die "cannot disable the primary output: $out (set a different primary first — w-monitor primary <output>)"
+  ensure_rule "$out"
+  R_DISABLED[$RULE_IDX]="true"
+  # Second failsafe, asked of the ALREADY-MUTATED rule set: refuse if this would
+  # leave nothing connected to draw on. It used to read `hyprctl monitors` directly
+  # and so was skipped entirely with no live session — on a TTY the only guard left
+  # was the primary check above, which does not bite on a machine that never set a
+  # primary (the shipped monitors.lua has `primary = ""`). That is the whole reason
+  # the check moved onto connected_source(), which answers headless too.
+  [[ -n "$(live_after_rules)" ]] || die "cannot disable the last active output: $out"
+  write_frag
+  echo "w-monitor: $out disabled"
+}
+
+cmd_primary() {
+  local out="${1:-}"; [[ -n "$out" ]] || { err "primary: <output> required"; exit 2; }
+  validate_output "$out"
+  read_frag
+  PRIMARY="$out"
+  # Failsafe counterpart to cmd_disable's guard: becoming primary always force-enables
+  # the output, so "primary" and "enabled" never drift apart (a disabled primary would
+  # strand the bar/login card on a dark screen, same failure this is meant to prevent).
+  ensure_rule "$out"
+  R_DISABLED[$RULE_IDX]="false"
+  write_frag
+  install -d -m700 "$(dirname "$STATE")"
+  local tmp; tmp="$(mktemp)"
+  printf '{"primary":"%s"}\n' "$out" > "$tmp"
+  mv "$tmp" "$STATE"
+  chmod 0644 "$STATE"
+  sync_wallpaper
+  sync_hyprlock
+  echo "w-monitor: primary set to $out"
+}
+
+cmd_reset() {
+  local what="${1:-}"; [[ -n "$what" ]] || { err "reset: <output|--all> required"; exit 2; }
+  read_frag
+  if [[ "$what" == "--all" ]]; then
+    R_OUTPUT=(); R_MODE=(); R_POSITION=(); R_SCALE=(); R_TRANSFORM=(); R_DISABLED=()
+    write_frag
+    echo "w-monitor: all rules reset to auto"
+    return
+  fi
+  validate_output "$what"
+  if find_rule "$what"; then
+    remove_at "$RULE_IDX"
+    write_frag
+    echo "w-monitor: $what reset to auto"
+  else
+    echo "w-monitor: $what has no saved rule (already auto)"
+  fi
+}
+
+# ── Sanity: the rescue that runs before the compositor does ──────────────────────
+# Every guard above is point-in-time, and the failure they structurally cannot cover
+# is temporal. Turn the laptop panel off while an external is attached — both guards
+# rightly allow it, two outputs are live — then unplug the external. The only
+# connected output now starts disabled=true, which is exactly the state hyprland.lua
+# documents as unrecoverable: black screen, live IPC, no way back from the GUI.
+#
+# So the rule set is judged once more at the last moment it can still be fixed:
+# before the compositor parses it. Session scope runs from /etc/xdg/uwsm/env-hyprland
+# (graphical-session-pre, as the logging-in user); greeter scope from greetd's
+# ExecStartPre. Both are best-effort — a failure here must never cost a login.
+#
+# Minimum intervention: ONE output is re-enabled, not all of them. The user turned
+# those screens off on purpose, and a rescue that discards every choice they made is
+# a second surprise on top of the first.
+sanity_frag() {
+  local frag="$1"
+  read_frag "$frag"
+  ((${#R_OUTPUT[@]})) || return 0                 # nothing configured, nothing to break
+
+  # Unlike the mutation guards, this judges against probed_outputs alone: repairing
+  # takes PROOF that a display is there, not the guards' fail-shut assumption. On a
+  # headless box — or anywhere sysfs says nothing — there is no black screen to fix,
+  # and acting on a guess would rewrite the layout on every single login and overrule
+  # a choice the user may well have meant.
+  local -a connected=()
+  local n
+  while IFS= read -r n; do [[ -n "$n" ]] && connected+=("$n"); done < <(probed_outputs)
+  ((${#connected[@]})) || return 0
+  [[ -z "$(live_after_rules probed_outputs)" ]] || return 0   # something still draws
+
+  # Prefer the primary — that is where the bar and the login card go — else the
+  # first connected output in fragment order, so the choice is stable across runs.
+  local target="" i
+  for n in ${connected[@]+"${connected[@]}"}; do
+    [[ "$n" == "$PRIMARY" ]] && { target="$n"; break; }
+  done
+  if [[ -z "$target" ]]; then
+    for i in "${!R_OUTPUT[@]}"; do
+      for n in ${connected[@]+"${connected[@]}"}; do
+        [[ "${R_OUTPUT[$i]}" == "$n" ]] && { target="$n"; break 2; }
+      done
+    done
+  fi
+  [[ -n "$target" ]] || return 0
+
+  ensure_rule "$target"
+  R_DISABLED[$RULE_IDX]="false"
+  write_frag "$frag"
+  err "sanity: every connected output was disabled — re-enabled $target"
+  return 0
+}
+
+cmd_sanity() {
+  (($#)) && { err "sanity: no arguments expected"; exit 2; }
+  sanity_frag "$FRAG"
+}
+
+# ── Commands: greeter scope (system-wide, root) ──────────────────────────────────
+# Decoupled from the session: own fragment + JSON mirror in /etc/w/, no live
+# hyprctl target at edit time (the greeter compositor exits once a user session
+# starts — see quickshell-greeter.md's handoff — so, like the CLI headless case,
+# the fragment is edited without a live monitor list to validate against).
+cmd_greeter() {
+  local sub="${1:-}"; shift || true
+  case "$sub" in
+    status)  cmd_greeter_status "$@" ;;
+    sync)    cmd_greeter_sync "$@" ;;
+    primary) cmd_greeter_primary "$@" ;;
+    apply)   cmd_greeter_apply "$@" ;;
+    reset)   cmd_greeter_reset "$@" ;;
+    sanity)  cmd_greeter_sanity "$@" ;;
+    "")      err "greeter: subcommand required (status|sync|primary|apply|reset|sanity)"; exit 2 ;;
+    *)       err "greeter: unknown subcommand: $sub"; exit 2 ;;
+  esac
+}
+
+cmd_greeter_status() {
+  read_frag "$GREETER_FRAG"
+  local primary=""
+  if [[ -r "$GREETER_STATE" ]]; then
+    require_jq
+    primary="$(jq -r '.primary // ""' "$GREETER_STATE" 2>/dev/null || echo "")"
+  fi
+  if [[ "${1:-}" == "--porcelain" ]]; then
+    echo "primary=$primary"
+    local i dis
+    for i in "${!R_OUTPUT[@]}"; do
+      dis=0; [[ "${R_DISABLED[$i]}" == "true" ]] && dis=1
+      printf 'rule=%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "${R_OUTPUT[$i]}" "${R_MODE[$i]}" "${R_SCALE[$i]}" "${R_TRANSFORM[$i]}" "${R_POSITION[$i]}" "$dis"
+    done
+  else
+    printf 'primary: %s\n' "${primary:-<none>}"
+    local i
+    for i in "${!R_OUTPUT[@]}"; do
+      printf '  %-12s mode=%-14s scale=%-6s transform=%-3s pos=%-10s disabled=%s\n' \
+        "${R_OUTPUT[$i]}" "${R_MODE[$i]}" "${R_SCALE[$i]}" "${R_TRANSFORM[$i]}" "${R_POSITION[$i]}" "${R_DISABLED[$i]}"
+    done
+    [[ ${#R_OUTPUT[@]} -eq 0 ]] && echo "  (no saved rules — greeter falls back to auto)"
+  fi
+  return 0
+}
+
+cmd_greeter_sync() {
+  need_root
+  (($#)) && { err "greeter sync: no arguments expected"; exit 2; }
+  [[ -n "$TARGET_HOME" ]] || die "no primary login user found to sync from"
+  local session_frag="$TARGET_HOME/.config/hypr/monitors.lua"
+  [[ -r "$session_frag" ]] || die "no session monitor config found for $TARGET_USER ($session_frag)"
+  read_frag "$session_frag"
+  write_frag "$GREETER_FRAG"
+  install -d -m755 "$(dirname "$GREETER_STATE")"
+  local tmp; tmp="$(mktemp)"
+  printf '{"primary":"%s"}\n' "$PRIMARY" > "$tmp"
+  mv "$tmp" "$GREETER_STATE"
+  chmod 0644 "$GREETER_STATE"
+  echo "w-monitor: greeter layout synced from $TARGET_USER's session"
+}
+
+cmd_greeter_primary() {
+  need_root
+  local out="${1:-}"; [[ -n "$out" ]] || { err "greeter primary: <output> required"; exit 2; }
+  validate_output "$out"
+  read_frag "$GREETER_FRAG"
+  # Same failsafe as the session's primary: force-enable, so primary and disabled
+  # never drift apart (a disabled primary strands the login card on a dark screen).
+  ensure_rule "$out"
+  R_DISABLED[$RULE_IDX]="false"
+  write_frag "$GREETER_FRAG"
+  install -d -m755 "$(dirname "$GREETER_STATE")"
+  local tmp; tmp="$(mktemp)"
+  printf '{"primary":"%s"}\n' "$out" > "$tmp"
+  mv "$tmp" "$GREETER_STATE"
+  chmod 0644 "$GREETER_STATE"
+  echo "w-monitor: greeter primary set to $out"
+}
+
+# Replaces the WHOLE greeter ruleset from a fresh set of specs in one shot (one
+# pkexec prompt covers every output). Each spec is validated with the same field
+# vocabulary as the single-purpose commands (mode/scale/transform/place), not the
+# internal auto-* tokens. At most one spec may say "primary" instead of "on" — it
+# implies on AND is written to $GREETER_STATE (same effect as cmd_greeter_primary,
+# folded into this single call so the Hub's staged tab needs exactly one prompt for
+# the whole tab, primary included). No mark at all leaves the current primary
+# untouched. Static failsafe (no live monitor list to check against, see
+# cmd_greeter's comment): refuse a spec set that leaves nothing on, or that turns
+# off the currently-configured primary without this same call assigning a new one.
+cmd_greeter_apply() {
+  need_root
+  (($#)) || { err "greeter apply: <output>:<mode>:<scale>:<transform>:<position>:<on|off|primary> [...] required"; exit 2; }
+  local cur_primary=""
+  if [[ -r "$GREETER_STATE" ]]; then
+    require_jq
+    cur_primary="$(jq -r '.primary // ""' "$GREETER_STATE" 2>/dev/null || echo "")"
+  fi
+  local -a NO=() NM=() NP=() NS=() NT=() ND=()
+  local any_on=0 primary_off=0 new_primary=""
+  local spec out mode scale deg pos onoff
+  for spec in "$@"; do
+    IFS=':' read -r out mode scale deg pos onoff <<< "$spec"
+    validate_output "$out"
+    [[ "$mode" =~ ^([0-9]+x[0-9]+(@[0-9]+)?|preferred)$ ]] || die "invalid mode in spec: $spec"
+    [[ "$scale" =~ ^([0-9]+(\.[0-9]+)?|auto)$ ]] || die "invalid scale in spec: $spec"
+    local t
+    case "$deg" in 0) t=0 ;; 90) t=1 ;; 180) t=2 ;; 270) t=3 ;; *) die "invalid transform in spec: $spec" ;; esac
+    local p
+    case "$pos" in
+      right) p="auto-right" ;; left) p="auto-left" ;; above) p="auto-up" ;; below) p="auto-down" ;; auto) p="auto" ;;
+      *) die "invalid position in spec: $spec" ;;
+    esac
+    local dis
+    case "$onoff" in
+      on)      dis="false"; any_on=1 ;;
+      off)     dis="true" ;;
+      primary) dis="false"; any_on=1
+               [[ -n "$new_primary" ]] && die "apply: at most one output can be marked primary"
+               new_primary="$out" ;;
+      *) die "invalid on/off/primary in spec: $spec" ;;
+    esac
+    [[ -n "$cur_primary" && "$out" == "$cur_primary" && "$dis" == "true" ]] && primary_off=1
+    NO+=("$out"); NM+=("$mode"); NP+=("$p"); NS+=("$scale"); NT+=("$t"); ND+=("$dis")
+  done
+  ((any_on)) || die "apply: at least one output must be on (would leave the greeter with no active display)"
+  if ((primary_off)) && [[ -z "$new_primary" ]]; then
+    die "apply: cannot turn off the primary output ($cur_primary) — set a different primary first"
+  fi
+  R_OUTPUT=("${NO[@]}"); R_MODE=("${NM[@]}"); R_POSITION=("${NP[@]}"); R_SCALE=("${NS[@]}"); R_TRANSFORM=("${NT[@]}"); R_DISABLED=("${ND[@]}")
+  write_frag "$GREETER_FRAG"
+  if [[ -n "$new_primary" ]]; then
+    install -d -m755 "$(dirname "$GREETER_STATE")"
+    local tmp; tmp="$(mktemp)"
+    printf '{"primary":"%s"}\n' "$new_primary" > "$tmp"
+    mv "$tmp" "$GREETER_STATE"
+    chmod 0644 "$GREETER_STATE"
+  fi
+  echo "w-monitor: greeter layout applied (${#NO[@]} output(s))"
+}
+
+cmd_greeter_reset() {
+  need_root
+  (($#)) && { err "greeter reset: no arguments expected"; exit 2; }
+  rm -f "$GREETER_FRAG" "$GREETER_STATE"
+  echo "w-monitor: greeter config reset (falls back to auto)"
+}
+
+# Same rescue as `sanity`, for the login screen. Called from greetd's ExecStartPre,
+# so it only re-checks when greetd itself starts — a config that goes stale mid-
+# session is caught at the next boot, not at the next logout (greetd respawns the
+# greeter compositor internally). That covers the real case: the monitor is unplugged
+# while the machine is off.
+cmd_greeter_sanity() {
+  need_root
+  (($#)) && { err "greeter sanity: no arguments expected"; exit 2; }
+  sanity_frag "$GREETER_FRAG"
+}
+
+# ── Dispatch ─────────────────────────────────────────────────────────────────────
+# Sourced rather than run (check/tests/monitor.bats): definitions only, no dispatch.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then return 0; fi
+
+case "${1:-}" in
+  list)      shift; cmd_list "$@" ;;
+  modes)     shift; cmd_modes "$@" ;;
+  status)    shift; cmd_status "$@" ;;
+  mode)      shift; cmd_mode "$@" ;;
+  scale)     shift; cmd_scale "$@" ;;
+  transform) shift; cmd_transform "$@" ;;
+  place)     shift; cmd_place "$@" ;;
+  enable)    shift; cmd_enable "$@" ;;
+  disable)   shift; cmd_disable "$@" ;;
+  primary)   shift; cmd_primary "$@" ;;
+  reset)     shift; cmd_reset "$@" ;;
+  sanity)    shift; cmd_sanity "$@" ;;
+  greeter)   shift; cmd_greeter "$@" ;;
+  help|-h|--help) usage ;;
+  "")        usage >&2; exit 2 ;;
+  *)         err "unknown command: $1"; usage >&2; exit 2 ;;
+esac

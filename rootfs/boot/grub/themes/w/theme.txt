@@ -1,0 +1,26 @@
+# W Linux GRUB Theme
+
+desktop-color: "#000000"
+
++ image {
+  file = "logo.png"
+  left = 50%-128
+  top = 25%
+  width = 256
+  height = 256
+}
+
++ boot_menu {
+  left = 25%
+  top = 62%
+  width = 50%
+  height = 28%
+  item_font = "Unifont Regular 16"
+  item_color = "#a197a4"
+  selected_item_color = "#ffffff"
+  selected_item_pixmap_style = "select/*.png"
+  item_height = 28
+  item_padding = 10
+  item_spacing = 2
+  scrollbar = false
+}

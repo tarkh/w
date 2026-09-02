@@ -1,0 +1,6 @@
+# plymouth.manifest — system config owned by mod_plymouth (boot splash theme).
+# Managed system paths (root to reset), restored from the W source. The theme's
+# palette is w-style output (900-plymouth), refreshed by `w-style render_system`.
+# Format: <path>\t<class>   (trailing '/' = directory)
+/usr/share/plymouth/themes/w/	managed
+/etc/systemd/system/plymouth-quit.service.d/override.conf	managed

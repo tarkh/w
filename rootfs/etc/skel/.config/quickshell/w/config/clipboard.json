@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "filterSensitive": true,
+  "showThumbnails": true,
+  "thumbSize": 32,
+  "border": "border",
+  "maxPreview": 120
+}

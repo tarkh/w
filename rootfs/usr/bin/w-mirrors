@@ -1,0 +1,385 @@
+#!/usr/bin/env bash
+# w-mirrors — W Linux package-mirror maintenance
+#
+# Layer 3 of the package-delivery plan (installer.md §5): a machine must not live
+# on a snapshot of its installation day.
+#
+# Layers 1 and 2 already exist and neither of them can do this job. Layer 1
+# (mod_reflector + the pre-flight in modules/base.sh) ranks mirrors on the ISO,
+# once — and pacstrap then BAKES that list into the target (copymirrorlist=1), so
+# what the installer picked is what the machine keeps. Layer 2 (w_pac, see
+# w-pac-lib.sh) survives a mirror that goes bad mid-transaction, but all it can do
+# is REORDER the entries it was given: it never adds a host back. Between them
+# there is a gap with a shape of its own — the list itself decays. Mirrors go
+# offline, fall behind, change hostname; a year-old list keeps being reordered
+# around holes until reordering has nothing healthy left to find.
+#
+# So: rebuild the list, on a schedule and on demand. The tool that does the
+# rebuilding is `reflector` — the same tool, with the same numbers, that Ф.1
+# calibrated for install time (see /usr/share/w/defaults/mirrors.conf, whose header
+# explains every value, and check.sh --landmines, which fails if the two sides
+# diverge). Writing our own ranker was considered and rejected: our own curl probes
+# can measure throughput of hosts ALREADY in the list — which is exactly what the
+# pre-flight and w_pac already do — but they cannot produce candidates, because
+# --score and --age come from the Arch mirror status API, not from probing. A
+# home-grown ranker would therefore have to reimplement that API client and then
+# re-derive numbers that were already measured once.
+#
+# Fail-soft is the contract, not a nicety: this runs unattended, from a timer, with
+# nobody watching. There is no outcome in which the mirrorlist ends up empty or
+# shortened — reflector writes to a temporary file, and only a list that clears the
+# depth floor ever becomes /etc/pacman.d/mirrorlist.
+#
+# See w-mirrors.md.
+
+set -euo pipefail
+
+# The shared reader is resolved NEXT TO this script (../lib/w) rather than by the
+# usual absolute /usr/lib/w path. The layout is identical on a machine
+# (/usr/{bin,lib/w}) and in the checkout (rootfs/usr/{bin,lib/w}), and
+# that is what lets the unit tests source this file at all — the fail-soft
+# behaviour below (never truncate the mirrorlist, whatever the ranker does) is the
+# one invariant here that must not be verified by hand only. Absolute fallback for
+# a copy taken out of the layout. checks.md rule 11.
+_W_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib/w" 2>/dev/null && pwd || true)"
+# shellcheck source=../lib/w/w-conf-lib.sh
+source "${_W_LIB_DIR:-/usr/lib/w}/w-conf-lib.sh"
+wconf_load mirrors   # one pass up front; the $(…) reads below are cache hits
+conf_get() { wconf_get mirrors "$1" "${2:-}"; }
+
+MIRRORLIST="${W_MIRRORS_LIST:-/etc/pacman.d/mirrorlist}"
+STATE="${W_MIRRORS_STATE:-/var/lib/w/mirrors.state}"
+TIMER="w-mirrors.timer"
+
+# Depth floor and probe width are NOT configuration. They are the fail-soft
+# contract itself (the same two constants Ф.1 spells out in modules/base.sh):
+# pacman's "too many errors from X, skipping" fallback only works while there is
+# somewhere left to go, so a knob that can be set to 0 or 1 is a knob that can
+# disable the safety net from a config file.
+MIRRORS_MIN=10
+MIRRORS_PROBE=5
+
+err()  { echo "w-mirrors: $*" >&2; }
+need_root() { [[ $EUID -eq 0 ]] || { err "this command requires root"; exit 1; }; }
+
+usage() {
+  cat <<EOF
+Usage: w-mirrors <command>
+
+Info: Keep the pacman mirrorlist fresh — rank mirrors on a schedule or on demand.
+
+Commands:
+  status [--porcelain]  Show the policy, the current list and when it was ranked (default)
+  check [--quiet]       Probe the head of the list; non-zero if nothing serves data
+  rank [--scheduled]    Re-rank the mirrorlist now (--scheduled = the timer's entry point)
+  set <key> <value>     Change one policy key (see the key list below)
+  enable | disable      Turn the periodic ranking timer on/off
+  apply                 Install the timer state from the config (used by apply.sh --mirrors)
+  help                  Show this help
+
+Policy source: /etc/w/mirrors.conf over /usr/share/w/defaults/mirrors.conf
+Keys: COUNTRY PROTOCOL AGE SCORE COUNT THREADS CONNECT_TIMEOUT DOWNLOAD_TIMEOUT
+      INTERVAL_DAYS SKIP_METERED   (\`w-conf cat mirrors\` shows the merged result)
+
+Exit codes:
+  0  Success   1  Runtime error   2  Usage error
+
+Examples:
+  w-mirrors status
+  sudo w-mirrors rank
+  sudo w-mirrors set COUNTRY Germany
+EOF
+}
+
+# ── Policy ────────────────────────────────────────────────────────────────────
+
+# Validation lives here rather than in the renderer because this config has no
+# renderer: nothing is generated from it, so a bad value would otherwise surface
+# only as a reflector invocation that fails at 3 a.m. under the timer.
+valid_key() {
+  local k="$1" v="$2"
+  case "$k" in
+    COUNTRY)          [[ -z "$v" || "$v" =~ ^[A-Za-z][A-Za-z\ .,-]*$ ]] ;;
+    PROTOCOL)         [[ "$v" =~ ^(https|http|https,http|http,https)$ ]] ;;
+    AGE|SCORE|COUNT|THREADS|CONNECT_TIMEOUT|DOWNLOAD_TIMEOUT|INTERVAL_DAYS)
+                      [[ "$v" =~ ^[0-9]+$ ]] && (( v >= 1 )) ;;
+    SKIP_METERED)     [[ "$v" =~ ^(yes|no)$ ]] ;;
+    *)                return 1 ;;
+  esac
+}
+
+# Read the policy into globals once. Every consumer below uses these, so a missing
+# vendor layer is caught in one place instead of producing an empty flag.
+load_policy() {
+  P_COUNTRY="$(conf_get COUNTRY)"
+  P_PROTOCOL="$(conf_get PROTOCOL https)"
+  P_AGE="$(conf_get AGE 12)"
+  P_SCORE="$(conf_get SCORE 30)"
+  P_COUNT="$(conf_get COUNT 20)"
+  P_THREADS="$(conf_get THREADS 4)"
+  P_CONNECT="$(conf_get CONNECT_TIMEOUT 3)"
+  P_DOWNLOAD="$(conf_get DOWNLOAD_TIMEOUT 12)"
+  P_INTERVAL="$(conf_get INTERVAL_DAYS 30)"
+  P_METERED="$(conf_get SKIP_METERED yes)"
+
+  valid_key COUNTRY "$P_COUNTRY"           || { err "invalid COUNTRY in the config: '$P_COUNTRY'"; exit 1; }
+  valid_key PROTOCOL "$P_PROTOCOL"         || { err "invalid PROTOCOL in the config: '$P_PROTOCOL'"; exit 1; }
+  valid_key AGE "$P_AGE"                   || { err "invalid AGE in the config: '$P_AGE'"; exit 1; }
+  valid_key SCORE "$P_SCORE"               || { err "invalid SCORE in the config: '$P_SCORE'"; exit 1; }
+  valid_key COUNT "$P_COUNT"               || { err "invalid COUNT in the config: '$P_COUNT'"; exit 1; }
+  valid_key THREADS "$P_THREADS"           || { err "invalid THREADS in the config: '$P_THREADS'"; exit 1; }
+  valid_key CONNECT_TIMEOUT "$P_CONNECT"   || { err "invalid CONNECT_TIMEOUT in the config: '$P_CONNECT'"; exit 1; }
+  valid_key DOWNLOAD_TIMEOUT "$P_DOWNLOAD" || { err "invalid DOWNLOAD_TIMEOUT in the config: '$P_DOWNLOAD'"; exit 1; }
+  valid_key INTERVAL_DAYS "$P_INTERVAL"    || { err "invalid INTERVAL_DAYS in the config: '$P_INTERVAL'"; exit 1; }
+  valid_key SKIP_METERED "$P_METERED"      || { err "invalid SKIP_METERED in the config: '$P_METERED'"; exit 1; }
+}
+
+# ── State ─────────────────────────────────────────────────────────────────────
+
+state_get() {  # state_get KEY -> value (empty if no state yet)
+  [[ -r "$STATE" ]] || return 0
+  sed -n "s/^$1=//p" "$STATE" | tail -n1
+}
+
+state_write() {  # state_write <count> <result>
+  install -d -m755 "$(dirname "$STATE")"
+  local tmp="$STATE.tmp.$$"
+  { echo "# w-mirrors state — written by \`w-mirrors rank\`, not configuration."
+    echo "LAST_RUN=$(date +%s)"
+    echo "LAST_COUNT=$1"
+    echo "LAST_RESULT=$2"
+  } > "$tmp"
+  mv -f "$tmp" "$STATE"
+}
+
+# When the list was last rebuilt. Falls back to the mirrorlist's own mtime, which
+# is what makes the very first timer tick a no-op on a freshly installed machine:
+# pacstrap copied the installer's freshly ranked list minutes ago, and OnCalendar
+# +Persistent would otherwise fire a catch-up run immediately.
+last_rank_epoch() {
+  local ts; ts="$(state_get LAST_RUN)"
+  if [[ "$ts" =~ ^[0-9]+$ ]]; then echo "$ts"; return 0; fi
+  stat -c %Y "$MIRRORLIST" 2>/dev/null || echo 0
+}
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+list_depth() { grep -c '^[[:space:]]*Server' "$MIRRORLIST" 2>/dev/null || true; }
+
+# NetworkManager's own verdict, per device, including the "(guessed)" one it makes
+# for mobile broadband — a guess is the only signal there is, and treating it as
+# "not metered" would put a ~260 MB job on someone's phone plan.
+is_metered() {
+  command -v nmcli >/dev/null 2>&1 || return 1
+  nmcli -t -f GENERAL.METERED device show 2>/dev/null | grep -q '^GENERAL\.METERED:yes'
+}
+
+# Throughput-checked probe of one mirror URL template — the same mechanic as the
+# install-time pre-flight (installer.md §5): the failure that started all of this
+# was a host that connects instantly and then serves <1 byte/s, which a plain
+# timeout only catches by waiting it out. core.db is ~130 KB, so a live mirror is
+# done in well under a second; a 10 KB/s floor over 5 s separates "stalled" from
+# "honestly slow link" in 5-7 s.
+probe_url() {
+  local url="$1" probe
+  probe="${url//\$repo/core}"; probe="${probe//\$arch/x86_64}"
+  curl -sfL --connect-timeout 5 --max-time 20 --speed-limit 10240 --speed-time 5 \
+    -o /dev/null "$probe/core.db"
+}
+
+server_url() { local l="${1#*=}"; echo "${l//[[:space:]]/}"; }
+url_host()   { local u="${1#*://}"; echo "${u%%/*}"; }
+
+# ── Commands ──────────────────────────────────────────────────────────────────
+
+cmd_status() {
+  load_policy
+  local depth ts age result count due=no metered=no timer shallow=""
+  depth="$(list_depth)"; depth="${depth:-0}"
+  ts="$(last_rank_epoch)"
+  age=$(( ( $(date +%s) - ts ) / 86400 ))
+  result="$(state_get LAST_RESULT)"
+  count="$(state_get LAST_COUNT)"
+  (( age >= P_INTERVAL )) && due=yes
+  is_metered && metered=yes
+  timer="$(systemctl is-enabled "$TIMER" 2>/dev/null || echo disabled)"
+
+  if [[ "${1:-}" == "--porcelain" ]]; then
+    echo "depth=$depth"
+    echo "age_days=$age"
+    echo "interval_days=$P_INTERVAL"
+    echo "due=$due"
+    echo "last_run=$ts"
+    echo "last_result=${result:-none}"
+    echo "last_count=${count:-0}"
+    echo "timer=$timer"
+    echo "metered=$metered"
+    return 0
+  fi
+
+  (( depth < MIRRORS_MIN )) && shallow="  ⚠ below the ${MIRRORS_MIN}-mirror fallback floor"
+  echo "Policy   : ${P_COUNT} mirror(s), ${P_PROTOCOL}, max age ${P_AGE}h, score >= ${P_SCORE}${P_COUNTRY:+, country ${P_COUNTRY}}"
+  echo "           re-rank every ${P_INTERVAL} day(s), skip while metered: ${P_METERED}   (origin: w-conf cat mirrors)"
+  echo
+  echo "Mirrorlist ($MIRRORLIST):"
+  echo "  depth         : ${depth} server(s)${shallow}"
+  echo "  ranked        : ${age} day(s) ago${result:+ (${result}, ${count} from reflector)}"
+  local head
+  # paste -sd takes a delimiter LIST it cycles through, so ', ' would join the
+  # first pair with a comma and the second with a space.
+  head="$(grep -m3 '^[[:space:]]*Server' "$MIRRORLIST" 2>/dev/null | while read -r l; do url_host "$(server_url "$l")"; done | paste -sd, - | sed 's/,/, /g' || true)"
+  [[ -n "$head" ]] && echo "  head          : ${head}"
+  echo
+  echo "Periodic ranking:"
+  if command -v systemctl >/dev/null 2>&1; then
+    local nextrun due_txt="no (in $(( P_INTERVAL - age )) day(s))"
+    [[ "$due" == yes ]] && due_txt=yes
+    nextrun="$(systemctl list-timers "$TIMER" --no-pager --no-legend 2>/dev/null | awk '{print $1, $2, $3}')"
+    echo "  timer         : ${timer}${nextrun:+, next tick $nextrun}"
+    echo "  due now       : ${due_txt}"
+  fi
+  [[ "$metered" == yes ]] && echo "  ⚠ the connection is metered — a scheduled run would be skipped"
+  command -v reflector >/dev/null 2>&1 || echo "  ⚠ reflector is not installed — ranking is unavailable (sudo apply.sh --mirrors)"
+  return 0
+}
+
+cmd_check() {
+  local quiet=0; [[ "${1:-}" == "--quiet" ]] && quiet=1
+  command -v curl >/dev/null 2>&1 || { (( quiet )) || err "curl is not installed"; return 0; }
+
+  local -a heads=()
+  mapfile -t heads < <(grep '^[[:space:]]*Server' "$MIRRORLIST" 2>/dev/null | head -n "$MIRRORS_PROBE")
+  (( ${#heads[@]} )) || { (( quiet )) || err "the mirrorlist has no Server entries"; return 1; }
+
+  local line url host rc
+  for line in "${heads[@]}"; do
+    url="$(server_url "$line")"; host="$(url_host "$url")"
+    rc=0; probe_url "$url" || rc=$?
+    if (( rc == 0 )); then
+      (( quiet )) || echo "MIRRORS: $host is serving data (core.db probe)"
+      return 0
+    fi
+    (( quiet )) || echo "MIRRORS: $host is not serving data (core.db probe, curl rc=$rc)"
+  done
+  (( quiet )) || echo "MIRRORS: none of the first ${#heads[@]} mirrors served core.db"
+  return 1
+}
+
+cmd_rank() {
+  need_root
+  load_policy
+  local scheduled=0; [[ "${1:-}" == "--scheduled" ]] && scheduled=1
+
+  # Both guards are the scheduled path only: an explicit `w-mirrors rank` is an
+  # explicit decision, and second-guessing it would just teach people to work
+  # around the tool.
+  if (( scheduled )); then
+    local age=$(( ( $(date +%s) - $(last_rank_epoch) ) / 86400 ))
+    if (( age < P_INTERVAL )); then
+      echo "MIRRORS: list is ${age} day(s) old (interval ${P_INTERVAL}) — nothing to do"
+      return 0
+    fi
+    if [[ "$P_METERED" == yes ]] && is_metered; then
+      echo "MIRRORS: connection is metered — skipping the scheduled ranking"
+      state_write "$(state_get LAST_COUNT)" skipped-metered
+      return 0
+    fi
+  fi
+
+  command -v reflector >/dev/null 2>&1 \
+    || { err "reflector is not installed — run: sudo apply.sh --mirrors"; exit 1; }
+  [[ -w "$(dirname "$MIRRORLIST")" ]] || { err "$MIRRORLIST is not writable"; exit 1; }
+
+  # Worst case = ceil(SCORE/THREADS) rounds of a --download-timeout probe, plus
+  # slack for the API call and the last round finishing. Floored at the 200 s Ф.1
+  # measured for the default numbers, so the default behaviour is byte-identical to
+  # install time and only a raised SCORE moves it.
+  local budget=$(( (P_SCORE + P_THREADS - 1) / P_THREADS * P_DOWNLOAD + 80 ))
+  (( budget < 200 )) && budget=200
+
+  local -a args=(--protocol "$P_PROTOCOL" --age "$P_AGE" --score "$P_SCORE"
+                 --sort rate --number "$P_COUNT" --threads "$P_THREADS"
+                 --connection-timeout "$P_CONNECT" --download-timeout "$P_DOWNLOAD")
+  [[ -n "$P_COUNTRY" ]] && args+=(--country "$P_COUNTRY")
+
+  local tmp merged t0=$SECONDS n result
+  tmp="$(mktemp)"; merged="$(mktemp)"
+  echo "MIRRORS: ranking mirrors (reflector, up to ${budget}s, pool ${P_SCORE}, keeping ${P_COUNT})..."
+  # `|| true`: a run killed by the timeout wrapper must not abort us — the whole
+  # point is that no failure mode of the ranker can touch the live list.
+  timeout "$budget" reflector "${args[@]}" --verbose --save "$tmp" || true
+
+  n=$(grep -c '^Server' "$tmp" 2>/dev/null || true); n=${n:-0}
+
+  if (( n >= MIRRORS_MIN )); then
+    cat "$tmp" > "$MIRRORLIST"
+    result=replaced
+    echo "MIRRORS: ranked $n mirror(s) in $((SECONDS - t0))s — mirrorlist replaced"
+  elif (( n > 0 )); then
+    # Ranked, but too shallow to survive a transaction on its own: keep it as the
+    # head and re-append whatever the machine already had, deduplicated. Depth
+    # beats purity — a short list has no fallback at all.
+    { cat "$tmp"
+      echo "# W: previous mirrors kept below — reflector returned only $n"
+      grep '^[[:space:]]*Server' "$MIRRORLIST" 2>/dev/null | grep -vxF -f "$tmp" || true
+    } > "$merged"
+    cat "$merged" > "$MIRRORLIST"
+    result=merged
+    echo "MIRRORS: ranked only $n mirror(s) (< $MIRRORS_MIN) in $((SECONDS - t0))s — previous mirrors appended below them"
+  else
+    result=kept
+    echo "MIRRORS: reflector produced nothing in $((SECONDS - t0))s — keeping the current mirrorlist as is"
+  fi
+  rm -f "$tmp" "$merged"
+
+  state_write "$n" "$result"
+  # No `pacman -Sy` here, ever: refreshing databases on their own is how partial
+  # upgrades happen (w-update.md). The new list takes effect at the next real
+  # transaction, which syncs anyway.
+  return 0
+}
+
+cmd_set() {
+  need_root
+  local k="${1:-}" v="${2:-}"
+  [[ -n "$k" ]] || { err "set requires <key> <value>"; exit 2; }
+  valid_key "$k" "$v" || { err "invalid value for $k: '$v' (see: w-mirrors help)"; exit 2; }
+  wconf_set mirrors "$k" "$v"
+  echo "w-mirrors: $k=$v — takes effect on the next ranking run (\`sudo w-mirrors rank\` to do it now)."
+}
+
+cmd_timer() {  # cmd_timer enable|disable
+  need_root
+  case "$1" in
+    enable)  systemctl enable --now "$TIMER"; echo "w-mirrors: periodic ranking enabled ($TIMER)." ;;
+    disable) systemctl disable --now "$TIMER"; echo "w-mirrors: periodic ranking disabled." ;;
+  esac
+}
+
+# apply.sh --mirrors calls this: the units ship via the rootfs overlay, so all that
+# is left is making systemd aware of them. Deliberately does NOT rank — the machine
+# has just been installed (Ф.1 ranked minutes ago) or just been updated, and a
+# ~260 MB job is not something an apply should start behind the user's back.
+cmd_apply() {
+  need_root
+  load_policy
+  [[ -d /run/systemd/system ]] || { echo "w-mirrors: no running systemd (chroot) — timer left for first boot"; return 0; }
+  systemctl daemon-reload
+  systemctl enable --now "$TIMER"
+  echo "w-mirrors: periodic ranking active (every ${P_INTERVAL} day(s), checked daily)."
+}
+
+# Source-guard: the unit tests take the functions above and drive them against a
+# temporary mirrorlist (checks.md rule 11).
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then return 0; fi
+
+case "${1:-}" in
+  status|"")      cmd_status "${2:-}" ;;
+  check)          cmd_check "${2:-}" ;;
+  rank)           cmd_rank "${2:-}" ;;
+  set)            cmd_set "${2:-}" "${3:-}" ;;
+  enable|disable) cmd_timer "$1" ;;
+  apply)          cmd_apply ;;
+  help|-h|--help) usage ;;
+  *)              err "unknown command: $1"; usage; exit 2 ;;
+esac

@@ -1,0 +1,6 @@
+# hyprlock.manifest — user-owned config seeded by mod_hyprlock (seed-if-absent).
+# Single source of truth: deploy iterates this; w-reset/drift reuse it.
+# Format: <home-relative-path>\t<class>   class: user | managed | override
+# hyprlock-colors.conf is a w-style render artifact (managed, overwrite), hence
+# absent. hypridle.conf lives under hypr/ too but is owned by the hyprland module.
+.config/hypr/hyprlock.conf	user

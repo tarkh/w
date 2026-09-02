@@ -1,0 +1,12 @@
+# W Linux — atuin (shell history). Colors are rendered by the w-style `atuin`
+# axis into themes/w.toml; this file only selects it and sets behaviour.
+auto_sync = false
+update_check = false
+style = "compact"
+inline_height = 16
+show_preview = true
+enter_accept = true
+keymap_mode = "auto"
+
+[theme]
+name = "w"

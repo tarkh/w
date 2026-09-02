@@ -1,0 +1,8 @@
+# harden.manifest — system config owned by mod_harden (kernel/fs/net hardening).
+# The sysctl drop-ins are the source of truth for the hardening profile; `w-kernel
+# harden on|off` also toggles the boot cmdline (not a file, not reset here).
+# Managed system paths (root to reset), restored from the W source.
+# Format: <path>\t<class>
+/etc/sysctl.d/90-w-fs.conf	managed
+/etc/sysctl.d/90-w-kernel.conf	managed
+/etc/sysctl.d/90-w-net.conf	managed

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Volume Control
+Comment=W Linux audio control
+Exec=sh -c "hyprctl dispatch 'hl.dsp.global(\"quickshell:volumecontrol\")'"
+Icon=audio-volume-high
+Type=Application
+Categories=AudioVideo;Audio;
+Keywords=volume;audio;sound;pipewire;mixer;

@@ -1,0 +1,44 @@
+# session.manifest — config owned by mod_session (session memory: windows,
+# workspaces, focus).
+#
+# Three layers, two of them tracked here (update-system.md phase 2):
+#
+#   • /usr/share/w/defaults/session.conf + .schema — W's defaults and WHO may
+#     set each key. Shipped data, class managed: W owns them, every update
+#     overwrites.
+#   • /usr/share/w/defaults/session-apps.tsv — the shipped relaunch overrides
+#     (notably: terminals restore through `w-term`, not through whichever binary
+#     they happened to be). Same class, same reason.
+#   • /usr/share/w/defaults/session-terminal.list — which programs running INSIDE
+#     a terminal are safe to re-execute at login. Same class again: it is a
+#     safety default W owns and improves, not a per-machine choice.
+#   • /etc/w/session.conf — the admin's DEVIATIONS from those defaults. Class
+#     override: the update never touches it; `w-reset session` drops the
+#     deviations so the machine falls back to the vendor layer.
+#
+# ~/.config/w/session.conf is where the settings normally land (every key is
+# user-scope), created on demand and with no vendor default — class user-conf:
+# `w-reset session` deletes it (its "default" IS absence). Its sibling
+# ~/.config/w/session-apps.tsv is the user's own relaunch table, and
+# ~/.config/w/session-terminal.list their own additions to the allowlist — same
+# class and the same reasoning.
+#
+# NOT tracked here — runtime state, not configuration:
+#   • ~/.local/state/w/session.json — the snapshot itself. It is not a setting
+#     and it has no vendor version to restore from; what deletes it is
+#     `w-session forget`, which is the operation that means it. Listing it as
+#     user-conf would make `w-reset session` silently throw away the saved
+#     session as a side effect of resetting a preference — the same conflation
+#     the four reset categories exist to avoid.
+#   • /etc/systemd/user/w-session-{save,restore}.service — units, deployed by
+#     apply_rootfs and enabled by mod_session, not user-editable config.
+#
+# Format: <path>\t<class>   class: managed | override | user-conf
+/usr/share/w/defaults/session.conf	managed
+/usr/share/w/defaults/session.schema	managed
+/usr/share/w/defaults/session-apps.tsv	managed
+/usr/share/w/defaults/session-terminal.list	managed
+/etc/w/session.conf	override
+.config/w/session.conf	user-conf
+.config/w/session-apps.tsv	user-conf
+.config/w/session-terminal.list	user-conf

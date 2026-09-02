@@ -1,0 +1,24 @@
+# terminal.manifest — config owned by the terminal selector (w-term).
+#
+# Layered (update-system.md phase 3):
+#   • /usr/share/w/defaults/terminal.conf   — W's default terminal (ghostty). Class
+#     managed: overwritten by every update, so changing the distro default reaches
+#     machines whose admin never picked one.
+#   • /usr/share/w/defaults/terminal.schema — who may set each key. TERMINAL is
+#     scope `both`: a machine-wide default the admin sets, which any user overrides
+#     with `w-term set <name>` (→ ~/.config/w/terminal.conf, created on demand).
+#   • /etc/w/terminal.conf — this machine's DEVIATION only. Class override.
+#
+# TERMINAL_OPTS is a shell ARRAY, so the layered reader cannot represent it and
+# w-term sources that one key itself — see w-conf.md.
+#
+# ~/.config/w/terminal.conf is the user's own `w-term set` choice, created on
+# demand with no vendor default — class user-conf: `w-reset terminal` deletes
+# it (TERMINAL is scope `both`, so this only clears the user's pick, not the
+# machine default in /etc/w/terminal.conf, which stays an `override` row above).
+#
+# Format: <path>\t<class>   class: managed | override | user-conf
+/usr/share/w/defaults/terminal.conf	managed
+/usr/share/w/defaults/terminal.schema	managed
+/etc/w/terminal.conf	override
+.config/w/terminal.conf	user-conf

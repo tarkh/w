@@ -1,0 +1,127 @@
+# W Linux — hotkey action catalog contract (CLI/GUI side; W-managed).
+# The authoritative token list read by `w-hotkeys` (validation, `catalog` output, the Hub
+# grouping) and the source of the built-in "default" profile (== these default chords).
+#
+# Format: token<TAB>category<TAB>default_chord   (# comments + blank lines ignored)
+# Order in this file is the display order (Hub groups by category, in first-seen order).
+# Fixed binds (media keys, mouse drag/resize, the resize submap's inner keys) are NOT
+# listed — they are always bound by the catalog and are not rebindable in this phase.
+#
+# MUST stay in sync with /etc/skel/.config/hypr/hotkeys-catalog.lua (the compositor-side
+# dispatchers + defaults) — token names, categories AND the exact chord strings. Two
+# representations, two runtimes (the GUI shows this default; the compositor binds the Lua
+# one — they must be byte-identical).
+#
+# Numbered workspaces (ws_1..10, move_ws_1..10) carry a template label in the GUI
+# (hotkeys.ws / hotkeys.move_ws with %n%); they are still listed here explicitly because the
+# CLI needs each token, category and default chord.
+
+# token		category	default_chord
+# ── Applications ──────────────────────────────────────────────────────────────────
+terminal	apps	SUPER + Return
+terminal_alt	apps	SUPER + SHIFT + Return
+launcher	apps	SUPER + D
+hub	apps	SUPER + Space
+assistant	apps	SUPER + W
+volume	apps	SUPER + A
+powermenu	apps	SUPER + Backspace
+files	apps	SUPER + E
+browser	apps	SUPER + B
+
+# ── Window management ─────────────────────────────────────────────────────────────
+close	window	SUPER + Q
+kill	window	SUPER + SHIFT + Q
+fullscreen	window	SUPER + F
+fake_fullscreen	window	SUPER + SHIFT + F
+maximize	window	SUPER + M
+float	window	SUPER + SHIFT + Space
+center	window	SUPER + SHIFT + C
+pin	window	SUPER + P
+group_toggle	window	SUPER + G
+group_next	window	SUPER + Tab
+group_prev	window	SUPER + SHIFT + Tab
+group_into	window	SUPER + SHIFT + G
+group_out	window	SUPER + CTRL + G
+resize_mode	window	SUPER + R
+
+# ── Focus / navigation ────────────────────────────────────────────────────────────
+focus_left	focus	SUPER + left
+focus_right	focus	SUPER + right
+focus_up	focus	SUPER + up
+focus_down	focus	SUPER + down
+cycle_next	focus	SUPER + CTRL + Tab
+focus_mon_prev	focus	SUPER + CTRL + left
+focus_mon_next	focus	SUPER + CTRL + right
+
+# ── Move windows ──────────────────────────────────────────────────────────────────
+move_left	move	SUPER + SHIFT + left
+move_right	move	SUPER + SHIFT + right
+move_up	move	SUPER + SHIFT + up
+move_down	move	SUPER + SHIFT + down
+move_ws_prev	move	SUPER + CTRL + SHIFT + left
+move_ws_next	move	SUPER + CTRL + SHIFT + right
+move_ws_1	move	SUPER + SHIFT + 1
+move_ws_2	move	SUPER + SHIFT + 2
+move_ws_3	move	SUPER + SHIFT + 3
+move_ws_4	move	SUPER + SHIFT + 4
+move_ws_5	move	SUPER + SHIFT + 5
+move_ws_6	move	SUPER + SHIFT + 6
+move_ws_7	move	SUPER + SHIFT + 7
+move_ws_8	move	SUPER + SHIFT + 8
+move_ws_9	move	SUPER + SHIFT + 9
+move_ws_10	move	SUPER + SHIFT + 0
+move_mon_prev	move	SUPER + SHIFT + ALT + left
+move_mon_next	move	SUPER + SHIFT + ALT + right
+scratchpad_send	move	SUPER + SHIFT + S
+scratchpad_return	move	SUPER + CTRL + S
+
+# ── Workspaces ────────────────────────────────────────────────────────────────────
+ws_1	workspace	SUPER + 1
+ws_2	workspace	SUPER + 2
+ws_3	workspace	SUPER + 3
+ws_4	workspace	SUPER + 4
+ws_5	workspace	SUPER + 5
+ws_6	workspace	SUPER + 6
+ws_7	workspace	SUPER + 7
+ws_8	workspace	SUPER + 8
+ws_9	workspace	SUPER + 9
+ws_10	workspace	SUPER + 0
+ws_next	workspace	SUPER + ALT + right
+ws_prev	workspace	SUPER + ALT + left
+scratchpad_toggle	workspace	SUPER + S
+
+# ── Dwindle layout ────────────────────────────────────────────────────────────────
+pseudo	dwindle	SUPER + SHIFT + P
+togglesplit	dwindle	SUPER + J
+
+# ── System ────────────────────────────────────────────────────────────────────────
+lock	system	SUPER + L
+reload	system	SUPER + SHIFT + R
+clipboard	system	SUPER + V
+layouts	system	SUPER + O
+screenshot_screen	system	SUPER + I
+screenshot_region	system	SUPER + SHIFT + I
+screenshot_window	system	SUPER + CTRL + I
+dnd	system	SUPER + SHIFT + D
+nightlight	system	SUPER + SHIFT + N
+
+# ── Menu navigation (Quickshell-local — NOT a Hyprland bind) ────────────────────────
+# EVERY keyboard-driven W surface reads these seven chords through `w-hotkeys status
+# --porcelain` to resolve Up/Down/Left/Right/Return/Escape/Delete — the Hub and its panels,
+# but equally the launcher, clipboard viewer, assistant, layouts panel, volume/brightness
+# popups, calendar, infobox, file picker and auth prompt. Nothing in hotkeys-catalog.lua's
+# M.actions binds them at the compositor (each of those surfaces holds the keyboard itself,
+# so no global bind is needed). Still ordinary tokens otherwise — `set`/`reset`/profile
+# diffs all work, so a profile can retarget them like any action.
+# Where a text field owns the keyboard (launcher/clipboard/assistant/layouts/pickers/auth)
+# the same chords act with a fixed Ctrl prefix, since a bare letter would be typed into the
+# field instead; arrows, Enter and Escape stay bare there too. confirm/back also have a
+# fixed Space+Enter / Backspace alias at their call sites (universal idioms, not part of the
+# arrows/hjkl story). Both rules live in core/HubNavKeys.qml — that file is the contract.
+menu_up	menu	up
+menu_down	menu	down
+menu_left	menu	left
+menu_right	menu	right
+menu_confirm	menu	Return
+menu_back	menu	Escape
+menu_delete	menu	Delete

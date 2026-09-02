@@ -1,0 +1,33 @@
+#!/bin/sh
+# w-cliphist-store — gate in front of `cliphist store` for the W clipboard manager.
+#
+# Invoked once per clipboard event by the two
+#   wl-paste --type text|image --watch w-cliphist-store
+# daemons in hyprland.lua. Reads the user-owned clipboard.json LIVE (fresh process per
+# event), so toggles take effect without restarting the watchers:
+#
+#   enabled = false          → record nothing. The whole manager is off; the $mod+V
+#                              viewer is gated separately in Clipboard.qml.
+#   filterSensitive != false → drop entries the source flagged secret. wl-paste detects
+#                              the x-kde-passwordManagerHint MIME hint (set by KeePassXC,
+#                              Bitwarden desktop, KWallet, …) and exports
+#                              CLIPBOARD_STATE=sensitive for those offers. Only source
+#                              apps that set the hint can be filtered — a manually copied
+#                              password from e.g. a browser field carries no hint and
+#                              cannot be told apart on Wayland (documented limitation).
+#
+# Missing jq or config → safe defaults (enabled on, filter on). See quickshell-clipboard.md.
+
+cfg="${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/w/config/clipboard.json"
+
+enabled=true
+filter=true
+if [ -r "$cfg" ] && command -v jq >/dev/null 2>&1; then
+	enabled=$(jq -r 'if .enabled == false then "false" else "true" end' "$cfg" 2>/dev/null) || enabled=true
+	filter=$(jq -r 'if .filterSensitive == false then "false" else "true" end' "$cfg" 2>/dev/null) || filter=true
+fi
+
+[ "$enabled" = false ] && exit 0
+[ "$filter" != false ] && [ "$CLIPBOARD_STATE" = sensitive ] && exit 0
+
+exec cliphist store

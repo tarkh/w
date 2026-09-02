@@ -1,0 +1,22 @@
+# kbdlight.manifest — config owned by mod_kbdlight (keyboard backlight).
+#
+# Three layers, two of them tracked here (update-system.md phase 2):
+#   • /usr/share/w/defaults/kbdlight.conf + .schema — W's defaults and WHO may set
+#     each key. Shipped data, class managed: W owns them, every update overwrites.
+#   • /etc/w/kbdlight.conf — the admin's DEVIATIONS from those defaults. Class
+#     override: the update never touches it; `w-reset kbdlight` drops the
+#     deviations so the machine falls back to the vendor layer.
+#
+# NOT tracked here — generated output, regenerate with `sudo apply.sh --kbdlight`:
+#   • the `w-kbdlight` entry in /etc/mkinitcpio.conf's HOOKS array
+#   • /etc/w/kbdlight.boot + /etc/w/kbdlight.modules INSIDE the initramfs (build-
+#     time snapshots written by the install hook; they do not exist on the running
+#     system, only in the image)
+# ~/.config/w/kbdlight.conf holds only the per-user key step, created on demand
+# with no vendor default — class user-conf: `w-reset kbdlight` deletes it.
+#
+# Format: <path>\t<class>   class: managed | override | user-conf
+/usr/share/w/defaults/kbdlight.conf	managed
+/usr/share/w/defaults/kbdlight.schema	managed
+/etc/w/kbdlight.conf	override
+.config/w/kbdlight.conf	user-conf

@@ -1,0 +1,66 @@
+# W Linux — "i3-vim" hotkey profile. W-managed, read-only.
+# Format: token<TAB>chord   (# comments + blank lines ignored)
+#
+# Golden-standard tiling profile for power users with vim habits who keep their hands on
+# the home row: ALL directional navigation moves off the arrow keys onto h/j/k/l. The
+# modifier structure of the "default" profile is preserved unchanged — only the direction
+# KEY changes (arrow → hjkl), so muscle memory carries over between the two profiles: the
+# base chord picks direction (hjkl), the modifiers pick scope (window / monitor / workspace).
+# One-dimensional scopes (monitor, workspace) use h/l only. The arrow keys are freed.
+#
+# This lists only the tokens that DIFFER from the W defaults (the "default" profile /
+# catalog.tokens); every other token keeps its default chord. `w-hotkeys use i3-vim` copies
+# these into the active fragment as overrides. Mod is SUPER (W's mod), as in the default.
+#
+# Conflict-free by construction: every overridden chord is unique against the remaining
+# defaults. Two default binds are relocated to free their key for vim focus:
+#   lock        SUPER+L → SUPER+SHIFT+X   (frees SUPER+L for focus_right)
+#   togglesplit SUPER+J → SUPER+backslash (frees SUPER+J for focus_down)
+# (close/kill/float are left at their defaults — SUPER+Q / SUPER+SHIFT+Q / SUPER+SHIFT+Space
+# already match i3 muscle memory, so no override is needed.)
+
+# ── Window focus — vim home row (h/j/k/l = left/down/up/right) ──────────────────────
+focus_left	SUPER + H
+focus_down	SUPER + J
+focus_up	SUPER + K
+focus_right	SUPER + L
+
+# ── Move window — Shift + home row ──────────────────────────────────────────────────
+move_left	SUPER + SHIFT + H
+move_down	SUPER + SHIFT + J
+move_up	SUPER + SHIFT + K
+move_right	SUPER + SHIFT + L
+
+# ── Monitor focus / move — home row horizontal (h/l), default modifiers preserved ───
+focus_mon_prev	SUPER + CTRL + H
+focus_mon_next	SUPER + CTRL + L
+move_mon_prev	SUPER + SHIFT + ALT + H
+move_mon_next	SUPER + SHIFT + ALT + L
+
+# ── Workspace prev/next + move window to prev/next — home row horizontal ────────────
+ws_prev	SUPER + ALT + H
+ws_next	SUPER + ALT + L
+move_ws_prev	SUPER + CTRL + SHIFT + H
+move_ws_next	SUPER + CTRL + SHIFT + L
+
+# ── Relocated defaults (free SUPER+L / SUPER+J for vim focus above) ─────────────────
+lock	SUPER + SHIFT + X
+togglesplit	SUPER + backslash
+
+# ── W menu navigation (Quickshell-local — no SUPER, consumed by the panel that holds the
+#    keyboard, see catalog.tokens' "menu" category) — arrows → hjkl, same direction
+#    convention as above. In panels with a text field these act with Ctrl (Ctrl+j/Ctrl+k —
+#    the fzf chord, derived from the profile rather than hardcoded). ──
+menu_left	H
+menu_down	J
+menu_up	K
+menu_right	L
+
+# menu_confirm/menu_back keep the W default (Return/Escape) — nothing hjkl-related about
+# them, and Backspace stays a fixed "also back" alias in BOTH profiles (see
+# core/HubNavKeys.qml) — so it must never double as delete here too, or the two meanings
+# collide inside InputPanel. menu_delete moves to X instead: vim's own "delete character"
+# mnemonic, matching the hjkl motion theme above, no modifier, no collision. In a panel
+# with a text field that reads as Ctrl+x, which shadows the field's own "cut" — accepted
+# deliberately: palette text is a throwaway query and Shift+Del deletes there as well.
+menu_delete	X

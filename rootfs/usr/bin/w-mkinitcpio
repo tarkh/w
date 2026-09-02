@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# w-mkinitcpio — W Linux initramfs rebuild wrapper (bootloader-aware)
+#
+# One canonical way for W automation (installer apply.sh, w-style Plymouth axis, GPU
+# early-KMS module, and any future tool) to rebuild the initramfs. It hides two
+# bootloader-specific facts a bare `mkinitcpio` gets wrong in W's automated, possibly-
+# headless flows:
+#
+#   1. Limine (the encrypted default) runs the systemd kernel-install / BLS layout, driven
+#      by the AUR `limine-mkinitcpio-hook`. There the initramfs is built by kernel-install
+#      straight into the ESP (…/<machine-id>/<pkgbase>/) and the Limine entries are updated
+#      in the same step. Static /etc/mkinitcpio.d/*.preset files are NOT maintained — the
+#      presets are unowned, generated once, and get removed on the first kernel upgrade and
+#      never regenerated — so `mkinitcpio -P` then fails with "No presets found in
+#      /etc/mkinitcpio.d". Worse, even with a preset it would write /boot/initramfs-*.img,
+#      which is NOT what Limine boots (the ESP copy is). The blessed rebuild is
+#      `limine-mkinitcpio` (= kernel-install rebuild + limine.conf regen): preset-free,
+#      non-interactive under root, and it stages the ESP itself. We call it when present.
+#
+#   2. Plain GRUB systems use classic preset-based mkinitcpio writing /boot/initramfs-*.img.
+#      There we invoke the real /usr/bin/mkinitcpio by full path — never the interactive
+#      /usr/local/bin/mkinitcpio shim that limine-mkinitcpio-hook ships (it blocks on a
+#      "run limine-mkinitcpio now? [Y/n]" prompt, hanging unattended flows). On a Limine
+#      system this branch is normally unreachable; it doubles as recovery if the AUR hook
+#      failed to install but /etc/default/limine already exists (restage via limine-update).
+#
+# Usage: w-mkinitcpio [mkinitcpio args...]
+#   The Limine path always rebuilds every kernel and ignores extra args; the GRUB path
+#   defaults to `-P` when none are given. Every W caller passes none (i.e. wants -P).
+
+set -euo pipefail
+
+err()       { echo "w-mkinitcpio: $*" >&2; }
+need_root() { [[ $EUID -eq 0 ]] || { err "this command requires root"; exit 1; }; }
+
+case "${1:-}" in
+  -h|--help)
+    cat <<'EOF'
+Usage: w-mkinitcpio [mkinitcpio args...]
+
+Rebuild the initramfs the way this system actually boots:
+  • Limine (kernel-install/BLS, limine-mkinitcpio-hook present): runs
+    `limine-mkinitcpio` — rebuilds into the ESP and regenerates Limine entries; needs
+    no /etc/mkinitcpio.d presets. Extra args are ignored (always all kernels).
+  • Plain GRUB / no Limine: runs the real /usr/bin/mkinitcpio (bypassing the
+    limine-mkinitcpio-hook shim prompt), defaulting to `-P` when no args are given.
+EOF
+    exit 0
+    ;;
+esac
+
+need_root
+
+# Limine kernel-install / BLS path: limine-mkinitcpio owns the rebuild + ESP staging +
+# entry regeneration in one non-interactive step. Preset-independent — the correct (and,
+# once limine-mkinitcpio-hook is installed, the ONLY working) rebuild.
+if command -v limine-mkinitcpio &>/dev/null; then
+  exec limine-mkinitcpio
+fi
+
+# Plain GRUB / no-Limine fallback: classic preset-based rebuild via the real binary (never
+# the /usr/local/bin shim). If /etc/default/limine exists but limine-mkinitcpio somehow
+# doesn't (AUR hook failed to install), restage the ESP with limine-update — best-effort,
+# a stale ESP recovers on the next pacman transaction so a hiccup must not fail the rebuild.
+/usr/bin/mkinitcpio "${@:--P}"
+if [[ -f /etc/default/limine ]] && command -v limine-update &>/dev/null; then
+  echo "w-mkinitcpio: restaging ESP (limine-update)..."
+  limine-update || err "warning: limine-update failed; ESP staging may be stale"
+fi

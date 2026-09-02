@@ -1,0 +1,101 @@
+# Edge ISO build — W's canary on upstream Arch.
+#
+# The image this produces is useful, but it is not the point. The point is that
+# W is a thin layer over a moving distribution, and the ways it breaks are
+# upstream's: an AUR package that stops compiling, a package that leaves the
+# repositories, a tool that changes its flags. Those breakages are invisible to
+# a static check and show up on a user's machine weeks later. Building the whole
+# image every night turns them into a red run the same day.
+#
+# It runs here, in the public repository, from the published tree — which makes
+# it a free second proof: scripts/publish.exclude removes development files from
+# what users get, and if it ever removed something the build actually needs, the
+# next night is red. That check costs nothing extra and cannot be forgotten.
+#
+# Everything that turns the tree into an image lives in ci/, not here, so it is
+# covered by scripts/check.sh and runs identically on a developer's machine:
+#
+#   ci/iso-build-container.sh
+name: edge-iso
+
+on:
+  schedule:
+    # 23:17 UTC — not on the hour, where GitHub's scheduler is most congested.
+    # Measured drift is far larger than the minutes that choice was meant to
+    # dodge: +6h45m and +6h01m on the first two nights it ran, with `createdAt`
+    # equal to `startedAt` — the scheduler's queue, not ours. The hour moved
+    # three hours earlier (it was 02:17) for that reason and no other: not to
+    # make the build finish sooner, but to land the drifted result inside the
+    # morning it is actually read. Do not read this as "the image is ready by
+    # 00:20".
+    - cron: '17 23 * * *'
+
+  # There is deliberately no `release: published` trigger (removed 2026-09-02).
+  # A release is the act of publishing the tree, not a reason to occupy a runner
+  # for forty minutes; the nightly run — and the e2e chained behind it — is what
+  # proves the tree still builds and still installs. A release that does need
+  # that proof at once asks for it out loud, which is what this trigger is for:
+  #
+  #   gh workflow run edge-iso.yml --repo <owner>/<repo>
+  #   gh workflow run edge-e2e.yml --repo <owner>/<repo>   # once the build is green
+  #
+  # Two consequences worth knowing before they surprise someone:
+  #   * the `edge` pre-release keeps last night's ISO until the next build, so
+  #     the download is one night behind a fresh release;
+  #   * in a brand-new repository nothing creates the `edge` tag at all, so the
+  #     first build after the first release has to be dispatched by hand.
+  # Both are written up in .claude/library/publishing-bootstrap.md.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: edge-iso
+  cancel-in-progress: false
+
+jobs:
+  # Static verification first: it fails in a couple of minutes, where the build
+  # takes the better part of an hour to reach the same verdict.
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: scripts/check.sh
+        run: bash ci/iso-build-container.sh --check-only
+
+  iso:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the ISO
+        run: bash ci/iso-build-container.sh
+
+      - name: Publish it as the rolling edge image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash ci/publish-edge-iso.sh
+
+  # One thread in the tracker, not a pile of duplicates: the logic — and the
+  # sentence about what a failure at each stage usually means — lives in
+  # ci/report-canary.sh, shared with edge-e2e and lintable by check.sh.
+  report:
+    needs: [check, iso]
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Open, update or close the canary issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          bash ci/report-canary.sh edge-iso-failure \
+            "Edge ISO build is failing" \
+            "check=${{ needs.check.result }}" "iso=${{ needs.iso.result }}"

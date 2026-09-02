@@ -1,0 +1,10 @@
+{
+    "radius": "radius",
+    "border": "border",
+    "opacity": "surface",
+    "marginOffset": -4,
+    "iconMode": "tint",
+    "iconStrength": 1.0,
+    "iconShade": 1.0,
+    "iconLift": 0.0
+}

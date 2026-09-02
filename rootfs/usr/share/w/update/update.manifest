@@ -1,0 +1,6 @@
+# update.manifest — system config owned by mod_update (w-update check timer).
+# Managed system paths (root to reset), restored from the W source. The `updates`
+# bar block lives in the quickshell config (its own manifest).
+# Format: <path>\t<class>
+/etc/systemd/user/w-update-check.service	managed
+/etc/systemd/user/w-update-check.timer	managed

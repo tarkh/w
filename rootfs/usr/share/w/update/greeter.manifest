@@ -1,0 +1,17 @@
+# greeter.manifest — system config owned by mod_greeter (greetd + Quickshell greeter).
+# Most rows are managed system paths: reset restores them from the W source
+# (/var/lib/w/src/rootfs, edge) — needs root. The greeter is config-as-code with
+# no user layer (customisation goes through the theme system, not file edits), so
+# it is always safe to force re-deploy. The greeter's rendered theme (colors.json
+# etc.) is refreshed by `w-style render_system` on the next login / --style.
+# The two /etc/w/monitors-greeter.* rows are override: the greeter's monitor
+# layout (`w-monitor greeter`), born at runtime in /etc/w/ (not /etc/greetd/,
+# which this manifest deploys wholesale) precisely so a re-apply never clobbers
+# it — see w-monitor.md §Этап 4. No vendor default shipped in rootfs; a reset
+# just deletes them (`w-monitor greeter reset`), falling back to auto.
+# Format: <path>\t<class>   (trailing '/' = directory)
+/etc/greetd/	managed
+/etc/pam.d/greetd	managed
+/etc/systemd/system/greetd.service.d/override.conf	managed
+/etc/w/monitors-greeter.lua	override
+/etc/w/monitors-greeter.json	override

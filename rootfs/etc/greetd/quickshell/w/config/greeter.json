@@ -1,0 +1,18 @@
+{
+  "_comment": "W Linux greeter — admin config. Not touched by w-style/w-theme. See GreeterConfig.qml for all keys.",
+  "showSessionPicker": false,
+  "_primaryMonitor_comment": "Connector name of the monitor showing the login card (e.g. \"DP-1\"). Empty = auto: monitor at the layout origin (0,0), else the first screen. Wallpaper fills every monitor regardless.",
+  "primaryMonitor": "",
+  "_cardOpacity_comment": "Opacity of the card background only (inputs stay opaque). Below 1 reveals the compositor blur. 1 = solid. Number (0..1) OR effects-axis token \"surface\"/\"scrim\" (follows the theme).",
+  "cardOpacity": "surface",
+
+  "_timing_comment": "Login flow choreography (ms). in: initPause → wallpaper → uiDelay → interface. out: interface → uiDelay → wallpaper → postPause → launch. bgFade/uiFade = fade durations.",
+  "initPause": 0,
+  "uiDelay": 500,
+  "postPause": 0,
+  "bgFade": 400,
+  "uiFade": 300,
+
+  "_launchDelay_comment": "When to start the user session: false = after the wallpaper fully fades out (seamless black hand-off). A number = ms after login is confirmed regardless of fade (0 = immediately); overlaps the user session cold start with the fade tail to cut black time.",
+  "launchDelay": false
+}

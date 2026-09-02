@@ -1,0 +1,24 @@
+# nightlight.schema — which layer may decide each key of the `nightlight` subsystem.
+#
+# Read by /usr/lib/w/w-conf-lib.sh (and its Python twin) during the load
+# pass; a user-layer assignment to a `system` key is dropped with a warning, and
+# `wconf_set` refuses to write it in the first place. See w-conf.md.
+#
+# Format: <KEY>\t<scope>       scope: system | user | both
+#   system — root domain: the admin (or fleet policy) decides, per machine.
+#   user   — the logged-in user may override it in ~/.config/w/nightlight.conf.
+#   both   — either layer may speak; the usual priority order applies.
+#
+# Every key here is `user`. The night light lives entirely inside one graphical
+# session — it colours that user's own screen, writes only that user's config,
+# and restarting the daemon is `systemctl --user`. There is no root domain to
+# protect, so there is no polkit anywhere in this subsystem. A fleet that does
+# want to fix these (a shift-work deployment, say) still can: policy.d sits above
+# the user layer and locks the setters, which is the mechanism for exactly this.
+
+MODE	user
+NIGHT_TEMP	user
+DAY_TEMP	user
+NIGHT_START	user
+NIGHT_END	user
+RAMP_MINUTES	user

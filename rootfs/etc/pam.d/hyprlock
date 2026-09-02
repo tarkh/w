@@ -1,0 +1,11 @@
+# W Linux — PAM stack for hyprlock (screen lock).
+#
+# hyprlock only authenticates (no session/account/password phases), so a single
+# auth include is all it needs. Delegating to system-auth means the lock accepts
+# the same password as login (pam_unix). This guarantees password unlock always
+# works regardless of what the hyprlock package ships as its default.
+#
+# Fingerprint unlock is NOT wired through PAM here: hyprlock talks to fprintd
+# directly over D-Bus (auth:fingerprint in hyprlock.conf), in parallel with this
+# password path. See package-hyprlock.md.
+auth include system-auth

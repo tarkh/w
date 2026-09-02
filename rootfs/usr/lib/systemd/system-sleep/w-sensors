@@ -1,0 +1,65 @@
+#!/bin/sh
+# W Linux — some hwmon sensor drivers (observed: coretemp on older MacBook
+# hardware) lose their binding to the platform device across suspend/resume:
+# the kernel module stays loaded but /sys/class/hwmon/hwmonN for it disappears,
+# so `sensors`/the bar temp block silently fall back to whatever chip is left
+# (e.g. applesmc), showing a frozen, wrong reading. lm_sensors.service can't fix
+# this itself — modprobe on an already-loaded module is a no-op, it doesn't
+# rebind the driver.
+#
+# Detect-then-fix, not unconditional: pre records which of sensors-detect's
+# modules (/etc/conf.d/lm_sensors, HWMON_MODULES — same file lm_sensors.service
+# reads) are actually bound to a live hwmon chip right now; post reloads only
+# the ones that dropped out. On hardware where nothing breaks (the common
+# case) this is two cheap sysfs reads per resume and no action at all.
+
+SENSORS_CONF="/etc/conf.d/lm_sensors"
+LIVE_FLAG="/run/w/sensors-live"
+
+hwmon_modules() {
+  [ -r "$SENSORS_CONF" ] || return 0
+  sed -n 's/^HWMON_MODULES="\{0,1\}\([^"]*\)"\{0,1\}.*/\1/p' "$SENSORS_CONF" | head -n1
+}
+
+# True if some /sys/class/hwmon/*/name equals the given module name — the
+# kernel convention every mainline hwmon driver follows (coretemp, k10temp,
+# nct6775, it87, ...): the chip name it registers is its own module name.
+is_bound() {
+  for f in /sys/class/hwmon/*/name; do
+    [ -r "$f" ] || continue
+    [ "$(cat "$f" 2>/dev/null)" = "$1" ] && return 0
+  done
+  return 1
+}
+
+pre() {
+  mods="$(hwmon_modules)"
+  [ -n "$mods" ] || return 0
+  mkdir -p /run/w
+  : > "$LIVE_FLAG"
+  for m in $mods; do
+    is_bound "$m" && echo "$m" >> "$LIVE_FLAG"
+  done
+  [ -s "$LIVE_FLAG" ] || rm -f "$LIVE_FLAG"
+}
+
+post() {
+  [ -f "$LIVE_FLAG" ] || return 0
+  while IFS= read -r m || [ -n "$m" ]; do
+    [ -n "$m" ] || continue
+    if ! is_bound "$m"; then
+      sleep 1  # give a slow-resuming driver a chance to rebind on its own
+      if ! is_bound "$m"; then
+        modprobe -r "$m" 2>/dev/null
+        modprobe "$m" 2>/dev/null
+        echo "w-sensors: $m lost its hwmon binding after resume, reloaded"
+      fi
+    fi
+  done < "$LIVE_FLAG"
+  rm -f "$LIVE_FLAG"
+}
+
+case "$1" in
+  pre)  pre ;;
+  post) post ;;
+esac

@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest something W should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that W makes hard or impossible?
+        Describe the situation, not the solution — the solution is easier to judge
+        once the problem is clear.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you have in mind
+      description: Optional. If you already have a shape in mind, describe it.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today instead
+      description: Optional, but useful — a workaround that almost works often says
+        more about the right design than the request itself.

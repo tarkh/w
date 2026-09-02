@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# w-hub-actuate — W Linux Hub/Settings privileged actuation dispatcher (Tier-2).
+#
+# The root entry point the W Hub (Quickshell control center / Settings GUI) reaches
+# for privileged actions the user triggers from a tile — changing the DNS mode, the
+# firewall zone, etc. The Hub runs as the ordinary user and never gains privilege on
+# its own: a privileged tile execs
+#   pkexec /usr/lib/w/w-hub-actuate <capability> [args...]
+# and the com.w.hub.actuate polkit action makes hyprpolkitagent prompt the user
+# (fingerprint / password) before this runs as root. Every invocation is audited to
+# journald (tag w-hub-actuate, authpriv) with the caller uid, capability and args —
+# distinct from the AI path's tag, so the log shows which front-end fronted the
+# action even though the validated operations are the same.
+#
+# The allowlist + argument validation + audited execution live in the shared core
+# w-actuate-lib.sh (also used by w-ai-actuate). See quickshell-hub.md.
+#
+# Exit codes: 0 success · 1 runtime/validation error · 2 usage error.
+
+set -euo pipefail
+source /usr/lib/w/w-actuate-lib.sh
+w_actuate_main w-hub-actuate "$@"

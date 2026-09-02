@@ -1,0 +1,161 @@
+# Edge E2E — does the image we just published actually install?
+#
+# edge-iso proves the tree still builds. That is the cheaper half of the question
+# and the less interesting one: an image can build perfectly and still fail to
+# install, or install and come up with a dead service. This workflow takes the
+# image that was published — the file a user downloads, not a private rebuild of
+# it — boots it in a VM, installs it unattended, reboots into the result and
+# asserts against the running system.
+#
+# Both install paths, because they are two different boot stacks and the wizard
+# lets a user pick either:
+#
+#   encrypted   LUKS2 + Limine + TPM2, with the `containers` pack. The default,
+#               so the one most machines end up on, and the harder path — Limine,
+#               its two AUR hooks, ESP staging, TPM2 unlock.
+#   plain       btrfs + GRUB, no packs. Touched by none of the above: if upstream
+#               breaks grub-mkconfig or grub-btrfs, the encrypted run stays green
+#               while every unencrypted install is broken.
+#
+# They are two jobs rather than one matrix so the report can name which scenario
+# failed, and they run in parallel, so covering both costs no wall clock.
+#
+# Deliberately a SEPARATE workflow from edge-iso, with its own issue thread. "The
+# tree stopped building" and "the image stopped installing" are different
+# failures with different first suspects, and merging them into one canary would
+# make the thread say less each time it fired.
+#
+# workflow_run rather than a second cron: the image has to exist before it can be
+# tested, and chaining off the build removes both the guess at how long a build
+# takes and the chance of spending three hours testing yesterday's image. A red
+# build produces no run here, which is correct — there is nothing new to install.
+#
+# The chain follows the NIGHTLY build only — `workflow_run.event == 'schedule'`.
+# edge-iso is also dispatched by hand after a release that wants an immediate
+# rebuild, and "rebuild the image" and "reinstall it in two VMs" are separate
+# forty- and twelve-minute questions someone may want separately. GitHub gives a
+# chained workflow no way to read the inputs of the run that triggered it, so the
+# only honest signal available is which event started that run; asking for e2e is
+# therefore a second dispatch of this workflow, which needs no build at all — it
+# installs whatever is currently published.
+#
+# The logic lives in ci/, never here, so scripts/check.sh lints it and a developer
+# reproduces a CI failure with the identical command:
+#
+#   ci/e2e-container.sh --encrypted
+#   ci/e2e-container.sh
+name: edge-e2e
+
+on:
+  workflow_run:
+    workflows: [edge-iso]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: edge-e2e
+  cancel-in-progress: false
+
+jobs:
+  # Two conditions, both about workflow_run only, so a manual dispatch always runs
+  # against whatever is on the release page:
+  #   * a build that went red published nothing — there is no new image to install;
+  #   * a build that was dispatched by hand is answering "does the tree still
+  #     build", and whoever asked that dispatches this workflow too if they also
+  #     want "does it still install" (see the header).
+  # The same expression guards `report` below — they have to skip together,
+  # because report counts a skipped scenario as a failure and would otherwise
+  # file an issue about a run that never had anything to test.
+  e2e-encrypted:
+    if: >-
+      github.event_name != 'workflow_run'
+      || (github.event.workflow_run.conclusion == 'success'
+          && github.event.workflow_run.event == 'schedule')
+    runs-on: ubuntu-latest
+    # vm/e2e.sh's own phase ceilings add up to 145 minutes and a healthy run uses
+    # about twelve, so this sits just above their sum: a wedged run is killed
+    # here, with its logs collected, rather than hours later by the platform
+    # without them.
+    timeout-minutes: 160
+    steps:
+      - uses: actions/checkout@v7
+      # The published artefact, not a rebuild. Testing what was actually handed
+      # to users is the whole point, and it saves the sixteen minutes a build
+      # takes. vm/e2e.sh picks the newest ISO in archiso/out on its own.
+      - name: Fetch the published edge image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p archiso/out
+          gh release download edge --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.iso' --dir archiso/out
+          ls -lh archiso/out
+      - name: LUKS2 + Limine + TPM2
+        run: bash ci/e2e-container.sh --encrypted
+      # Uploaded on failure AND on success: a green run's bundle is the baseline
+      # that makes the next red one readable.
+      - name: Collect the logs from inside the VM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs-encrypted
+          path: vm/logs/
+          if-no-files-found: warn
+          retention-days: 14
+
+  e2e-plain:
+    if: >-
+      github.event_name != 'workflow_run'
+      || (github.event.workflow_run.conclusion == 'success'
+          && github.event.workflow_run.event == 'schedule')
+    runs-on: ubuntu-latest
+    timeout-minutes: 160
+    steps:
+      - uses: actions/checkout@v7
+      - name: Fetch the published edge image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p archiso/out
+          gh release download edge --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.iso' --dir archiso/out
+          ls -lh archiso/out
+      - name: btrfs + GRUB
+        run: bash ci/e2e-container.sh
+      - name: Collect the logs from inside the VM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs-plain
+          path: vm/logs/
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Both scenarios are named in `needs` and both results are handed to the
+  # script, which is green only when every one of them says `success` — a
+  # skipped or missing result counts as a failure there, so this cannot go green
+  # off whichever job happened to pass. The run log prints the roster it judged.
+  report:
+    needs: [e2e-encrypted, e2e-plain]
+    if: >-
+      always() && !cancelled()
+      && (github.event_name != 'workflow_run'
+          || (github.event.workflow_run.conclusion == 'success'
+              && github.event.workflow_run.event == 'schedule'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Open, update or close the canary issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          bash ci/report-canary.sh edge-e2e-failure \
+            "Edge image fails to install" \
+            "e2e-encrypted=${{ needs.e2e-encrypted.result }}" \
+            "e2e-plain=${{ needs.e2e-plain.result }}"

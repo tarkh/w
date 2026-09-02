@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# w-screenshot — W Linux screen capture front-end (Wayland/Hyprland)
+#
+# A thin orchestrator over the native wlr-screencopy stack, in the w-dns /
+# w-wallpaper style:
+#   • grim   — capture (same wlroots screencopy path hyprlock already uses)
+#   • slurp  — interactive region/window selection
+#   • satty  — annotation UI (its own toolbar does copy-to-clipboard / save-to
+#              -file; palette + font themed by w-style's `satty` axis)
+#   • wl-copy (wl-clipboard) — clipboard for the quick, non-annotated grabs
+#
+# Modes cover every capture case: a selected region, the focused window, the
+# focused output, or every output at once. The default action is `annotate`
+# (pipe the grab into satty); --copy and --save skip satty for a one-shot grab.
+#
+# The save path is passed to satty at RUNTIME (--output-filename) rather than
+# baked into its config, because w-style renders that config into /etc/skel as
+# root at install time where the user's $HOME is not yet known; only w-screenshot,
+# running as the user, can resolve the real Screenshots directory.
+#
+# NOTE (future session): video recording is intentionally out of scope for now.
+# It will be added here behind a `record` subcommand (wf-recorder / wl-screenrec)
+# plus a Quickshell bar indicator — see essentials.md roadmap.
+
+set -euo pipefail
+
+SCREENSHOT_DIR="${XDG_PICTURES_DIR:-$HOME/Pictures}/Screenshots"
+FILENAME_FMT="W-%Y-%m-%d_%H-%M-%S.png"   # strftime; shared by satty + --save
+
+err()  { echo "w-screenshot: $*" >&2; }
+note() { command -v notify-send >/dev/null 2>&1 && notify-send -a "W Screenshot" "$@" || true; }
+
+usage() {
+  cat <<EOF
+Usage: w-screenshot <mode> [action]
+
+Info: Capture the screen — region/window/output, annotate/copy/save.
+
+Modes:
+  region    Select a rectangular region (slurp)
+  window    Capture the focused window (Hyprland geometry)
+  output    Capture the focused monitor
+  full      Capture all monitors
+
+Actions (default: annotate):
+  --annotate   Open the capture in satty (its toolbar copies/saves)
+  --copy       Copy the capture straight to the clipboard (wl-copy)
+  --save       Save the capture to $SCREENSHOT_DIR and notify
+
+Exit codes:
+  0  Success or user-cancelled selection
+  1  Runtime error
+  2  Usage error
+
+Examples:
+  w-screenshot region                # select area → annotate in satty
+  w-screenshot output --copy         # focused monitor → clipboard
+  w-screenshot full --save           # every monitor → PNG file
+EOF
+}
+
+# Build the grim argument array for a mode into the global GRIM=().
+# Region/window pass a "-g X,Y WxH" geometry; output uses "-o <name>" (correct
+# scaling); full grabs everything. A cancelled selection exits 0 (not an error).
+build_grim() {
+  case "$1" in
+    region)
+      local geom
+      geom=$(slurp -d) || { err "selection cancelled"; exit 0; }
+      GRIM=(grim -g "$geom")
+      ;;
+    window)
+      local win geom
+      win=$(hyprctl -j activewindow)
+      if [[ -n $(jq -r '.address // empty' <<<"$win") ]]; then
+        geom=$(jq -r '"\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"' <<<"$win")
+        GRIM=(grim -g "$geom")
+      else
+        err "no focused window; falling back to region select"
+        geom=$(slurp -d) || { err "selection cancelled"; exit 0; }
+        GRIM=(grim -g "$geom")
+      fi
+      ;;
+    output)
+      local name
+      name=$(hyprctl -j monitors | jq -r 'first(.[] | select(.focused)) | .name')
+      [[ -n "$name" ]] || { err "could not resolve focused output"; exit 1; }
+      GRIM=(grim -o "$name")
+      ;;
+    full)
+      GRIM=(grim)
+      ;;
+    *)
+      usage; exit 2
+      ;;
+  esac
+}
+
+main() {
+  [[ $# -ge 1 ]] || { usage; exit 2; }
+  case "$1" in -h|--help|help) usage; exit 0 ;; esac
+
+  local mode="$1" action="${2:---annotate}"
+  local GRIM
+  build_grim "$mode"
+
+  case "$action" in
+    --annotate)
+      "${GRIM[@]}" - | satty --filename - \
+        --output-filename "$SCREENSHOT_DIR/$FILENAME_FMT"
+      ;;
+    --copy)
+      "${GRIM[@]}" - | wl-copy
+      note "Copied to clipboard"
+      ;;
+    --save)
+      mkdir -p "$SCREENSHOT_DIR"
+      local out; out="$SCREENSHOT_DIR/$(date +"$FILENAME_FMT")"
+      "${GRIM[@]}" "$out"
+      note "Saved" "$out"
+      ;;
+    *)
+      usage; exit 2
+      ;;
+  esac
+}
+
+main "$@"

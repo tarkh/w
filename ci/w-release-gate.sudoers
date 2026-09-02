@@ -1,0 +1,45 @@
+# w-release-gate.sudoers — TEMPLATE for provisioning a W build/CI host.
+#
+# Grants the release-gate (scripts/test.sh → scripts/build-iso.sh) exactly the
+# root it needs and nothing more, so the whole gate runs unattended (no TTY, no
+# password prompt) on a headless build server. The ONLY privileged step is
+# building the Arch ISO: mkarchiso must run as root — it pacstraps packages and
+# assembles the image root filesystem; there is no unprivileged path. Both e2e
+# phases (VM install, plain + encrypted) are sudo-free.
+#
+# Scope: pinned to the two commands build-iso.sh invokes, WITH their fixed
+# argument vectors. sudo matches args verbatim, so `rm` can only ever remove
+# this one work dir and mkarchiso can only run this one build — no wildcard,
+# no broader privilege. See .claude/library/e2e-preset.md (release gate).
+#
+# ── One assumption this grant makes about the host ────────────────────────────
+# It is NOT sufficient on a machine that does not already develop W. Before
+# mkarchiso runs, build-iso.sh pre-builds AUR packages, and makepkg installs
+# each one's declared dependencies through `sudo pacman -S` on its own. A W
+# development or build host has them (limine, snapper, btrfs-progs, libnotify,
+# the JDK the limine pair compiles against), so that step is invisible there —
+# on a bare host the gate dies at "sudo: a password is required" before it
+# compiles anything. Found by the CI container, which starts from nothing;
+# ci/iso-build-entrypoint.sh adds a pacman grant of its own and explains why it
+# does not belong here.
+#
+# ── Provisioning ──────────────────────────────────────────────────────────────
+# Substitute the two placeholders for this host, then install root-owned 0440
+# (the mode sudo requires for a drop-in), validating before it goes live:
+#
+#   <user>   the unprivileged user that runs the gate      (e.g. tarkh)
+#   <repo>   absolute path of the W checkout on this host  (e.g. /home/tarkh/Dev/w)
+#
+#   sed -e 's|<user>|tarkh|g' -e 's|<repo>|/home/tarkh/Dev/w|g' \
+#       ci/w-release-gate.sudoers > /tmp/w-release-gate
+#   visudo -cf /tmp/w-release-gate                         # syntax check
+#   sudo install -m0440 -o root -g root /tmp/w-release-gate /etc/sudoers.d/w-release-gate
+#
+# NOTE: this file is a TEMPLATE — never install it with the <placeholders>
+# unresolved (a literal <repo> path would make the grant match nothing).
+
+Cmnd_Alias W_ISO_BUILD = \
+    /usr/bin/mkarchiso -v -w <repo>/archiso/work -o <repo>/archiso/out <repo>/archiso/profile, \
+    /usr/bin/rm -rf <repo>/archiso/work
+
+<user> ALL=(root) NOPASSWD: W_ISO_BUILD

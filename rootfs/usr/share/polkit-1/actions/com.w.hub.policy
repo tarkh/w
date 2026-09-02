@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+<!--
+  W Linux — polkit action for the W Hub (control center / Settings GUI) privileged
+  (Tier-2) actuation.
+
+  The Hub runs as the ordinary user and can never gain privilege on its own. When a
+  privileged tile (DNS mode, firewall zone, …) is toggled it execs the
+  w-hub-actuate dispatcher through pkexec, and this action makes hyprpolkitagent
+  prompt the user (fingerprint or password) and journald audit it (tag
+  w-hub-actuate). One action covers every Tier-2 capability the Hub can reach; the
+  specific operation (dns / firewall / …) is recorded in the audit log, not encoded
+  here. auth_admin (no _keep) so every privileged step gets its own consent prompt.
+  Mirrors com.w.ai.actuate but with Settings-facing wording. See quickshell-hub.md.
+-->
+<policyconfig>
+  <vendor>W Linux</vendor>
+
+  <action id="com.w.hub.actuate">
+    <description>Change a W system setting from the control center</description>
+    <message>W Settings is requesting to change a privileged system setting</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/w/w-hub-actuate</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+</policyconfig>

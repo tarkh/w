@@ -1,0 +1,4 @@
+theme = "w"
+
+[editor]
+cursorline = true

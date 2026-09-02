@@ -1,0 +1,61 @@
+# modules/plymouth.sh — Plymouth boot splash with W theme
+
+mod_plymouth() {
+  ui_info "Configuring Plymouth..."
+
+  # mkinitcpio: insert plymouth hook after kms (before filesystems)
+  if ! grep -q 'plymouth' "$MNT/etc/mkinitcpio.conf"; then
+    sed -i 's/\bkms\b/kms plymouth/' "$MNT/etc/mkinitcpio.conf"
+  fi
+
+  # GRUB: add quiet splash to kernel cmdline
+  if ! grep -q '\bsplash\b' "$MNT/etc/default/grub"; then
+    sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 splash"/' \
+      "$MNT/etc/default/grub"
+  fi
+  if ! grep -q '\bquiet\b' "$MNT/etc/default/grub"; then
+    sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 quiet"/' \
+      "$MNT/etc/default/grub"
+  fi
+
+  # Set default theme
+  mkdir -p "$MNT/etc/plymouth"
+  cat > "$MNT/etc/plymouth/plymouthd.conf" <<'EOF'
+[Daemon]
+Theme=w
+ShowDelay=0
+EOF
+
+  # Seamless transition: keep splash until Wayland compositor takes over
+  local dropin_dir="$MNT/etc/systemd/system/plymouth-quit.service.d"
+  mkdir -p "$dropin_dir"
+  cp "$SRC/rootfs/etc/systemd/system/plymouth-quit.service.d/override.conf" "$dropin_dir/override.conf"
+
+  # Pause the wall-clock boot-progress estimate while the LUKS prompt is up. Deployed
+  # here too (not just by apply.sh) for the same reason as the theme below: on the
+  # encrypted path the install-time initramfs is what Limine stages for the very first
+  # boot — the one that always asks for the passphrase.
+  local ask_dropin_dir="$MNT/etc/systemd/system/systemd-ask-password-plymouth.service.d"
+  mkdir -p "$ask_dropin_dir"
+  cp "$SRC/rootfs/etc/systemd/system/systemd-ask-password-plymouth.service.d/10-w-pause-progress.conf" \
+    "$ask_dropin_dir/10-w-pause-progress.conf"
+
+  # Deploy the Plymouth theme + seed its logo BEFORE rebuilding, so the theme is
+  # actually present in the install-time initramfs. rootfs/ is only laid down post-boot
+  # by apply.sh, so without this the initramfs ships `Theme=w` but no themes/w/ — and
+  # on the encrypted path the Limine first-boot seed stages exactly this initramfs onto
+  # the ESP, leaving the very first boot (LUKS prompt) on the default/unthemed splash.
+  ui_info "Deploying Plymouth theme..."
+  mkdir -p "$MNT/usr/share/plymouth"
+  cp -a "$SRC/rootfs/usr/share/plymouth/." "$MNT/usr/share/plymouth/"
+  install -Dm644 "$SRC/rootfs/etc/w/themes/w/logo/W-logo-256x256.png" \
+    "$MNT/usr/share/plymouth/themes/w/logo.png"
+  chown -R root:root "$MNT/usr/share/plymouth"
+
+  # Rebuild initramfs with plymouth hook. Raw mkinitcpio (NOT w-mkinitcpio) on purpose:
+  # this is the install-time chroot, where rootfs isn't deployed yet (no w-mkinitcpio) and
+  # the AUR limine-mkinitcpio-hook shim doesn't exist either (it's pulled live by mod_limine,
+  # not in the chroot). ESP staging here is handled separately by limine_bootstrap_esp.
+  ui_info "Rebuilding initramfs (plymouth hook)..."
+  chroot_run mkinitcpio -P
+}

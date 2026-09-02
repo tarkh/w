@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# w-kernel — W Linux kernel selection & hardening control
+#
+# Front-end over pacman/GRUB/sysctl for: switching the active kernel (zen<->vanilla,
+# keeping DKMS headers paired) and toggling the hardening profile as a whole
+# (sysctl drop-ins + boot cmdline).
+# Raw drop-ins in /etc/sysctl.d/90-w-*.conf remain the source of truth.
+
+set -euo pipefail
+
+# The package-transaction seam (installer.md §5 layer 2): switching kernels pulls
+# the kernel, its headers and every DKMS rebuild behind them, and a stall halfway
+# through leaves the machine between two kernels. Until Ф.3 shipped the seam to
+# /usr/lib/w this script had no access to it and ran bare pacman.
+# shellcheck source=../lib/w/w-pac-lib.sh
+source /usr/lib/w/w-pac-lib.sh
+
+# ── Constants ──────────────────────────────────────────────────────────────────
+GRUB_DEFAULT_FILE="/etc/default/grub"
+SYSCTL_DIR="/etc/sysctl.d"
+HARDEN_DROPINS=(90-w-kernel.conf 90-w-fs.conf 90-w-net.conf)
+HARDEN_CMDLINE="init_on_alloc=1 init_on_free=1 slab_nomerge \
+randomize_kstack_offset=1 page_alloc.shuffle=1 vsyscall=none debugfs=off"
+
+# kernel name -> headers package
+declare -A KERNEL_PKG=([zen]=linux-zen [vanilla]=linux)
+declare -A HEADERS_PKG=([zen]=linux-zen-headers [vanilla]=linux-headers)
+declare -A KERNEL_IMG=([zen]=/boot/vmlinuz-linux-zen [vanilla]=/boot/vmlinuz-linux)
+
+err() { echo "w-kernel: $*" >&2; }
+need_root() { [[ $EUID -eq 0 ]] || { err "this command requires root"; exit 1; }; }
+
+usage() {
+  cat <<EOF
+Usage: w-kernel <command> [options]
+
+Info: Select the active kernel and toggle the hardening profile.
+
+Commands:
+  list                      Show installed kernels, the running one, and the default
+  set <zen|vanilla>         Install the kernel (+paired headers) and make it default
+  harden <on|off|status>    Toggle the whole hardening profile (sysctl + cmdline)
+  help                      Show this help
+
+Exit codes:
+  0  Success
+  1  Runtime error
+  2  Usage error
+
+Examples:
+  sudo w-kernel set zen
+  sudo w-kernel harden on
+EOF
+}
+
+# ── Kernel selection ───────────────────────────────────────────────────────────
+cmd_list() {
+  local running; running=$(uname -r)
+  local default="(grub discovery order)"
+  if grep -q '^GRUB_TOP_LEVEL=' "$GRUB_DEFAULT_FILE" 2>/dev/null; then
+    default=$(sed -n 's/^GRUB_TOP_LEVEL="\?\([^"]*\)"\?/\1/p' "$GRUB_DEFAULT_FILE")
+  fi
+  echo "Running kernel : $running"
+  echo "Default (GRUB) : $default"
+  echo "Installed:"
+  local name pkg
+  for name in zen vanilla; do
+    pkg="${KERNEL_PKG[$name]}"
+    if pacman -Qq "$pkg" &>/dev/null; then
+      echo "  - $name ($pkg $(pacman -Q "$pkg" | awk '{print $2}'))"
+    fi
+  done
+}
+
+cmd_set() {
+  local name="${1:-}"
+  [[ -n "${KERNEL_PKG[$name]:-}" ]] || { err "unknown kernel: '$name' (use zen|vanilla)"; exit 2; }
+  need_root
+
+  local kpkg="${KERNEL_PKG[$name]}" hpkg="${HEADERS_PKG[$name]}" img="${KERNEL_IMG[$name]}"
+
+  echo "==> Installing $kpkg + $hpkg (DKMS rebuilds against headers)..."
+  w_pac -S --needed --noconfirm "$kpkg" "$hpkg"
+
+  echo "==> Making $name the default boot entry..."
+  if grep -q '^GRUB_TOP_LEVEL=' "$GRUB_DEFAULT_FILE"; then
+    sed -i "s|^GRUB_TOP_LEVEL=.*|GRUB_TOP_LEVEL=\"$img\"|" "$GRUB_DEFAULT_FILE"
+  else
+    echo "GRUB_TOP_LEVEL=\"$img\"" >> "$GRUB_DEFAULT_FILE"
+  fi
+
+  echo "==> Regenerating GRUB config..."
+  grub-mkconfig -o /boot/grub/grub.cfg
+
+  echo "Done. Reboot into '$name'. Other installed kernels remain available in GRUB."
+}
+
+# ── Hardening profile ──────────────────────────────────────────────────────────
+# cmdline helpers operate on GRUB_CMDLINE_LINUX_DEFAULT, preserving other tokens.
+_cmdline_has() {
+  grep -qE "^GRUB_CMDLINE_LINUX_DEFAULT=\".*(^|[\" ])${1//./\\.}([\" ]|\$)" "$GRUB_DEFAULT_FILE"
+}
+_cmdline_add() {
+  grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' "$GRUB_DEFAULT_FILE" \
+    || echo 'GRUB_CMDLINE_LINUX_DEFAULT=""' >> "$GRUB_DEFAULT_FILE"
+  local tok
+  for tok in $HARDEN_CMDLINE; do
+    _cmdline_has "$tok" && continue
+    sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=\"\(.*\)\"|GRUB_CMDLINE_LINUX_DEFAULT=\"\1 ${tok}\"|" "$GRUB_DEFAULT_FILE"
+  done
+  _cmdline_tidy
+}
+_cmdline_remove() {
+  local tok
+  for tok in $HARDEN_CMDLINE; do
+    sed -i "s|\([\" ]\)${tok//./\\.}\([\" ]\)|\1\2|g" "$GRUB_DEFAULT_FILE"
+  done
+  _cmdline_tidy
+}
+_cmdline_tidy() {
+  sed -i 's|^\(GRUB_CMDLINE_LINUX_DEFAULT="\) *|\1|; s|  *\("\)$|\1|; s|\(GRUB_CMDLINE_LINUX_DEFAULT="[^"]*\)  *|\1 |g' "$GRUB_DEFAULT_FILE"
+}
+
+cmd_harden() {
+  local action="${1:-}"
+  case "$action" in
+    on)
+      need_root
+      local f
+      for f in "${HARDEN_DROPINS[@]}"; do
+        [[ -f "$SYSCTL_DIR/$f.disabled" ]] && mv "$SYSCTL_DIR/$f.disabled" "$SYSCTL_DIR/$f"
+      done
+      sysctl --system >/dev/null
+      _cmdline_add
+      grub-mkconfig -o /boot/grub/grub.cfg
+      echo "Hardening ON. Reboot required for cmdline params."
+      ;;
+    off)
+      need_root
+      local f
+      for f in "${HARDEN_DROPINS[@]}"; do
+        [[ -f "$SYSCTL_DIR/$f" ]] && mv "$SYSCTL_DIR/$f" "$SYSCTL_DIR/$f.disabled"
+      done
+      _cmdline_remove
+      grub-mkconfig -o /boot/grub/grub.cfg
+      echo "Hardening OFF. sysctl values persist until reboot; cmdline params removed."
+      ;;
+    status)
+      local f on=0 off=0
+      echo "sysctl drop-ins:"
+      for f in "${HARDEN_DROPINS[@]}"; do
+        if [[ -f "$SYSCTL_DIR/$f" ]]; then echo "  [on]  $f"; ((on++)) || true
+        elif [[ -f "$SYSCTL_DIR/$f.disabled" ]]; then echo "  [off] $f"; ((off++)) || true
+        else echo "  [--]  $f (missing)"; fi
+      done
+      echo "cmdline params:"
+      local tok
+      for tok in $HARDEN_CMDLINE; do
+        if _cmdline_has "$tok"; then echo "  [on]  $tok"; else echo "  [off] $tok"; fi
+      done
+      ;;
+    *) err "usage: w-kernel harden <on|off|status>"; exit 2 ;;
+  esac
+}
+
+# ── Dispatch ───────────────────────────────────────────────────────────────────
+case "${1:-}" in
+  list)            shift; cmd_list "$@" ;;
+  set)             shift; cmd_set "$@" ;;
+  harden)          shift; cmd_harden "$@" ;;
+  help|--help|-h)  usage; exit 0 ;;
+  "")              usage >&2; exit 2 ;;
+  *)               err "unknown command: $1"; usage >&2; exit 2 ;;
+esac

@@ -1,0 +1,25 @@
+# dev bundle — packages (official extra repo, no AUR).
+# One per line; '#' comments and blank lines ignored. Installed by w-pack via yay
+# (repo + AUR in one pass) as the build user; pacman fallback if yay is absent.
+
+zed                 # Zed editor — Rust/GPU (GPUI), native Wayland; binary is `zeditor`
+                    # Pulls in nodejs/npm (language servers Zed downloads itself),
+                    # vulkan-icd-loader + vulkan-driver (mesa/vulkan-intel ride in
+                    # via apply.sh --gpu) and libsqlite3.
+
+# ── git tooling ───────────────────────────────────────────────────────────────
+# git itself is NOT listed: it is already a base-system citizen (mod_updatesys and
+# mod_ai both install it), it just had no configuration or theme of its own until
+# this bundle. These two give it both.
+git-delta           # `delta` — syntax-highlighting pager for diff/blame/grep; wired
+                    # in as core.pager + interactive.diffFilter by the seeded
+                    # ~/.gitconfig, themed by the w-style axis 500-git
+lazygit             # git TUI; themed by the w-style axis 500-lazygit
+
+# ── runtimes ──────────────────────────────────────────────────────────────────
+mise                # polyglot runtime-version manager (node/go/rust/java/…). Draws
+                    # the same line W does — "not a replacement for system package
+                    # managers like pacman" — so pacman/w-update keep the system and
+                    # mise only owns per-project toolchains. Python stays uv's job
+                    # (package-python.md); mise delegates venvs to uv. Arch builds it
+                    # with `mise self-update` disabled, as packagers are meant to.

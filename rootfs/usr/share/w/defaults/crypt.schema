@@ -1,0 +1,6 @@
+# crypt.schema — who may set each key of the `crypt` subsystem (see w-conf.md).
+# Format: <KEY>\t<scope>   scope: system | user | both
+#
+# Which PCRs seal the LUKS auto-unlock key is a security property of the machine.
+# A user file must never be able to relax it.
+W_CRYPT_TPM2_PCRS	system

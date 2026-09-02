@@ -1,0 +1,248 @@
+#!/usr/bin/env bash
+# w-rollback — W Linux system rollback to a btrfs/snapper snapshot
+#
+# One verb over two mechanisms that have nothing in common but the snapshot list:
+#
+#   encrypted/Limine : delegates to limine-snapper-restore. Only it knows the ESP
+#                      kernel history (limine_history/), and on this path /boot/efi
+#                      is a FAT partition OUTSIDE the snapshot — so restoring the
+#                      root without restoring its kernel pair would boot the new
+#                      kernel against the old /usr/lib/modules. Reimplementing that
+#                      here would duplicate vendor logic we cannot keep in step.
+#   plain/GRUB       : built-in subvolume replace. /boot lives INSIDE @ (disk.sh
+#                      keeps no @boot subvolume), so swapping the subvolume carries
+#                      the matching kernel and grub.cfg with it — there is no ESP
+#                      history to reconcile and nothing to delegate to.
+#
+# Rolling back is always reversible: the outgoing root is kept, never deleted.
+# On Limine the vendor registers it with snapper, so it comes back as a boot menu
+# entry; here it is kept as @.bak-<timestamp> and RECOVERY.md documents the return.
+
+set -euo pipefail
+
+SNAPPER_CONFIG="root"
+LIMINE_DEFAULT="/etc/default/limine"
+
+err() { echo "w-rollback: $*" >&2; }
+need_root() { [[ $EUID -eq 0 ]] || { err "this command requires root"; exit 1; }; }
+
+usage() {
+  cat <<EOF
+Usage: w-rollback <command> [options]
+
+Info: Roll the system back to a btrfs snapshot, on either boot path.
+
+Commands:
+  status [--porcelain]  Where the system is booted from and what a rollback would do
+  list                  Snapshots available to roll back to
+  run [<number>]        Perform the rollback (interactive; asks before it changes anything)
+  launch [<number>]     Open 'run' in a terminal window, asking for your password there
+  help                  Show this help
+
+Rolling back never deletes the system it replaces: the outgoing root is kept and
+can be booted again. See /usr/share/doc/w/RECOVERY.md for the whole procedure,
+including the case where the machine no longer boots at all.
+
+Exit codes:
+  0  Success
+  1  Runtime error
+  2  Usage error
+
+Examples:
+  w-rollback status
+  sudo w-rollback run
+EOF
+}
+
+# ── Where are we ───────────────────────────────────────────────────────────────
+# The bootloader test is the same one mod_snapshots and fix_snapper use, so all
+# three agree on which snapshot->boot bridge a machine has.
+boot_path() { [[ -f "$LIMINE_DEFAULT" ]] && echo "limine" || echo "grub"; }
+
+# Number of the snapshot the system is booted from, empty when running from the
+# real root. Deliberately the same shape of test limine-snapper-restore applies to
+# /proc/cmdline, so W and the vendor never disagree on "am I in a snapshot".
+booted_snapshot() {
+  local cmdline; cmdline=$(</proc/cmdline)
+  if [[ $cmdline =~ rootflags=[^[:space:]]*subvol=[^[:space:]]*/([0-9]+)/snapshot ]]; then
+    echo "${BASH_REMATCH[1]}"
+  fi
+}
+
+root_is_readonly() { [[ "$(btrfs property get / ro 2>/dev/null)" == *true* ]]; }
+
+# Device behind /, without the [/subvol] suffix findmnt appends.
+root_device() { findmnt -no SOURCE / | sed 's/\[.*//'; }
+
+# ── status ─────────────────────────────────────────────────────────────────────
+cmd_status() {
+  local path snap porcelain=0
+  [[ "${1:-}" == "--porcelain" ]] && porcelain=1
+  path=$(boot_path)
+  snap=$(booted_snapshot)
+
+  if ((porcelain)); then
+    printf 'boot_path=%s\n' "$path"
+    printf 'booted_snapshot=%s\n' "${snap:-}"
+    printf 'root_readonly=%s\n' "$(root_is_readonly && echo yes || echo no)"
+    printf 'tool=%s\n' "$([[ $path == limine ]] && echo limine-snapper-restore || echo builtin)"
+    return 0
+  fi
+
+  echo "Boot path    : $([[ $path == limine ]] && echo "Limine (encrypted)" || echo "GRUB (plain)")"
+  if [[ -n "$snap" ]]; then
+    echo "Booted from  : snapshot #$snap ($(root_is_readonly && echo "read-only" || echo "writable"))"
+    echo "Rollback     : 'sudo w-rollback run' makes THIS snapshot the system again"
+  else
+    echo "Booted from  : @ (the normal system)"
+    echo "Rollback     : 'sudo w-rollback run' asks which snapshot to go back to"
+  fi
+  echo "Mechanism    : $([[ $path == limine ]] && echo "limine-snapper-restore (restores the ESP kernel pair too)" || echo "built-in subvolume replace (/boot travels inside the subvolume)")"
+}
+
+# ── list ───────────────────────────────────────────────────────────────────────
+cmd_list() {
+  command -v snapper >/dev/null || { err "snapper is not installed"; exit 1; }
+  snapper -c "$SNAPPER_CONFIG" list
+}
+
+# ── run: Limine ────────────────────────────────────────────────────────────────
+# The vendor tool covers both directions on its own: booted into a snapshot it
+# restores that one, booted normally it asks for a snapshot ID. Passing a number
+# through would mean driving its prompts blind, so we hand over instead of pretending.
+_run_limine() {
+  local want="${1:-}"
+  command -v limine-snapper-restore >/dev/null \
+    || { err "limine-snapper-restore is missing — is limine-snapper-sync installed?"; exit 1; }
+  if [[ -n "$want" ]]; then
+    echo "Note: on the Limine path the snapshot is chosen inside the restore tool;"
+    echo "      pick #$want when it asks."
+    echo
+  fi
+  exec limine-snapper-restore
+}
+
+# ── run: GRUB ──────────────────────────────────────────────────────────────────
+# ArchWiki's "restore / to its previous snapshot", done from the running system:
+# a read-write copy of the snapshot takes @'s place and the old @ is kept aside.
+# Both are directory renames in the top-level tree, so this needs subvolid=5
+# mounted somewhere — @ and @snapshots/N/snapshot are only both visible there.
+_run_grub() {
+  local want="${1:-}" booted dev top rc=0 stamp
+
+  # Booted from a snapshot, THAT snapshot is what "roll back" means — asking which
+  # one would be asking a question the situation already answered, and it is what
+  # `status` and RECOVERY.md tell the user will happen. It is also the semantics the
+  # Limine branch gets for free from the vendor tool, so both paths behave alike.
+  booted=$(booted_snapshot)
+  if [[ -z "$want" ]]; then
+    if [[ -n "$booted" ]]; then
+      want="$booted"
+      echo "Booted from snapshot #$want — that is the one being restored."
+      echo
+    else
+      cmd_list
+      echo
+      read -rp "Snapshot number to roll back to: " want
+    fi
+  fi
+  [[ "$want" =~ ^[0-9]+$ ]] || { err "not a snapshot number: '$want'"; exit 2; }
+
+  dev=$(root_device)
+  top=$(mktemp -d)
+  # shellcheck disable=SC2064  # $top must expand now, not at trap time
+  trap "umount '$top' 2>/dev/null || true; rmdir '$top' 2>/dev/null || true" EXIT
+  mount -o subvolid=5 "$dev" "$top"
+
+  [[ -d "$top/@snapshots/$want/snapshot" ]] \
+    || { err "snapshot #$want does not exist"; exit 1; }
+  [[ -d "$top/@" ]] \
+    || { err "no @ subvolume — this layout is not the one W installs"; exit 1; }
+
+  stamp=$(date +%Y%m%d-%H%M%S)
+  echo "About to roll the system back to snapshot #$want."
+  echo "  @  ->  @.bak-$stamp   (kept; nothing is deleted)"
+  echo "  snapshot #$want  ->  @   (new system root)"
+  echo "The change takes effect on the next boot."
+  read -rp "Type 'yes' to proceed: " confirm
+  [[ "$confirm" == "yes" ]] || { echo "Cancelled — nothing was changed."; exit 0; }
+
+  # Build the replacement first: if this fails, @ has not been touched yet.
+  btrfs subvolume snapshot "$top/@snapshots/$want/snapshot" "$top/@.new-$stamp" >/dev/null
+
+  mv "$top/@" "$top/@.bak-$stamp" || rc=$?
+  if ((rc)); then
+    btrfs subvolume delete "$top/@.new-$stamp" >/dev/null 2>&1 || true
+    err "could not move @ aside — nothing was changed"
+    exit 1
+  fi
+  mv "$top/@.new-$stamp" "$top/@"
+
+  echo
+  echo "Done. The restored system comes up on the next boot."
+  echo "The system you just replaced is kept as @.bak-$stamp; RECOVERY.md explains"
+  echo "how to boot it again or how to delete it once you are sure."
+
+  # Offer the reboot rather than leaving it as homework — and, just as importantly,
+  # keep the window alive long enough to be read. Reached from the snapshot notice,
+  # this runs in a terminal that closes the instant the command returns, so without a
+  # prompt here the user sees the result flash past and is left guessing whether it
+  # worked. Only when someone is actually present: a scripted run must never block.
+  if [[ -t 0 ]]; then
+    echo
+    local ans=""
+    read -rp "Reboot now? [y/N] " ans || true
+    if [[ "$ans" =~ ^[Yy] ]]; then
+      systemctl reboot
+      return 0
+    fi
+    echo "Not rebooting — the rollback is already staged and takes effect on your next boot."
+    read -rp "Press Enter to close... " _ || true
+  fi
+}
+
+cmd_run() {
+  need_root
+  local want="${1:-}"
+  [[ -z "$want" || "$want" =~ ^[0-9]+$ ]] || { err "not a snapshot number: '$want'"; exit 2; }
+  case "$(boot_path)" in
+    limine) _run_limine "$want" ;;
+    grub)   _run_grub   "$want" ;;
+  esac
+}
+
+# ── launch ─────────────────────────────────────────────────────────────────────
+# Open `run` in a terminal, escalating there rather than here. This is the single
+# definition of "start a rollback from a graphical surface", and it exists so that
+# there is exactly one: the snapshot notice's button and the AI's rollback tool both
+# call it, and neither carries its own copy of the escalation to drift out of step.
+#
+# Deliberately NOT root itself. The escalation belongs in front of the person who has
+# to live with the result: pkexec raises w-authd's window, the terminal gives `run`
+# the tty its confirmation prompt needs, and the human types the password and the
+# 'yes'. A caller — a notification, an agent — can only ever open that conversation.
+cmd_launch() {
+  local want="${1:-}"
+  [[ -z "$want" || "$want" =~ ^[0-9]+$ ]] || { err "not a snapshot number: '$want'"; exit 2; }
+
+  local -a inner=(w-rollback run)
+  [[ -n "$want" ]] && inner+=("$want")
+
+  command -v w-term >/dev/null || { err "w-term is missing — cannot open a terminal"; exit 1; }
+  if command -v pkexec &>/dev/null; then
+    exec w-term -e pkexec "${inner[@]}"
+  else
+    exec w-term -e sudo "${inner[@]}"
+  fi
+}
+
+# ── Dispatch ───────────────────────────────────────────────────────────────────
+case "${1:-}" in
+  status)          shift; cmd_status "$@" ;;
+  list)            shift; cmd_list "$@" ;;
+  run)             shift; cmd_run "$@" ;;
+  launch)          shift; cmd_launch "$@" ;;
+  help|--help|-h)  usage; exit 0 ;;
+  "")              cmd_status ;;
+  *)               err "unknown command: $1"; usage >&2; exit 2 ;;
+esac

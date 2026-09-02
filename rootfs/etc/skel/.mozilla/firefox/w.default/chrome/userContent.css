@@ -1,0 +1,25 @@
+:root {
+  --fxview-background-color: -moz-dialog !important;
+  --fxview-background-color-secondary: color-mix(in srgb, -moz-dialog 96%, var(--color-white)) !important;
+  --background-color-box: color-mix(in srgb, -moz-dialog 96%, var(--color-white)) !important;
+  --background-color-canvas: -moz-dialog !important;
+  --newtab-background-card: var(--toolbar-field-background-color) !important;
+  --newtab-background-color-secondary: var(--toolbar-field-background-color) !important;
+  --content-search-handoff-ui-background-color: var(--toolbar-field-background-color) !important;
+}
+
+@-moz-document regexp("about:.*") {
+    html,
+    body,
+    #search-container {
+        background: -moz-dialog !important;
+    }
+
+    #input {
+    	background: var(--toolbar-field-background-color) !important;
+    }
+    
+    moz-card {
+    	background-color: color-mix(in srgb, -moz-dialog 96%, var(--color-white)) !important;
+    }
+}

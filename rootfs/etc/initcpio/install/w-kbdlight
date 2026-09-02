@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# mkinitcpio install hook — keyboard backlight at the boot/LUKS prompt.
+#
+# Typing a disk password in the dark is the whole point: the light has to be on
+# BEFORE the prompt, which means inside the initramfs — the booted system's
+# services all run after the disk is already unlocked.
+#
+# W ships two initramfs flavours and this hook serves both, because they run
+# runtime code by completely different means:
+#   • encrypted installs (Limine) use the systemd initramfs — `run_hook` shell
+#     functions are never executed there, so we install a systemd unit ordered
+#     before cryptsetup;
+#   • plain installs use the classic busybox initramfs, which does run `run_hook`
+#     (/etc/initcpio/hooks/w-kbdlight) and knows nothing about units.
+# Whichever flavour is in play, exactly one of the two fires and both call the
+# same setter, so there is one implementation of the actual behaviour.
+#
+# Nothing here is vendor-specific: the LED driver module is resolved from whatever
+# owns `*kbd_backlight*` on THIS machine (applesmc on a MacBook, thinkpad_acpi on
+# a ThinkPad, dell-laptop, asus-nb-wmi, ...) and baked in. On a machine with no
+# keyboard backlight the hook adds nothing at all. See w-kbdlight.md.
+
+build() {
+    local d mod mods=() lvl=50
+
+    for d in /sys/class/leds/*kbd_backlight*; do
+        [[ -e "$d/brightness" ]] || continue
+        # The led-class device does not exist until its driver is loaded, so the
+        # driver module is the one thing the initramfs cannot discover by itself.
+        # A builtin driver has no `module` link — nothing to add, and nothing to
+        # modprobe at runtime either.
+        mod="$(readlink -f "$d/device/driver/module" 2>/dev/null)" || continue
+        [[ -n "$mod" ]] || continue
+        mod="${mod##*/}"
+        [[ " ${mods[*]} " == *" $mod "* ]] && continue
+        mods+=("$mod")
+    done
+
+    if (( ${#mods[@]} == 0 )); then
+        warning "w-kbdlight: no keyboard backlight driver found — the boot-time light will be inert"
+    fi
+
+    for mod in "${mods[@]}"; do
+        add_module "$mod"
+    done
+
+    # The level is a build-time snapshot of the config: the LUKS prompt has no
+    # filesystem but this image, so `w-kbdlight boot <N>` rebuilds it on change.
+    #
+    # By absolute path on purpose: mkinitcpio runs build hooks with a stripped
+    # PATH=/usr/bin:/bin, so a bare `w-conf` is silently "not found" here and every
+    # rebuild would quietly bake the fallback instead of the configured level.
+    if [[ -x /usr/bin/w-conf ]]; then
+        lvl="$(/usr/bin/w-conf get kbdlight BOOT_LEVEL 50 2>/dev/null || echo 50)"
+    fi
+    [[ "$lvl" == off ]] && lvl=0
+    [[ "$lvl" =~ ^[0-9]+$ ]] || lvl=50
+
+    add_dir /etc/w
+    printf '%s\n' "$lvl" > "$BUILDROOT/etc/w/kbdlight.boot"
+    printf '%s\n' "${mods[*]-}" > "$BUILDROOT/etc/w/kbdlight.modules"
+
+    # Added as a plain file, not add_binary: both callers invoke it as `sh <path>`
+    # so the image needs no /usr/bin/env for the shebang to resolve.
+    add_file /usr/lib/w/w-kbdlight-boot /usr/lib/w/w-kbdlight-boot 755
+
+    # ── systemd initramfs path ────────────────────────────────────────────────
+    # sysinit.target is where the initrd's early one-shots live (kmod-static-nodes,
+    # plymouth-start); ordering before cryptsetup-pre.target puts us ahead of the
+    # password prompt itself. Ordering deps on units this image may not contain are
+    # simply ignored, so the same unit is correct with or without encryption.
+    add_dir /usr/lib/systemd/system
+    add_dir /usr/lib/systemd/system/sysinit.target.wants
+    cat > "$BUILDROOT/usr/lib/systemd/system/w-kbdlight.service" <<'EOF'
+[Unit]
+Description=W Linux keyboard backlight (initramfs)
+Documentation=man:w-kbdlight(1)
+DefaultDependencies=no
+After=systemd-modules-load.service
+Before=cryptsetup-pre.target cryptsetup.target sysinit.target
+ConditionPathExists=/etc/w/kbdlight.boot
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/sh /usr/lib/w/w-kbdlight-boot
+
+[Install]
+WantedBy=sysinit.target
+EOF
+    add_symlink /usr/lib/systemd/system/sysinit.target.wants/w-kbdlight.service \
+                ../w-kbdlight.service
+
+    # ── busybox initramfs path ────────────────────────────────────────────────
+    add_runscript
+}
+
+help() {
+    cat <<HELPEOF
+Turns the keyboard backlight on inside the initramfs, so the disk-encryption
+password prompt is usable in the dark.
+
+The LED driver module is detected on the machine building the image and baked in
+along with the level (percent) from the kbdlight subsystem. Change the level with
+'w-kbdlight boot <N|off>' — it rewrites the config AND rebuilds the initramfs,
+because the value only exists inside the image.
+
+Place this hook after 'autodetect'/'modconf' and before 'sd-encrypt' (or
+'encrypt'), so the light is on by the time the password is asked for.
+HELPEOF
+}

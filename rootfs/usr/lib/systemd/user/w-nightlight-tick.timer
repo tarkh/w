@@ -1,0 +1,48 @@
+# W Linux — re-evaluates the night light once a minute.
+#
+# A minute is the right granularity for the one job this has left: noticing that
+# the goal and the screen have parted company — a window boundary just passed, a
+# suspend ended, the daemon crashed and came back neutral — and handing the job
+# to w-nightlight-ramp.service, which owns the transition itself and steps it far
+# faster than any timer would.
+#
+# ⚠️ This timer is NOT the ramp mechanism, and trying to make it one is a dead
+# end that was tried: the target used to be computed in whole MINUTES, so a
+# sub-minute tick recomputed an identical value and skipped it, and no tick rate
+# could make a transition any smoother. The goal is second-resolution now and the
+# stepping lives in the ramp unit.
+#
+# AccuracySec lets systemd coalesce this with other timers instead of waking the
+# machine on its own schedule — the work is a comparison that almost always ends
+# in "nothing to do", and it is not worth a dedicated wakeup.
+#
+# WantedBy=graphical-session.target (not timers.target): the night light is a
+# property of a running desktop session, and it must stop with it. See
+# w-nightlight.md.
+#
+# ⚠️ `After=graphical-session.target` is load-bearing, not tidiness. Without it
+# this timer is condition-checked WHILE the target is coming up — about a second
+# before uwsm exports WAYLAND_DISPLAY into the user manager — so
+# ConditionEnvironment fails, systemd logs one "skipped, unmet condition" line
+# and the timer never starts for the WHOLE session. The schedule then only ever
+# moved when something called a setter (the Hub, the hotkey, apply.sh), which is
+# exactly what "the night light works some days and not others" looked like from
+# the outside. Measured on hardware 2026-08-07: timer condition-checked at
+# 16:52:00.47, WAYLAND_DISPLAY exported at 16:52:01.47, target reached at
+# 16:52:02.35. The packaged hyprsunset.service and hypridle.service never fell
+# into this because upstream orders them After= the target — copy that, always,
+# for anything wanted by a target whose environment arrives together with it.
+[Unit]
+Description=W night light — periodic schedule evaluation
+After=graphical-session.target
+PartOf=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Timer]
+OnStartupSec=30s
+OnUnitActiveSec=60s
+AccuracySec=20s
+Unit=w-nightlight-tick.service
+
+[Install]
+WantedBy=graphical-session.target

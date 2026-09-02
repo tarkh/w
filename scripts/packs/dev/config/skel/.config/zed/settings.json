@@ -1,0 +1,76 @@
+// W Linux — Zed settings seeded by the `dev` W-Pack.
+//
+// OWNERSHIP: this file is yours (manifest class `user`, seed-if-absent). W writes
+// it once, on bundle install, and never touches it again — edit freely. To go back
+// to these defaults: `w-pack install dev` will NOT overwrite it; delete the file
+// (or the changed keys) first. Colours are NOT set here: the theme "W" is rendered
+// separately into ~/.config/zed/themes/w.json by the w-style axis `400-zed` and
+// follows the active W theme (`w-theme set`). Zed reads JSON with comments.
+{
+  // ── Look ────────────────────────────────────────────────────────────────────
+  // "W" is the theme rendered by w-style from the active theme's theme.conf.
+  // A theme switch rewrites that file and Zed picks it up live — a running editor
+  // recolours itself, no restart needed.
+  "theme": "W",
+  // Window translucency has to be declared HERE, not only in the theme, because of
+  // a startup race: the window is created with whatever theme is active at that
+  // moment (zed/src/main.rs → WindowOptions.window_background), while a *user*
+  // theme like ours is registered by a background task (load_user_themes_in_background).
+  // Lose that race and the window is born "opaque" — Hyprland then skips the blur —
+  // and `reload_theme()` only re-colours it, never re-applies the window background;
+  // only the next settings write does. Settings, unlike user themes, are loaded
+  // before the first window, so this override wins every time. Colours still come
+  // from the theme; this pins the surface mode alone (harmless if a theme's
+  // W_FX_APP_BG_OPACITY is 1.0 — blur behind opaque pixels is simply invisible).
+  "experimental.theme_overrides": {
+    "background.appearance": "blurred"
+  },
+  "ui_font_family": "Inter",
+  "ui_font_size": 15,
+  "buffer_font_family": "JetBrainsMono Nerd Font",
+  "buffer_font_size": 14,
+  // Ligatures off, matching Ghostty (`font-feature = -calt/-liga`).
+  "buffer_font_features": { "calt": false, "liga": false },
+
+  // ── Policy ──────────────────────────────────────────────────────────────────
+  // Packages are owned by pacman: updates arrive through `w-update`, so Zed must
+  // not self-update behind the package manager's back.
+  "auto_update": false,
+  // Privacy stance of the distro (same line as the Firefox policy): no metrics,
+  // no crash pings. Nothing here blocks the AI features you opt into below.
+  "telemetry": { "diagnostics": false, "metrics": false },
+  // Inline edit predictions are a cloud feature AND the main suspect in Zed's
+  // known Wayland CPU regressions — off by default; enable per taste.
+  "show_edit_predictions": false,
+
+  // ── W integration: the system AI inside the editor ──────────────────────────
+  // w-mcp is W's own MCP server: system knowledge (skills as MCP resources) plus
+  // the tiered tools (Tier-0 read / Tier-1 safe / Tier-2 via polkit). Zed's agent
+  // gets the same memory and the same OS-enforced privilege boundary as `w-ai`.
+  //
+  // NEVER collapse a server entry onto one line. Zed's migrator rewrites the file
+  // in place: m_2025_06_16 inserts `"source": "custom",` after the entry's `{`
+  // (indented to the entry's first key), m_2025_11_25 deletes that key again, and
+  // the file counts as "out of date" whenever the round trip is not byte-identical.
+  // Multi-line, one key per line, it cancels out exactly; single-line it leaves a
+  // stray newline behind → the "settings are out of date" banner on every launch.
+  "context_servers": {
+    "w-mcp": {
+      "command": "w-mcp",
+      "args": []
+    }
+  },
+  // goose is W's default assistant host and speaks ACP, so the very same agent you
+  // get from `w-ai ask` / Super+W is available in Zed's agent panel. It needs a
+  // configured provider + key: run `w-ai status` (GUI: W Hub → AI).
+  // Same one-key-per-line rule as above (the `agent_servers` migrations —
+  // m_2025_11_20, m_2026_02_25 — rewrite entries the same way).
+  "agent_servers": {
+    "goose": {
+      "type": "custom",
+      "command": "goose",
+      "args": ["acp"],
+      "env": {}
+    }
+  }
+}

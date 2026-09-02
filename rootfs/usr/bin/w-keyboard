@@ -1,0 +1,339 @@
+#!/usr/bin/env bash
+# w-keyboard — W Linux keyboard-layout control (Hyprland / XKB)
+#
+# Manages the XKB layout ring of the running Wayland session: the ordered list of
+# layouts (kb_layout) + a parallel list of variants (kb_variant) you cycle with the
+# group toggle. It is the user-space backend for the W Hub Input panel (add / remove
+# / pick a language) and a companion to the bar's keyboard block.
+#
+# No root: the Hyprland session is the user's own. Every mutation is applied LIVE via
+# `hyprctl keyword` AND persisted to ~/.config/hypr/keyboard.lua — a small data
+# fragment require()d by hyprland.lua — so the ring survives relogin (the live change
+# alone would be lost on next login). The selectable catalog comes from
+# xkeyboard-config via evdev.lst (code → description), nothing W-specific to install.
+#
+# See quickshell-hub.md (Ф5) and w-keyboard.md.
+
+set -euo pipefail
+
+FRAG="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/keyboard.lua"
+LST="/usr/share/X11/xkb/rules/evdev.lst"
+TOGGLE_DEFAULT="grp:alt_shift_toggle"
+RATE_DEFAULT=25
+DELAY_DEFAULT=600
+NUMLOCK_DEFAULT="false"
+
+err()  { echo "w-keyboard: $*" >&2; }
+die()  { err "$*"; exit 1; }
+
+usage() {
+  cat <<EOF
+Usage: w-keyboard <command> [args]
+
+Info: Manage the keyboard-layout ring of the Wayland session (XKB).
+
+Commands:
+  status [--porcelain]        Show the current ring (layout / variant / options)
+  list [--porcelain]          List selectable layouts (code + description)
+  variants <code> [--porcelain]   List variants of a layout
+  add <code[:variant]>        Add a layout to the ring (live + persisted)
+  remove <code>               Remove a layout from the ring (min 1 kept)
+  set-toggle <grp:*>          Set the layout-switch key (XKB grp:* option; live + persisted)
+  set-default <code>          Make a layout the login default (move it to ring front)
+  set-repeat <rate> <delay>   Key auto-repeat: repeats/second (1-100) + delay in ms (100-2000)
+  set-numlock <on|off>        Engage NumLock at login
+  help                        Show this help
+
+Ring persisted to: $FRAG   Catalog: $LST
+
+Exit codes: 0 success · 1 runtime/validation error · 2 usage
+
+Examples:
+  w-keyboard add de
+  w-keyboard add us:dvorak
+  w-keyboard remove ru
+  w-keyboard set-toggle grp:ctrl_shift_toggle
+  w-keyboard set-repeat 30 400
+  w-keyboard set-numlock on
+EOF
+}
+
+# ── Live ring (source of truth at runtime = the running compositor) ──────────────
+have_hypr() { command -v hyprctl >/dev/null 2>&1 && hyprctl version >/dev/null 2>&1; }
+
+# `hyprctl getoption` prints a "str: <value>" line; grab it without a JSON parser.
+# Guarded so a missing/failing hyprctl (no session) yields "" instead of tripping
+# `set -o pipefail` and aborting the command substitution that calls us.
+get_opt() {
+  have_hypr || return 0
+  hyprctl getoption "input:$1" 2>/dev/null | sed -n 's/^[[:space:]]*str:[[:space:]]*//p' || true
+}
+
+# ── Catalog (evdev.lst) ──────────────────────────────────────────────────────────
+# The "! layout" section is "<code><ws><description>"; emit code<TAB>description.
+list_layouts() {
+  [[ -r "$LST" ]] || die "$LST not found (xkeyboard-config missing)"
+  awk '
+    /^! layout/  { s=1; next }
+    /^!/         { s=0 }
+    s && NF>=2   { code=$1; $1=""; sub(/^[ \t]+/,""); print code "\t" $0 }
+  ' "$LST"
+}
+# The "! variant" section is "<variant><ws><layout>: <description>"; filter to one
+# layout and emit variant<TAB>description.
+list_variants() {
+  local lay="$1"
+  [[ -r "$LST" ]] || die "$LST not found (xkeyboard-config missing)"
+  # Each line is "<variant> <layout>: <description>" (leading indent); field 1 is the
+  # variant, field 2 the "<layout>:" tag, the rest the description.
+  awk -v L="$lay" '
+    /^! variant/ { s=1; next }
+    /^!/         { s=0 }
+    s && NF>=2 {
+      v=$1; lo=$2; sub(/:$/,"",lo)
+      if (lo==L) { d=$0; sub(/^[ \t]*[^ \t]+[ \t]+[^ \t]+[ \t]+/,"",d); print v "\t" d }
+    }
+  ' "$LST"
+}
+layout_exists() { list_layouts | cut -f1 | grep -qxF "$1"; }
+
+# The "! option" section lists XKB options as "<name><ws><description>"; we only need the
+# names to validate a group-switch toggle (grp:*_toggle / grp:*_switch etc.).
+grp_option_exists() {
+  [[ -r "$LST" ]] || die "$LST not found (xkeyboard-config missing)"
+  awk -v N="$1" '
+    /^! option/ { s=1; next }
+    /^!/        { s=0 }
+    s && $1==N  { found=1; exit }
+    END         { exit(found?0:1) }
+  ' "$LST"
+}
+
+# ── Ring helpers (parallel layout/variant arrays) ────────────────────────────────
+# The persisted fragment ($FRAG) is the source of truth for the ring — it is what
+# hyprland.lua loads at login, so the live compositor is merely its projection.
+# Reading it (not hyprctl) makes w-keyboard correct even headless (a TTY / the AI),
+# where the live ring is unavailable and would otherwise read empty and clobber.
+declare -a L V
+RING_OPT=""
+RING_RATE=""; RING_DELAY=""; RING_NUMLOCK=""
+# Pull a "key = "value"" scalar out of the fragment (only the real assignment line
+# matches — the "-- key :" comment lines start with a dash, not the key).
+frag_get() { [[ -r "$FRAG" ]] && sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\"\(.*\)\".*/\1/p" "$FRAG" || true; }
+# Same, for the unquoted scalars (numbers / booleans) added alongside the ring.
+frag_get_raw() { [[ -r "$FRAG" ]] && sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\([^,]*\),.*/\1/p" "$FRAG" || true; }
+
+read_ring() {
+  local layout="" variant="" options=""
+  if [[ -r "$FRAG" ]]; then
+    layout="$(frag_get layout)"; variant="$(frag_get variant)"; options="$(frag_get options)"
+  elif have_hypr; then
+    layout="$(get_opt kb_layout)" || true
+    variant="$(get_opt kb_variant)" || true
+    options="$(get_opt kb_options)" || true
+  fi
+  [[ -n "$layout" ]]  || layout="us,ru"          # first-run fallback = shipped default
+  [[ -n "$options" ]] || options="$TOGGLE_DEFAULT"
+  RING_OPT="$options"
+  # Typing behaviour lives in the same fragment (one keyboard, one file); absent keys
+  # fall back to the shipped defaults, so an older fragment simply gains them.
+  RING_RATE="$(frag_get_raw repeat_rate)"
+  RING_DELAY="$(frag_get_raw repeat_delay)"
+  RING_NUMLOCK="$(frag_get_raw numlock)"
+  [[ "$RING_RATE"    =~ ^[0-9]+$ ]]      || RING_RATE="$RATE_DEFAULT"
+  [[ "$RING_DELAY"   =~ ^[0-9]+$ ]]      || RING_DELAY="$DELAY_DEFAULT"
+  [[ "$RING_NUMLOCK" =~ ^(true|false)$ ]] || RING_NUMLOCK="$NUMLOCK_DEFAULT"
+  IFS=',' read -ra L <<< "$layout" || true
+  IFS=',' read -ra V <<< "$variant" || true
+  local i
+  for ((i=${#V[@]}; i<${#L[@]}; i++)); do V+=(""); done   # pad missing variant slots
+}
+join_csv() { local IFS=','; echo "$*"; }
+
+# Apply the current L[]/V[] to the live session and persist the fragment.
+commit_ring() {
+  local layout variant options="$RING_OPT"
+  layout="$(join_csv "${L[@]}")"
+  variant="$(join_csv "${V[@]}")"
+  [[ -n "$options" ]] || options="$TOGGLE_DEFAULT"
+
+  if have_hypr; then
+    hyprctl keyword input:kb_layout  "$layout"  >/dev/null
+    hyprctl keyword input:kb_variant "$variant" >/dev/null
+    hyprctl keyword input:kb_options "$options" >/dev/null
+    hyprctl keyword input:repeat_rate  "$RING_RATE"  >/dev/null
+    hyprctl keyword input:repeat_delay "$RING_DELAY" >/dev/null
+    # NumLock is applied when a keyboard is initialised, so this one only really
+    # lands at the next login — keyworded anyway to keep the live config honest.
+    hyprctl keyword input:numlock_by_default "$RING_NUMLOCK" >/dev/null
+  fi
+
+  mkdir -p "$(dirname "$FRAG")"
+  cat > "$FRAG" <<EOF
+-- W Linux — keyboard layout ring + typing behaviour. Managed by \`w-keyboard\` (and
+-- the W Hub Input panel); hand-edits are overwritten. Data module require()d by
+-- hyprland.lua, whose input{} threads these into kb_layout / kb_variant /
+-- kb_options / repeat_rate / repeat_delay / numlock_by_default.
+--
+-- layout  : ordered CSV of XKB layout codes cycled by the group toggle ("us,ru").
+-- variant : parallel CSV of variants, one slot per layout ("" = default; ",dvorak").
+-- options : XKB options, carrying the grp:*_toggle switch key.
+-- repeat_rate  : held-key repeats per second.
+-- repeat_delay : ms before a held key starts repeating.
+-- numlock      : engage NumLock at login.
+return {
+  layout = "$layout",
+  variant = "$variant",
+  options = "$options",
+  repeat_rate = $RING_RATE,
+  repeat_delay = $RING_DELAY,
+  numlock = $RING_NUMLOCK,
+}
+EOF
+}
+
+# ── Commands ─────────────────────────────────────────────────────────────────────
+cmd_status() {
+  read_ring
+  if [[ "${1:-}" == "--porcelain" ]]; then
+    echo "layout=$(join_csv "${L[@]}")"
+    echo "variant=$(join_csv "${V[@]}")"
+    echo "options=$RING_OPT"
+    echo "repeat_rate=$RING_RATE"
+    echo "repeat_delay=$RING_DELAY"
+    echo "numlock=$RING_NUMLOCK"
+  else
+    printf '%-13s %s\n' "layout"  "$(join_csv "${L[@]}")"
+    printf '%-13s %s\n' "variant" "$(join_csv "${V[@]}")"
+    printf '%-13s %s\n' "options" "$RING_OPT"
+    printf '%-13s %s\n' "repeat rate"  "$RING_RATE"
+    printf '%-13s %s\n' "repeat delay" "$RING_DELAY"
+    printf '%-13s %s\n' "numlock" "$RING_NUMLOCK"
+  fi
+}
+
+cmd_list() {
+  if [[ "${1:-}" == "--porcelain" ]]; then list_layouts
+  else list_layouts | while IFS=$'\t' read -r c d; do printf '  %-14s %s\n' "$c" "$d"; done
+  fi
+}
+
+cmd_variants() {
+  local code="${1:-}"; [[ -n "$code" ]] || { err "variants: layout code required"; exit 2; }
+  shift
+  if [[ "${1:-}" == "--porcelain" ]]; then list_variants "$code"
+  else list_variants "$code" | while IFS=$'\t' read -r v d; do printf '  %-16s %s\n' "$v" "$d"; done
+  fi
+}
+
+cmd_add() {
+  local spec="${1:-}"; [[ -n "$spec" ]] || { err "add: <code[:variant]> required"; exit 2; }
+  local code="${spec%%:*}" variant=""
+  [[ "$spec" == *:* ]] && variant="${spec#*:}"
+  [[ "$code" =~ ^[a-z0-9_-]+$ ]] || die "invalid layout code: $code"
+  layout_exists "$code" || die "unknown layout: $code (see: w-keyboard list)"
+
+  read_ring
+  local l
+  for l in "${L[@]}"; do [[ "$l" == "$code" ]] && die "layout already present: $code"; done
+  L+=("$code"); V+=("$variant")
+  commit_ring
+  echo "w-keyboard: added $code${variant:+:$variant}"
+}
+
+cmd_remove() {
+  local code="${1:-}"; [[ -n "$code" ]] || { err "remove: <code> required"; exit 2; }
+  read_ring
+  (( ${#L[@]} > 1 )) || die "cannot remove the last layout"
+  local -a NL NV; local i found=0
+  for i in "${!L[@]}"; do
+    if [[ "${L[$i]}" == "$code" && $found -eq 0 ]]; then found=1; continue; fi
+    NL+=("${L[$i]}"); NV+=("${V[$i]:-}")
+  done
+  (( found )) || die "layout not in ring: $code"
+  L=("${NL[@]}"); V=("${NV[@]}")
+  commit_ring
+  echo "w-keyboard: removed $code"
+}
+
+# Set the group-switch toggle key: replace the grp:* option in kb_options, preserving any
+# other (non-grp) XKB options, then apply live + persist. The toggle is an XKB-level switch,
+# NOT a Hyprland bind — pure modifier combos (Alt+Shift…) can't be expressed as a bind.
+cmd_set_toggle() {
+  local t="${1:-}"; [[ -n "$t" ]] || { err "set-toggle: <grp:*> option required"; exit 2; }
+  [[ "$t" =~ ^grp:[a-z0-9_]+$ ]] || die "invalid toggle option: $t (expected grp:*)"
+  grp_option_exists "$t" || die "unknown XKB option: $t"
+
+  read_ring
+  local -a OPTS=() KEEP=(); local o
+  IFS=',' read -ra OPTS <<< "$RING_OPT" || true
+  for o in "${OPTS[@]}"; do
+    o="${o//[[:space:]]/}"
+    [[ -z "$o" || "$o" == grp:* ]] && continue   # drop empties + any existing group toggle
+    KEEP+=("$o")
+  done
+  KEEP+=("$t")
+  RING_OPT="$(join_csv "${KEEP[@]}")"
+  commit_ring
+  echo "w-keyboard: layout-switch toggle set to $t"
+}
+
+# Make a layout the default: move its slot to the front of the ring. The first entry of
+# kb_layout is what the session starts on at login, so "default" == ring index 0.
+cmd_set_default() {
+  local code="${1:-}"; [[ -n "$code" ]] || { err "set-default: <code> required"; exit 2; }
+  read_ring
+  local i found=0 tgtvar=""
+  local -a NL=() NV=()
+  for i in "${!L[@]}"; do
+    if [[ "${L[$i]}" == "$code" ]]; then found=1; tgtvar="${V[$i]:-}"; continue; fi
+    NL+=("${L[$i]}"); NV+=("${V[$i]:-}")
+  done
+  (( found )) || die "layout not in ring: $code"
+  L=("$code" "${NL[@]}"); V=("$tgtvar" "${NV[@]}")
+  commit_ring
+  echo "w-keyboard: default layout set to $code"
+}
+
+# Key auto-repeat. Both numbers live in the same fragment as the ring (one keyboard,
+# one file) and are applied live via `hyprctl keyword` like the ring itself.
+cmd_set_repeat() {
+  local rate="${1:-}" delay="${2:-}"
+  [[ -n "$rate" && -n "$delay" ]] || { err "set-repeat: <rate> <delay> required"; exit 2; }
+  [[ "$rate"  =~ ^[0-9]+$ ]] || die "invalid repeat rate: $rate"
+  [[ "$delay" =~ ^[0-9]+$ ]] || die "invalid repeat delay: $delay"
+  (( rate  >= 1   && rate  <= 100  )) || die "repeat rate out of range 1..100: $rate"
+  (( delay >= 100 && delay <= 2000 )) || die "repeat delay out of range 100..2000: $delay"
+  read_ring
+  RING_RATE="$rate"; RING_DELAY="$delay"
+  commit_ring
+  echo "w-keyboard: repeat rate $rate/s, delay ${delay}ms"
+}
+
+cmd_set_numlock() {
+  local v="${1:-}"
+  case "${v,,}" in
+    on|true|yes|1)  v="true" ;;
+    off|false|no|0) v="false" ;;
+    *) err "set-numlock: expected on|off"; exit 2 ;;
+  esac
+  read_ring
+  RING_NUMLOCK="$v"
+  commit_ring
+  echo "w-keyboard: numlock at login: $v"
+}
+
+case "${1:-}" in
+  status)   shift; cmd_status "$@" ;;
+  list)     shift; cmd_list "$@" ;;
+  variants) shift; cmd_variants "$@" ;;
+  add)      shift; cmd_add "$@" ;;
+  remove)   shift; cmd_remove "$@" ;;
+  set-toggle)  shift; cmd_set_toggle "$@" ;;
+  set-default) shift; cmd_set_default "$@" ;;
+  set-repeat)  shift; cmd_set_repeat "$@" ;;
+  set-numlock) shift; cmd_set_numlock "$@" ;;
+  help|-h|--help) usage ;;
+  "")       usage; exit 2 ;;
+  *)        err "unknown command: $1"; usage; exit 2 ;;
+esac

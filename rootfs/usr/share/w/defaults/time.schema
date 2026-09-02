@@ -1,0 +1,11 @@
+# time.schema — who may set each key of the `time` subsystem (see w-conf.md).
+# Format: <KEY>\t<scope>   scope: system | user | both
+#
+# The clock and its servers are system state — there is one system time, so a
+# per-user override would be meaningless.
+SERVERS	system
+FALLBACK	system
+# The server catalog is data the admin extends: a GLOB row declares the whole
+# family at once, so a new entry is never silently unconstrained (a user file
+# redefining NTP_google would otherwise redirect the machine's time source).
+NTP_*	system

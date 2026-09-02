@@ -1,0 +1,17 @@
+# W Linux — user watcher that reacts to AC<->battery changes (laptop mode). hypridle
+# has no native power-source awareness and power-profiles-daemon does not auto-switch,
+# so on each change this re-renders the user's hypridle timers and applies the
+# AUTO_PROFILE profile. Enabled per-user by mod_power only in laptop mode. See w-power.md.
+[Unit]
+Description=W power source monitor (AC<->battery)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/w/w-power-monitor
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

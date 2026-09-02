@@ -1,0 +1,493 @@
+# W Linux Plymouth theme
+
+# ── Globals ───────────────────────────────────────────────────────────────────
+refresh_rate = 60;
+Plymouth.SetRefreshRate(refresh_rate);
+
+fade_dur = 0.35;
+
+Window.SetBackgroundTopColor(0, 0, 0);
+Window.SetBackgroundBottomColor(0, 0, 0);
+
+# ── Screen geometry (multi-monitor) ───────────────────────────────────────────
+# Plymouth composites every display into ONE canvas of max(width) x max(height) over
+# all displays and centres each display inside it. Two consequences drive the layout:
+#   * the canvas centre is also the centre of EVERY display → anything centred on the
+#     canvas is centred on every monitor;
+#   * the only region visible on all of them is the centred `safe` rect of
+#     min(width) x min(height) → off-centre elements are placed relative to that.
+# Note the sizes are LOGICAL: plymouth picks a per-head device scale from the DPI, so
+# a HiDPI panel reports half its pixel size and mixed-DPI setups have differently
+# sized canvases per head.
+#
+# Displays are attached one at a time (plymouth main.c:on_pixel_display_added): the
+# first one starts the splash — which is when this script runs — and the rest arrive
+# afterwards, resizing the canvas and re-centring every display in it. Geometry must
+# therefore never be cached at startup: relayout() is wired to plymouth's display
+# hotplug hook, and refresh_callback re-checks the canvas as a safety net.
+canvas_w      = 0;
+canvas_h      = 0;
+safe_w        = 0;
+safe_h        = 0;
+screen_half_w = 0;
+screen_half_h = 0;
+
+fun measure_screen() {
+  canvas_w      = Window.GetWidth();
+  canvas_h      = Window.GetHeight();
+  screen_half_w = canvas_w / 2;
+  screen_half_h = canvas_h / 2;
+
+  # Indexed Window.Get*(i) returns null past the last display — walk until it does.
+  # Counter is `j`, not `i`: StartFade() reuses the global `i` (see update_dots).
+  safe_w = canvas_w;
+  safe_h = canvas_h;
+  for (j = 0; Window.GetWidth(j); j++) {
+    safe_w = Math.Min(safe_w, Window.GetWidth(j));
+    safe_h = Math.Min(safe_h, Window.GetHeight(j));
+  }
+}
+
+# ── Easing ────────────────────────────────────────────────────────────────────
+fun EaseLinear(t) { return t; }
+fun EaseIn(t)     { return t * t; }
+fun EaseOut(t)    { return 1 - (1 - t) * (1 - t); }
+fun EaseInOut(t)  { return (1 - Math.Cos(t * Math.Pi)) / 2; }
+
+# ── Fade job system ───────────────────────────────────────────────────────────
+fade_jobs_dir   = null;
+fade_jobs       = null;
+fade_jobs_count = 0;
+
+fun StartFade(sprite, duration, target_opacity, ease, delay) {
+  if (!sprite)
+    return;
+
+  current_opacity = sprite.GetOpacity();
+  if (current_opacity == target_opacity)
+    return;
+
+  if (current_opacity < target_opacity)
+    dir = 1;
+  else
+    dir = -1;
+
+  fade_jobs_dir[sprite.id] = dir;
+
+  job.id              = sprite.id;
+  job.sprite          = sprite;
+  job.progress        = 0;
+  job.duration        = duration;
+  job.current_opacity = current_opacity;
+  job.target_opacity  = target_opacity;
+  job.ease            = ease;
+  job.active          = 1;
+  job.delay           = delay;
+  job.dir             = dir;
+
+  for (i = 0; i < fade_jobs_count; i++) {
+    if (!fade_jobs[i]) {
+      fade_jobs[i] = job;
+      return;
+    }
+  }
+
+  fade_jobs[fade_jobs_count] = job;
+  fade_jobs_count++;
+}
+
+fun FadeSpriteStep() {
+  for (i = 0; i < fade_jobs_count; i++) {
+    job = fade_jobs[i];
+    if (!job || !job.active)
+      continue;
+
+    if (job.dir != fade_jobs_dir[job.id]) {
+      fade_jobs[i] = null;
+      continue;
+    }
+
+    if (job.delay > 0) {
+      job.delay = Math.Max(0, job.delay - 1.0 / refresh_rate);
+      fade_jobs[i] = job;
+      continue;
+    }
+
+    job.progress += 1.0 / (job.duration * refresh_rate);
+    if (job.progress >= 1) {
+      job.sprite.SetOpacity(job.target_opacity);
+      fade_jobs[i] = null;
+      continue;
+    }
+
+    t = job.progress;
+    if (job.ease == "linear")
+      eased = EaseLinear(t);
+    else if (job.ease == "in")
+      eased = EaseIn(t);
+    else if (job.ease == "out")
+      eased = EaseOut(t);
+    else if (job.ease == "inout")
+      eased = EaseInOut(t);
+    else
+      eased = EaseLinear(t);
+
+    opacity = job.current_opacity + (job.target_opacity - job.current_opacity) * eased;
+    job.sprite.SetOpacity(opacity);
+
+    fade_jobs[i] = job;
+  }
+}
+
+fun CancelFade(sprite) {
+  if (!sprite)
+    return;
+  fade_jobs_dir[sprite.id] = 0;
+  for (i = 0; i < fade_jobs_count; i++) {
+    if (fade_jobs[i] && fade_jobs[i].sprite.id == sprite.id) {
+      fade_jobs[i] = null;
+    }
+  }
+}
+
+# ── Sprites ───────────────────────────────────────────────────────────────────
+# Created once, hidden and unpositioned — relayout() owns all geometry.
+
+logo_image  = Image("logo.png");
+logo_sprite = Sprite();
+logo_sprite.SetImage(logo_image);
+logo_sprite.SetOpacity(0);
+logo_sprite.id = "logo";
+
+bar_height    = 2;
+bar_max_width = 0;
+bar_x         = 0;
+bar_y         = 0;
+
+bar_bg_src = Image("bar-bg.png");
+bar_bg_spr = Sprite();
+bar_bg_spr.SetOpacity(0);
+bar_bg_spr.id = "bar_bg";
+
+bar_fill_src = Image("bar.png");
+bar_fill_spr = Sprite();
+bar_fill_spr.SetOpacity(0);
+bar_fill_spr.id = "bar_fill";
+
+# Password prompt (LUKS unlock) — shown ONLY when the boot asks for a disk passphrase
+# (sd-encrypt): centred dots that spread outward from the middle as characters are
+# typed, a short brand underline below them, and a flat lock glyph under the line (no
+# text — initramfs has no locale/CJK font). On non-encrypted boots the password
+# callback never fires, so none of this shows and the loading-bar flow is unchanged.
+prompt_cy = 0;                                        # dots row = the loading-bar line
+
+# Dot pool — created once, hidden. update_dots() shows the first N symmetrically.
+DOTS_MAX  = 24;
+dot_size  = 10;
+dot_gap   = 0;
+dot_y     = 0;
+dot_fade  = 0.12;
+dot_count = 0;                                        # dots currently on screen
+
+bullet_src = Image("bullet.png");
+dots = null;
+for (i = 0; i < DOTS_MAX; i++) {
+  d = Sprite();
+  d.SetZ(12);
+  d.SetOpacity(0);
+  d.id = "dot" + i;
+  dots[i] = d;
+}
+
+# Brand accent underline — 70% of the loading-bar width, centred, just below the dots.
+prompt_line_h   = 2;
+prompt_line_w   = 0;
+prompt_line_x   = 0;
+prompt_line_y   = 0;
+prompt_line_spr = Sprite();
+prompt_line_spr.SetZ(11);
+prompt_line_spr.SetOpacity(0);
+prompt_line_spr.id = "prompt_line";
+
+# Flat lock glyph, centred under the line.
+lock_size = 26;
+lock_src  = Image("lock.png");
+lock_spr  = Sprite();
+lock_spr.SetZ(11);
+lock_spr.SetOpacity(0);
+lock_spr.id = "lock";
+
+# ── State ─────────────────────────────────────────────────────────────────────
+progress          = 0;
+display_progress  = 0;  # visual progress — fast catch-up to real progress
+last_fill_px      = 0;
+bar_shown         = 0;
+bar_cap           = 0.90;  # bar holds here until the real boot-complete signal
+outro             = 0;     # 0 none, 1 filling 90→100, 2 fading out
+outro_rate        = 0;     # per-frame fill increment during outro phase
+password_active   = 0;     # 1 while the disk-passphrase field is on screen
+prompt_fade_out   = 0.18;  # quick field fade-out after the passphrase is accepted
+unlocked          = 1;     # 0 while a passphrase is pending → loading bar frozen + hidden
+password_was_used = 0;     # 1 if there was passwd request
+progress_baseline = 0;     # progress on unlock moment
+progress_started  = 0;     # flag: baseline already captured
+
+# ── Layout ────────────────────────────────────────────────────────────────────
+# Positions and scales every sprite for the current display set. Touches geometry
+# only — opacity, fades and boot state are left alone, so it is safe to call at any
+# moment, including mid-animation or while the passphrase field is up.
+fun relayout() {
+  measure_screen();
+
+  # Logo — centred on the canvas, i.e. centred on every display.
+  logo_sprite.SetX(Math.Int(screen_half_w - logo_image.GetWidth()  / 2));
+  logo_sprite.SetY(Math.Int(screen_half_h - logo_image.GetHeight() / 2));
+
+  # Progress bar — 35% of the safe width, and 75% down the safe height, expressed as
+  # an offset from the centre so it lands on the same spot on every display.
+  bar_max_width = Math.Int(safe_w * 0.35);
+  bar_x         = Math.Int(screen_half_w - bar_max_width / 2);
+  bar_y         = Math.Int(screen_half_h + safe_h * 0.25);
+
+  bar_bg_spr.SetImage(bar_bg_src.Scale(bar_max_width, bar_height));
+  bar_bg_spr.SetX(bar_x);
+  bar_bg_spr.SetY(bar_y);
+
+  bar_fill_spr.SetX(bar_x);
+  bar_fill_spr.SetY(bar_y);
+  # Reset to a 1px sliver and clear the cache — refresh_callback rescales it to the
+  # current progress against the new bar width on the very next frame.
+  bar_fill_spr.SetImage(bar_fill_src.Scale(1, bar_height));
+  last_fill_px = 0;
+
+  prompt_cy = bar_y;
+
+  dot_size = Math.Int(safe_h * 0.011);
+  if (dot_size < 10)
+    dot_size = 10;
+  dot_gap = Math.Int(dot_size * 1.9);
+  dot_y   = Math.Int(prompt_cy - dot_size / 2);
+
+  # Counter is `k`, not `i` — see update_dots.
+  for (k = 0; k < DOTS_MAX; k++) {
+    dots[k].SetImage(bullet_src.Scale(dot_size, dot_size));
+    dots[k].SetY(dot_y);
+  }
+
+  prompt_line_w = Math.Int(bar_max_width * 0.7);
+  prompt_line_x = Math.Int(screen_half_w - prompt_line_w / 2);
+  prompt_line_y = Math.Int(prompt_cy + dot_size + dot_size * 0.8);
+  prompt_line_spr.SetImage(bar_fill_src.Scale(prompt_line_w, prompt_line_h));
+  prompt_line_spr.SetX(prompt_line_x);
+  prompt_line_spr.SetY(prompt_line_y);
+
+  lock_size = Math.Int(safe_h * 0.03);
+  if (lock_size < 26)
+    lock_size = 26;
+  lock_spr.SetImage(lock_src.Scale(lock_size, lock_size));
+  lock_spr.SetX(Math.Int(screen_half_w - lock_size / 2));
+  lock_spr.SetY(Math.Int(prompt_line_y + lock_size * 0.7));
+
+  # Re-spread whatever dots are on screen against the new dot size/gap.
+  if (password_active)
+    update_dots(dot_count);
+}
+Plymouth.SetDisplayHotplugFunction(relayout);
+
+# ── Refresh ───────────────────────────────────────────────────────────────────
+fun refresh_callback() {
+  # A display attached after the splash started resizes the shared canvas and shifts
+  # every display's origin inside it. The hotplug hook above normally handles that;
+  # this check keeps the layout self-healing if it ever fails to fire.
+  if (Window.GetWidth() != canvas_w || Window.GetHeight() != canvas_h)
+    relayout();
+
+  FadeSpriteStep();
+
+  # While a passphrase is pending, keep the loading bar frozen at 0 and invisible — only
+  # the prompt fades (handled by FadeSpriteStep above) animate. Released on unlock.
+  if (!unlocked)
+    return;
+
+  if (outro == 1) {
+    # Deterministic fill to 100% (~0.25s), then hand off to fade-out
+    display_progress = Math.Min(1.0, display_progress + outro_rate);
+    if (display_progress >= 1.0) {
+      outro = 2;
+      StartFade(bar_fill_spr, fade_dur, 0.0, "in", 0);
+      StartFade(bar_bg_spr,   fade_dur, 0.0, "in", 0);
+      StartFade(logo_sprite,  fade_dur, 0.0, "in", fade_dur);
+    }
+  } else {
+    # Follow real boot progress at 3/sec, but hold at bar_cap until the outro signal
+    # Normalize progress after password unlock: 0% = unlock moment, 100% = loading end
+    if (password_was_used && progress_started) {
+      # The divisor is what is left of plymouth's scale at unlock. The ask-password
+      # drop-in pauses that (wall-clock) estimate while the prompt waits, so a baseline
+      # is small however long the user took. Floor it anyway: should the pause ever fail
+      # to land, a baseline near 1.0 would collapse the divisor and amplify the rest of
+      # the boot into an instant jump — the bar would surface already part-filled, which
+      # is precisely the bug the pause fixes. Never trips on the healthy path (~0.95 left).
+      relative = (progress - progress_baseline) / Math.Max(1.0 - progress_baseline, 0.25);
+      if (relative < 0)
+        relative = 0;
+      target = Math.Min(relative, bar_cap);
+    } else {
+      target = Math.Min(progress, bar_cap);
+    }
+
+    if (display_progress < target)
+      display_progress = Math.Min(target, display_progress + 0.05);
+  }
+
+  fill_px = Math.Max(1, Math.Int(bar_max_width * display_progress));
+  if (fill_px != last_fill_px) {
+    last_fill_px = fill_px;
+    bar_fill_spr.SetImage(bar_fill_src.Scale(fill_px, bar_height));
+  }
+}
+Plymouth.SetRefreshFunction(refresh_callback);
+
+# ── Boot progress ─────────────────────────────────────────────────────────────
+fun progress_callback(time, progress_val) {
+  # Ignore progress events during shutdown/reboot — bar should not appear
+  if (Plymouth.GetMode() != "boot")
+    return;
+
+  # While a passphrase is pending the bar stays hidden AND its progress is frozen — early
+  # boot-progress events (which can arrive before the password prompt) must not start or
+  # reveal the bar. display_normal_callback releases `unlocked` once the disk is unlocked.
+  if (!unlocked)
+    return;
+
+  # If password was used, remember baseline on first progress after unlock
+  if (password_was_used && !progress_started) {
+    progress_baseline = progress_val;
+    progress_started  = 1;
+  }
+
+  progress = progress_val;
+
+  # Fade the bar in once, after the logo (delay = one fade duration)
+  if (!bar_shown) {
+    bar_shown = 1;
+    StartFade(bar_bg_spr,   fade_dur, 0.35, "out", fade_dur);
+    StartFade(bar_fill_spr, fade_dur, 1.0,  "out", fade_dur);
+  }
+}
+Plymouth.SetBootProgressFunction(progress_callback);
+
+# ── Outro: triggered by `plymouth message --text=w-outro` at real boot-complete ─
+fun begin_outro() {
+  if (outro)
+    return;
+  outro = 1;
+  remaining = 1.0 - display_progress;
+  if (remaining <= 0.0001)
+    outro_rate = 1.0;                                # already full — snap next frame
+  else
+    outro_rate = remaining / (0.25 * refresh_rate);  # fill to 100% over ~0.25s
+}
+
+fun message_callback(text) {
+  if (text == "w-outro")
+    begin_outro();
+}
+Plymouth.SetMessageFunction(message_callback);
+
+# ── Password prompt callbacks ───────────────────────────────────────────────────
+# Position + reveal the first `count` dots symmetrically about screen centre; hide the
+# rest. Called on every keystroke — dots snap to their new spread as the count changes.
+# NB: the loop counter is `k`, NOT `i` — StartFade() reuses the global `i` internally, so
+# looping on `i` here would be clobbered mid-iteration (leaving stray un-faded dots).
+fun update_dots(count) {
+  if (count > DOTS_MAX)
+    count = DOTS_MAX;
+  dot_count = count;
+
+  total = (count - 1) * dot_gap;
+  left  = screen_half_w - total / 2;
+
+  for (k = 0; k < DOTS_MAX; k++) {
+    if (k < count) {
+      cx = left + k * dot_gap;
+      dots[k].SetX(Math.Int(cx - dot_size / 2));
+      dots[k].SetY(dot_y);
+      StartFade(dots[k], dot_fade, 1.0, "out", 0);
+    } else {
+      StartFade(dots[k], dot_fade, 0.0, "in", 0);
+    }
+  }
+}
+
+# Called whenever the boot needs a disk passphrase (and re-called on each keystroke and on
+# a wrong-password retry). `prompt` is the systemd message (unused — the design shows no
+# text); `bullets` is the current character count.
+fun display_password_callback(prompt, bullets) {
+  # Ignore any stray password events outside a real boot (e.g. shutdown).
+  if (Plymouth.GetMode() != "boot")
+    return;
+
+  if (!password_active) {
+    password_active = 1;
+    unlocked = 0;                    # freeze + keep the loading bar hidden until unlock
+    password_was_used = 1;
+    progress_started  = 0;
+    progress_baseline = 0;
+
+    # Hard-kill any loading bar an early boot-progress race may have already shown, and
+    # reset its progress so it starts from 0 once the passphrase is accepted.
+    CancelFade(bar_bg_spr);
+    CancelFade(bar_fill_spr);
+    bar_bg_spr.SetOpacity(0);
+    bar_fill_spr.SetOpacity(0);
+    bar_shown        = 0;
+    display_progress = 0;
+    last_fill_px     = 0;
+
+    # Make sure the logo is up, reveal the underline + lock glyph.
+    StartFade(logo_sprite,     fade_dur, 1.0, "out", 0);
+    StartFade(prompt_line_spr, fade_dur, 1.0, "out", 0);
+    StartFade(lock_spr,        fade_dur, 1.0, "out", 0);
+  }
+
+  update_dots(bullets);
+}
+Plymouth.SetDisplayPasswordFunction(display_password_callback);
+
+# ── Misc callbacks ────────────────────────────────────────────────────────────
+fun root_mounted_callback()   { }
+Plymouth.SetRootMountedFunction(root_mounted_callback);
+
+# Returns to the normal splash — fired once the passphrase is accepted (disk unlocked).
+# Quick-fade the input field out, then reveal the loading bar and let the normal
+# progress→outro flow finish the boot. A no-op on boots that never asked for a password.
+fun display_normal_callback() {
+  if (!password_active)
+    return;
+  password_active = 0;
+
+  # Fade the prompt out. Loop on `k` (see update_dots) so StartFade's internal `i` does not
+  # clobber this counter — otherwise some dots would be left un-faded on screen.
+  StartFade(prompt_line_spr, prompt_fade_out, 0.0, "in", 0);
+  StartFade(lock_spr,        prompt_fade_out, 0.0, "in", 0);
+  for (k = 0; k < DOTS_MAX; k++)
+    StartFade(dots[k], prompt_fade_out, 0.0, "in", 0);
+  dot_count = 0;
+
+  # Passphrase accepted → release the bar and reveal it after the prompt has faded out
+  # (delay = the field fade length). Progress starts from 0 (reset when the prompt opened).
+  progress_started = 0;
+  display_progress = 0;
+  last_fill_px     = 0;
+
+  unlocked  = 1;
+  bar_shown = 1;
+  StartFade(bar_bg_spr,   fade_dur, 0.35, "out", prompt_fade_out);
+  StartFade(bar_fill_spr, fade_dur, 1.0,  "out", prompt_fade_out);
+}
+Plymouth.SetDisplayNormalFunction(display_normal_callback);
+
+# ── Init: lay everything out, then fade in the logo ───────────────────────────
+relayout();
+StartFade(logo_sprite, fade_dur, 1.0, "out", 0);

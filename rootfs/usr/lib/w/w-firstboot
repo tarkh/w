@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+# w-firstboot — finishes the install on the target's own first boot.
+#
+# apply.sh's modules run post-boot on purpose (systemd --user, live D-Bus,
+# gsettings — chroot fights all of these; see dev-workflow.md). install.sh's USB
+# phase only pacstraps the base system + stages this script; everything else
+# (`apply --all`) runs here, natively, right after that first reboot.
+#
+# Driven by mod_firstboot (scripts/install/modules/firstboot.sh), which stages a
+# full copy of scripts/+packages/+rootfs/ under /var/lib/w/src (there is no
+# virtiofs dev-share on real hardware) and enables w-firstboot.service.
+set -uo pipefail
+
+FLAG=/var/lib/w/.firstboot-pending
+SRC=/var/lib/w/src
+LOG=/var/log/w/firstboot.log
+
+finish() {
+  systemctl disable w-firstboot.service 2>/dev/null || true
+  rm -f "$FLAG"
+}
+
+# Scrub the one-time secrets out of install.conf. root_pass/user_pass/luks_pass are
+# consumed only by Session 1 (install.sh's chroot: user creation, LUKS format,
+# crypttab) — dead weight by first boot, and never read again on the target. So is
+# edge_repo: it is a redundant copy of the clone URL, while the live credential
+# store for w-sync is the checkout's own .git/config (locked to 600 by
+# mod_updatesys) — this duplicate only widens the attack surface. Blank every
+# password-typed field (declared in steps.conf, so there is no hard-coded list to
+# drift) plus edge_repo, then lock the file down. Run early — before apply --all
+# and collect-logs — so the plaintext window is as short as possible and the diag
+# bundle never captures the secrets.
+scrub_install_conf() {
+  local conf=/var/lib/w/install.conf id var
+  [[ -f "$conf" ]] || return 0
+  load_steps
+  for id in "${STEP_IDS[@]}"; do
+    [[ "${S_TYPE[$id]}" == password ]] || continue
+    var="${S_VAR[$id]}"
+    sed -i "s|^${var}=.*|${var}=''|" "$conf"
+  done
+  sed -i "s|^edge_repo=.*|edge_repo=''|" "$conf"
+  chmod 600 "$conf"
+}
+
+# Install the W-Packs bundles the user picked in the wizard ($packs, space-
+# separated, from install.conf). Emits the same @@WFB i n label@@ markers run_all
+# uses, so progress_modules drives the gauge by bundle count; `w-pack install`
+# does packages + config + w-style + setup per bundle (deps resolved internally).
+# Runs only after apply --all succeeded — packs sit on top of a finished base.
+run_packs() {
+  local sel b; read -ra sel <<< "$packs"
+  local n=${#sel[@]} i=0
+  for b in "${sel[@]}"; do
+    i=$((i + 1))
+    echo "@@WFB $i $n $b@@"
+    w-pack install "$b" || return 1
+  done
+}
+
+# Re-runs (manual `systemctl start` after a fix, or a stray unit left enabled)
+# should not repeat a completed install.
+[[ -f "$FLAG" ]] || { finish; exit 0; }
+[[ -d "$SRC" ]]  || { finish; exit 1; }
+
+# shellcheck source=/dev/null
+source "$SRC/scripts/install/lib/ui.sh"
+# shellcheck source=/dev/null
+source "$SRC/scripts/install/lib/tui.sh"
+# shellcheck source=/dev/null
+source "$SRC/scripts/install/lib/progress.sh"
+# shellcheck source=/dev/null
+source "$SRC/scripts/install/modules/network.sh"
+
+# install.conf (written by the wizard's answers_serialize) — sourced for CONF_*/lang,
+# consumed by future opt-in apply.sh modules; nothing reads it yet.
+# shellcheck source=/dev/null
+[[ -f /var/lib/w/install.conf ]] && source /var/lib/w/install.conf
+i18n_load "${lang:-en}"
+nav_init
+
+# Preset installs (install.sh --preset) serialize unattended=1: no blocking
+# dialogs here either — network.sh's gate checks this same variable.
+W_UNATTENDED="${unattended:-}"
+
+# E2E status channel: when the dev virtiofs share is mounted (dev-VM/E2E only —
+# never present on real hardware), record the firstboot outcome where the host
+# harness (vm/e2e.sh) can read it after QEMU exits.
+e2e_status() {
+  local d=/mnt/w-src/vm/logs
+  mountpoint -q /mnt/w-src 2>/dev/null || return 0
+  mkdir -p "$d" 2>/dev/null || return 0
+  echo "$1" > "$d/e2e-firstboot-status" || true
+  sync || true
+}
+
+# The passwords/passphrase were captured into CONF_*/lang above; they are no longer
+# needed on disk — remove them (and the redundant edge_repo) before anything else runs.
+scrub_install_conf
+
+# dialog draws its SCREEN to stdout — keep it on the real terminal (this service's
+# TTYPath) while work-phase output goes to the log, exactly like install.sh's
+# init_logging (progress_modules/ui_info expect $W_TTY / $W_LOG).
+mkdir -p /var/log/w
+: > "$LOG"
+W_TTY=1
+exec {W_TTY}>&1
+exec >>"$LOG" 2>&1
+W_LOG="$LOG"
+
+clear >&"$W_TTY"
+ui_logo >&"$W_TTY"
+
+# apply --all needs internet from its very first module (yay/packages); NM's own
+# autoconnect usually finishes within the grace period below, but real Wi-Fi
+# hardware can be slower than network-online.target's wait actually guarantees
+# (it times out and lets boot continue either way — see network.sh's comment).
+# Unattended: an offline grace-period expiry returns 1 (no Wi-Fi picker to loop
+# on) — skip apply and take the failure path below.
+RC=0
+ensure_online_or_reconnect || RC=$?
+
+if [[ $RC -eq 0 ]]; then
+  progress_modules "$(t installing)" bash "$SRC/scripts/apply.sh" --all || RC=$?
+fi
+
+# W-Packs: install the optional bundles selected in the wizard, on top of the now
+# finished base. Only on a clean apply --all; the phase skips itself when nothing
+# was selected (or no bundle shipped) — $packs is empty then. w-pack was staged by
+# apply's mod_packs above, so it is on PATH here.
+if [[ $RC -eq 0 && -n "${packs:-}" ]]; then
+  progress_modules "$(t installing_packs)" run_packs || RC=$?
+fi
+
+# Always leave a diagnostic bundle behind — success or failure — so there is
+# something to inspect even without SSH/virtiofs access on real hardware.
+bash "$SRC/scripts/collect-logs.sh" >>"$LOG" 2>&1 || true
+
+if [[ $RC -eq 0 ]]; then
+  e2e_status ok
+  if [[ -n "$W_UNATTENDED" ]]; then
+    finish
+    systemctl reboot
+    exit 0          # systemctl is async — don't fall through to the dialog
+  fi
+  # Stay inside dialog (no raw echo to the terminal — that's what left the old
+  # screen looking like it "slid" to the top-left just before reboot). --pause
+  # doubles as the countdown: OK ("Reboot") ends it early, otherwise it reboots
+  # on its own after 10s. --no-cancel (in DIALOG_COMMON) maps ESC to OK too, so
+  # there is no way to cancel the reboot, only to not wait out the countdown.
+  dialog "${DIALOG_COMMON[@]}" --ok-label "$(t reboot)" --title " $(t firstboot_title) " \
+    --pause "\n  $(t firstboot_done)" 14 64 10 1>&"${W_TTY:-1}"
+  finish
+  systemctl reboot
+else
+  e2e_status "fail rc=$RC"
+  if [[ -n "$W_UNATTENDED" ]]; then
+    # Leave the flag + service for a manual retry, but power off instead of
+    # sitting on a dialog nobody will dismiss — the headless harness regains
+    # control on QEMU exit and reads the status marker + mirrored logs.
+    systemctl poweroff
+    exit "$RC"      # systemctl is async — don't fall through to the dialog
+  fi
+  dialog "${DIALOG_COMMON[@]}" --title " Error " --msgbox \
+    "\n$(t firstboot_failed)\n\n  $LOG\n  /var/log/w/diag/" 12 70 1>&"$W_TTY"
+  # Leave the flag + service enabled: fix the issue, then
+  # `systemctl start w-firstboot.service` to retry.
+fi

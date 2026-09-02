@@ -1,0 +1,13 @@
+# W Linux — refresh the local Hyprland wiki checkout for the `hyprland` AI skill.
+# System-scope (root) because the checkout lives read-only under /usr/share, where
+# only root writes and the user's assistant only reads. Seeded once by mod_ai
+# (apply.sh --ai), then re-run periodically by w-hyprwiki-update.timer. The script
+# is idempotent and offline-tolerant (keeps the old checkout if git pull fails).
+[Unit]
+Description=W Linux — refresh Hyprland wiki for the AI knowledge skill
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/share/w/ai/skills/hyprland/install.sh

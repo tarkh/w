@@ -1,0 +1,5 @@
+# W Linux — cliphist configuration (see quickshell-clipboard.md).
+# One `<key> <value>` per line. Fed by the two `wl-paste --watch cliphist store`
+# daemons in hyprland.lua; browsed by the Quickshell Clipboard component.
+max-items 750
+max-store-size 5MB

@@ -1,0 +1,5 @@
+{
+  "_comment": "W Hub config. USER-OWNED — w-style/w-theme never touch it. Edit and the running shell live-reloads (FileView watch). border: card outline width — number (px) OR a geometry token name (\"border\"/\"sm\"). themeSwitch: Appearance panel theme-switch transition — live (Hub stays open, crossfade plays in place) | reveal (Hub steps aside so the full-screen crossfade shows on a clean screen). The former icon knobs (iconMode/iconStrength/iconShade/iconLift) are gone: Hub icons are the curated Nerd Font glyph drawn flat in the theme's icon ink (modules/shading/ChromeIcon.qml), not themed artwork run through the duotone shader, so there is no ramp left to tune. Later phases add the root-grid tile composition here.",
+  "border": "border",
+  "themeSwitch": "live"
+}

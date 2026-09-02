@@ -1,0 +1,24 @@
+[Unit]
+Description=Daily due-check for the pacman mirror ranking (W)
+
+[Timer]
+# The timer ticks DAILY but the work is monthly. That split is deliberate: the
+# cadence itself lives in one number in the config (INTERVAL_DAYS), which
+# `w-mirrors rank --scheduled` compares against the list's real age. An OnCalendar
+# expression cannot say "every 30 days", and encoding the period in the unit would
+# have put the policy in two places — one of them not layered, not resettable and
+# not visible to `w-conf cat mirrors`.
+#
+# It also makes the two awkward cases behave: Persistent=true fires a catch-up tick
+# on a machine that was off for a month (the due-check then does the work exactly
+# once, not once per missed day), and on a freshly installed machine the first tick
+# finds a list the installer ranked minutes ago and does nothing.
+OnCalendar=daily
+Persistent=true
+# Nobody is waiting for this. Spreading the herd is also plain courtesy towards the
+# mirrors, which are volunteer infrastructure and are about to serve us ~260 MB.
+RandomizedDelaySec=2h
+AccuracySec=1h
+
+[Install]
+WantedBy=timers.target

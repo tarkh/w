@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# w-appearance — W Linux appearance overrides (Hub -> Appearance -> Settings)
+#
+# Three small per-user overrides that beat the active theme without editing it:
+# bar position, Hyprland blur, Hyprland animations. All user-scope, no polkit —
+# there is no daemon and no --user fan-out, unlike w-nightlight/w-power: the Hub
+# always calls this as the logged-in user themselves, for their own session.
+#
+# BLUR/MOTION live in the `appearance` subsystem (layered W config; see
+# /usr/share/w/defaults/appearance.schema) — unset = "follow the active theme".
+# Both setters re-render through w-style (`apply effects`/`apply motion`), which
+# reloads Hyprland live. Crucially, the w-style modules (100-effects/100-motion)
+# read this override on EVERY render, so the choice survives a later theme
+# switch too — with no change to hyprland.lua itself, which is a static skel
+# file copied once at account creation and would never reach existing users.
+#
+# BAR_POSITION does not go through the layered config at all: config/bar.json
+# already ships a documented user-override slot for this exact key
+# (BarConfig.qml: "position" present -> wins over the theme; absent -> falls
+# back to Geometry.barPosition). Patching that JSON key in place keeps ONE
+# source of truth — a hand-edited bar.json and this CLI never disagree — and
+# the running bar picks it up live via its own FileView{watchChanges:true}, no
+# reload needed.
+
+set -euo pipefail
+
+SUBSYS=appearance
+BAR_JSON="$HOME/.config/quickshell/w/config/bar.json"
+
+err() { echo "w-appearance: $*" >&2; }
+die() { err "$*"; exit 1; }
+
+# shellcheck source=../lib/w/w-conf-lib.sh
+source /usr/lib/w/w-conf-lib.sh
+
+get()    { wconf_get "$SUBSYS" "$1" ""; }
+set_kv() { wconf_set "$SUBSYS" "$1" "$2" user; }
+unset_kv() { wconf_unset "$SUBSYS" "$1" user; }
+
+usage() {
+  cat <<EOF
+Usage: w-appearance <command> [value]
+
+Info: Per-user overrides that beat the active theme (W Hub -> Appearance -> Settings).
+
+Commands:
+  status [--porcelain]              Show the three overrides and their effective values
+  bar-position <theme|top|bottom>   Pin the status bar's edge, or hand it back to the theme
+  blur <theme|off>                  Force Hyprland blur off, or hand it back to the theme
+  motion <theme|off>                Force Hyprland animations off, or hand it back to the theme
+  help                              Show this help
+
+Config: ~/.config/w/appearance.conf (BLUR/MOTION) + config/bar.json (position)
+GUI: W Hub -> Appearance -> Settings
+
+Exit codes:
+  0  Success   1  Runtime error   2  Usage error
+EOF
+}
+
+# ── Bar position: direct JSON patch, no layered config ─────────────────────
+bar_position_now() {
+  [[ -f "$BAR_JSON" ]] || { echo theme; return 0; }
+  jq -r 'if (.position == "top" or .position == "bottom") then .position else "theme" end' \
+    "$BAR_JSON" 2>/dev/null || echo theme
+}
+
+cmd_bar_position() {
+  local v="${1:-}" tmp
+  case "$v" in
+    theme|top|bottom) ;;
+    *) err "bar-position must be theme, top or bottom"; exit 2 ;;
+  esac
+  [[ -f "$BAR_JSON" ]] || die "bar.json not found: $BAR_JSON"
+  command -v jq >/dev/null 2>&1 || die "jq is required"
+  tmp="$(mktemp "${BAR_JSON}.XXXXXX")"
+  if [[ "$v" == theme ]]; then
+    jq 'del(.position)' "$BAR_JSON" >"$tmp"
+  else
+    jq --arg v "$v" '.position = $v' "$BAR_JSON" >"$tmp"
+  fi
+  mv -f "$tmp" "$BAR_JSON"
+}
+
+# ── Blur / animations: layered config + re-render through w-style ──────────
+cmd_blur() {
+  case "${1:-}" in
+    theme) unset_kv BLUR ;;
+    off)   set_kv BLUR off ;;
+    *) err "blur must be theme or off"; exit 2 ;;
+  esac
+  w-style apply effects
+}
+
+cmd_motion() {
+  case "${1:-}" in
+    theme) unset_kv MOTION ;;
+    off)   set_kv MOTION off ;;
+    *) err "motion must be theme or off"; exit 2 ;;
+  esac
+  w-style apply motion
+}
+
+cmd_status() {
+  local blur motion barpos
+  blur="$(get BLUR)";     [[ "$blur"   == off ]] || blur=theme
+  motion="$(get MOTION)"; [[ "$motion" == off ]] || motion=theme
+  barpos="$(bar_position_now)"
+  if [[ "${1:-}" == --porcelain ]]; then
+    echo "BAR_POSITION=$barpos"
+    echo "BLUR=$blur"
+    echo "MOTION=$motion"
+    return 0
+  fi
+  echo "Appearance overrides"
+  echo "  Bar position : $barpos"
+  echo "  Blur         : $blur"
+  echo "  Animations   : $motion"
+}
+
+case "${1:-}" in
+  ""|status)      cmd_status "${2:-}" ;;
+  bar-position)   cmd_bar_position "${2:-}" ;;
+  blur)           cmd_blur "${2:-}" ;;
+  motion)         cmd_motion "${2:-}" ;;
+  help|--help|-h) usage ;;
+  *)              err "unknown command: $1"; usage >&2; exit 2 ;;
+esac

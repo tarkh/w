@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# w-pacnew-reconcile — drop stale .pacnew for W-managed config (alpm PostTransaction).
+#
+# W ships/overrides many /etc files (config is code): apply_rootfs lays down W's
+# version, so it differs from the package's recorded copy and pacman writes a
+# `<file>.pacnew` on the next upgrade of the owning package. For a W-owned file that
+# .pacnew is noise BY CONSTRUCTION — W's version is authoritative and re-asserted on
+# every apply. This hook removes such .pacnew automatically (covering both the CLI
+# `yay -Syu` path and the AI `w_system_update` path, since it runs inside the pacman
+# transaction) and logs each removal to journald — so a genuine upstream default
+# change stays visible for a W maintainer to reconcile in rootfs, without nagging the
+# user. A .pacnew for a file W does NOT ship is left untouched (a real pacdiff case).
+#
+# The set of W-owned /etc paths is /usr/share/w/managed-etc.list, regenerated on
+# every apply_rootfs from the source tree (so it never drifts). No list → no-op.
+set -uo pipefail
+
+LIST=/usr/share/w/managed-etc.list
+log() { logger -t w-pacnew-reconcile -- "$*" 2>/dev/null || true; }
+
+[[ -r "$LIST" ]] || exit 0
+
+removed=0
+while IFS= read -r pacnew; do
+  base=${pacnew%.pacnew}
+  if grep -qxF -- "$base" "$LIST"; then
+    rm -f -- "$pacnew" && removed=$((removed + 1))
+    log "discarded ${pacnew} (W-managed — W's version is authoritative; upstream default changed, a maintainer may reconcile it in rootfs)"
+  fi
+done < <(find /etc -type f -name '*.pacnew' 2>/dev/null)
+
+[[ "$removed" -gt 0 ]] && log "reconciled ${removed} W-managed .pacnew file(s)"
+exit 0

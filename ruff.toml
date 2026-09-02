@@ -1,0 +1,10 @@
+# W python baseline (scripts/check.sh --python) — covers w-mcp / w-authd.
+# Arch ships current CPython; match it rather than a lowest common denominator.
+target-version = "py313"
+
+[lint]
+# Defaults (E4/E7/E9 + F) minus two deliberate style choices:
+#   E702 — `usage; return 2` one-liners are the codebase's compact idiom
+#   E741 — short throwaway names in comprehensions (`l` for line)
+# F-rules (undefined names, unused imports/vars) are the actual bug net — kept.
+ignore = ["E702", "E741"]

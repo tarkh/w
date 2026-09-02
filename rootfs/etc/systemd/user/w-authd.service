@@ -1,0 +1,17 @@
+# W Linux — unified authentication agent (the "W auth dialog" bridge).
+# Registers as the session's polkit agent and forwards prompts to the Quickshell
+# shell over a unix socket (see /usr/lib/w/w-authd). Replaces hyprpolkitagent.
+# Started from hyprland.lua (`systemctl --user start w-authd`), like the shell.
+[Unit]
+Description=W Linux authentication agent
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/w/w-authd
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# w-wait-notifications — block until a session notification server is on the bus.
+#
+# Helper, not a command: called only by absolute path from a systemd user drop-in
+# (see /etc/systemd/user/app-limine\x2drestore\x2dnotify@autostart.service.d/).
+#
+# XDG autostart entries start as soon as the session target is up, which on W is
+# before Quickshell has claimed org.freedesktop.Notifications. A notification sent
+# in that window is not queued — it fails with ServiceUnknown and is gone. Quickshell
+# is spawned by Hyprland as a scope rather than a unit, so there is no unit to order
+# After=; waiting for the bus name is the only ordering signal that exists.
+#
+# Never fails the unit it guards: on timeout it exits 0 and lets the caller try
+# anyway. Losing a notification is the status quo; blocking an autostart entry
+# forever would be worse.
+
+set -euo pipefail
+
+TIMEOUT="${1:-45}"
+[[ "$TIMEOUT" =~ ^[0-9]+$ ]] || TIMEOUT=45
+
+deadline=$(( $(date +%s) + TIMEOUT ))
+while (( $(date +%s) < deadline )); do
+  if busctl --user --quiet call org.freedesktop.DBus /org/freedesktop/DBus \
+       org.freedesktop.DBus GetNameOwner s org.freedesktop.Notifications &>/dev/null; then
+    exit 0
+  fi
+  sleep 1
+done
+exit 0

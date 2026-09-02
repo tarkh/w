@@ -1,0 +1,14 @@
+# W Linux — yazi CLI file manager configuration.
+# Colors are NOT set here: the palette (theme.toml) is rendered by w-style from
+# the active theme (`w-style apply yazi`). This file holds behaviour only.
+
+[mgr]
+show_hidden    = false
+sort_by        = "natural"
+sort_dir_first = true
+sort_sensitive = false
+linemode       = "size"
+
+[preview]
+max_width  = 1200
+max_height = 1200

@@ -1,0 +1,10 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = hyprland
+
+[Action]
+Description = Removing duplicate uwsm-managed Hyprland session entry...
+When = PostTransaction
+Exec = /bin/rm -f /usr/share/wayland-sessions/hyprland-uwsm.desktop

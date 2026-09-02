@@ -1,0 +1,16 @@
+{
+    "colorscheme": "w",
+    "tabsize": 4,
+    "tabstospaces": true,
+    "autoindent": true,
+    "savecursor": true,
+    "saveundo": true,
+    "scrollbar": true,
+    "diffgutter": true,
+    "matchbrace": true,
+    "cursorline": true,
+    "ruler": true,
+    "hltrailingws": true,
+    "mkparents": true,
+    "clipboard": "external"
+}

@@ -1,0 +1,5 @@
+# polkit.manifest — system config owned by mod_polkit (hyprpolkitagent + PAM).
+# Managed system path (root to reset), restored from the W source. Adds the
+# fingerprint PAM line for polkit-1.
+# Format: <path>\t<class>
+/etc/pam.d/polkit-1	managed

@@ -1,0 +1,744 @@
+#!/usr/bin/env python3
+# w-authd — W Linux unified authentication agent (the "W auth dialog" bridge).
+#
+# Replaces the hyprpolkitagent GTK dialog: this daemon IS the polkit
+# authentication agent, but it renders NO UI of its own. It registers with polkitd
+# as the session's authentication agent, drives the PAM conversation via polkit's
+# PolkitAgent.Session (which spawns the setuid polkit-agent-helper-1) — so
+# fingerprint (pam_fprintd sufficient in /etc/pam.d/polkit-1) and password both flow
+# through unchanged — and forwards every prompt as newline-delimited JSON over a unix
+# socket to the Quickshell shell, which draws the single centered auth card
+# (modules/auth/). The typed password comes back over the same socket, never argv.
+#
+# ⚠️ We implement the org.freedesktop.PolicyKit1.AuthenticationAgent D-Bus interface
+# DIRECTLY (register_object + Polkit.Authority.register_authentication_agent_sync)
+# rather than subclassing PolkitAgent.Listener: the listener's async-vfunc completion
+# (Gio.Task → libpolkit-agent auth_cb) segfaults under PyGObject on this stack. Owning
+# the D-Bus method invocation lets us complete cleanly with invocation.return_value.
+# PolkitAgent.Session is solid and reused for the actual PAM handling.
+#
+# Phase 2 adds the gcr bridge: we also own org.gnome.keyring.SystemPrompter on the
+# SESSION bus and implement org.gnome.keyring.internal.Prompter DIRECTLY (same raw
+# D-Bus tactic as polkit above — Gcr.SystemPrompter with a Python Gcr.Prompt subclass
+# segfaults the same way PolkitAgent.Listener does). SSH-key passphrases and keyring
+# unlock prompts (gcr-ssh-agent, gnome-keyring-daemon) then land in the SAME card
+# instead of gcr-prompter's GTK window. The password is protected on the bus by
+# GcrSecretExchange (a DH exchange) which we drive by hand via the introspectable
+# Gcr.SecretExchange. The "Automatically unlock this key" checkbox is the native
+# choice-label / choice-chosen of the prompt protocol — reporting choice-chosen back
+# is what makes gcr-ssh-agent persist the passphrase into the login keyring.
+#
+# Wire protocol (one JSON object per line):
+#   daemon → shell:
+#     {type:"begin",  id, kind, message, icon, action, choice, user, users}
+#                                                  prompt opened (re-sent verbatim when
+#                                                  the identity changes — see below)
+#         kind:   "password" | "confirm"   choice: checkbox label ("" = none)
+#         user:   login name the password is asked FOR ("" = unknown, e.g. gcr prompts)
+#         users:  other identities the caller may authenticate as ([] = no choice)
+#     {type:"request",id, prompt, echo}            PAM asks for input (password)
+#     {type:"info",   id, text}                    PAM info (e.g. "Place finger")
+#     {type:"error",  id, text}                    a try failed (agent will retry)
+#     {type:"end",    id, result:"ok"|"fail"|"cancel"}  prompt closed (terminal)
+#   shell → daemon:
+#     {type:"response",id, password, choice}       user submitted (choice = checkbox)
+#     {type:"select",  id, user}                   authenticate as a different identity
+#     {type:"cancel",  id}                         user dismissed
+#
+# Runs as the ordinary user, a systemd --user service (w-authd.service).
+# Exit codes: 0 success · 1 runtime error.
+
+import faulthandler
+import json
+import os
+import pwd
+import signal
+import sys
+
+import gi
+
+gi.require_version("Polkit", "1.0")
+gi.require_version("PolkitAgent", "1.0")
+from gi.repository import Gio, GLib, Polkit, PolkitAgent
+
+# gcr is optional: if it (or its typelib) is missing, the polkit half still runs and
+# the gcr/SSH bridge is simply skipped rather than taking the whole daemon down.
+try:
+    gi.require_version("Gcr", "4")
+    from gi.repository import Gcr
+    HAVE_GCR = True
+except (ValueError, ImportError):
+    HAVE_GCR = False
+
+# GLib.unix_signal_add moved to the GLibUnix namespace; use it where available and
+# fall back on older stacks (keeps the journal free of a PyGIDeprecationWarning).
+try:
+    gi.require_version("GLibUnix", "2.0")
+    from gi.repository import GLibUnix
+    unix_signal_add = GLibUnix.signal_add
+except (ValueError, ImportError):
+    unix_signal_add = GLib.unix_signal_add
+
+faulthandler.enable()
+
+OBJECT_PATH = "/com/w/authd/AuthenticationAgent"
+AGENT_XML = """
+<node>
+  <interface name="org.freedesktop.PolicyKit1.AuthenticationAgent">
+    <method name="BeginAuthentication">
+      <arg type="s" name="action_id" direction="in"/>
+      <arg type="s" name="message" direction="in"/>
+      <arg type="s" name="icon_name" direction="in"/>
+      <arg type="a{ss}" name="details" direction="in"/>
+      <arg type="s" name="cookie" direction="in"/>
+      <arg type="a(sa{sv})" name="identities" direction="in"/>
+    </method>
+    <method name="CancelAuthentication">
+      <arg type="s" name="cookie" direction="in"/>
+    </method>
+  </interface>
+</node>
+"""
+
+
+def sock_path():
+    base = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    d = os.path.join(base, "w")
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, "authd.sock")
+
+
+class AuthUI:
+    """Owns the unix socket to the shell and routes messages to/from requests."""
+
+    def __init__(self, path):
+        self.path = path
+        self.clients = []          # list of {out, in} for connected shells
+        self.requests = {}         # id -> the ONE active AuthRequest (shell-visible)
+        self.queue = []            # AuthRequests awaiting their turn (FIFO)
+        self.active = None         # the request currently shown to the user
+        self._seq = 0
+
+    def next_id(self):
+        self._seq += 1
+        return self._seq
+
+    # One prompt on screen at a time (like GNOME/KDE): concurrent BeginAuthentication
+    # calls queue up and are shown in arrival order. The shell stays simple (single
+    # curId); it never has to juggle stacked prompts.
+    def enqueue(self, req):
+        self.queue.append(req)
+        self._pump()
+
+    def _pump(self):
+        if self.active is None and self.queue:
+            self.active = self.queue.pop(0)
+            self.requests[self.active.id] = self.active
+            self.active.start()
+
+    def finish(self, req):
+        self.requests.pop(req.id, None)
+        if req in self.queue:          # finished while still queued (cancelled early)
+            self.queue.remove(req)
+        if self.active is req:
+            self.active = None
+            self._pump()               # promote the next waiting prompt
+
+    def start(self):
+        try:
+            os.unlink(self.path)
+        except FileNotFoundError:
+            pass
+        self.service = Gio.SocketService.new()
+        addr = Gio.UnixSocketAddress.new(self.path)
+        self.service.add_address(
+            addr, Gio.SocketType.STREAM, Gio.SocketProtocol.DEFAULT, None
+        )
+        os.chmod(self.path, 0o600)
+        self.service.connect("incoming", self._on_incoming)
+        self.service.start()
+
+    def _on_incoming(self, service, conn, src):
+        client = {
+            "conn": conn,
+            "out": conn.get_output_stream(),
+            "in": Gio.DataInputStream.new(conn.get_input_stream()),
+        }
+        self.clients.append(client)
+        # A shell that connected mid-prompt (e.g. after a restart) still sees it.
+        for req in self.requests.values():
+            self._send_one(client, req.begin_msg())
+        self._read_line(client)
+        return False
+
+    def _read_line(self, client):
+        client["in"].read_line_async(
+            GLib.PRIORITY_DEFAULT, None, self._on_line, client
+        )
+
+    def _on_line(self, istream, res, client):
+        try:
+            line, _ = istream.read_line_finish_utf8(res)
+        except GLib.Error:
+            line = None
+        if not line:
+            self._drop(client)
+            return
+        self._handle(line)
+        self._read_line(client)
+
+    def _drop(self, client):
+        if client in self.clients:
+            self.clients.remove(client)
+
+    def _handle(self, line):
+        try:
+            msg = json.loads(line)
+        except (ValueError, TypeError):
+            return
+        req = self.requests.get(msg.get("id"))
+        if not req:
+            return
+        t = msg.get("type")
+        if t == "response":
+            req.submit(msg.get("password", ""), bool(msg.get("choice", False)))
+        elif t == "select":
+            # Only polkit requests offer a choice of identity; gcr ones have none.
+            if hasattr(req, "select_identity"):
+                req.select_identity(msg.get("user", ""))
+        elif t == "cancel":
+            req.cancel()
+
+    def send(self, obj):
+        data = (json.dumps(obj) + "\n").encode()
+        for client in list(self.clients):
+            self._send_bytes(client, data)
+
+    def _send_one(self, client, obj):
+        self._send_bytes(client, (json.dumps(obj) + "\n").encode())
+
+    def _send_bytes(self, client, data):
+        try:
+            client["out"].write_all(data, None)
+        except GLib.Error:
+            self._drop(client)
+
+
+class AuthRequest:
+    """One polkit BeginAuthentication call: PolkitAgent.Session(s) + a shell prompt."""
+
+    MAX_TRIES = 3
+
+    def __init__(self, ui, agent, action_id, message, icon, cookie, identities, invocation):
+        self.ui = ui
+        self.agent = agent
+        self.action_id = action_id or ""
+        self.message = message or ""
+        self.icon = icon or ""
+        self.cookie = cookie
+        self.invocation = invocation
+        self.id = ui.next_id()
+        # Every unix-user identity polkit will accept for this action, in its order,
+        # plus the one we start with. On a single-user machine that is a list of one
+        # (the user themselves); for an auth_admin action on a non-admin's session it
+        # is every administrator of the machine — hence both the honest "whose
+        # password" label and the selector below.
+        self.choices = self._user_choices(identities)
+        self.identity_uid, self.selectable = self._pick_identity()
+        self.identity = (
+            Polkit.UnixUser.new(self.identity_uid) if self.identity_uid is not None else None
+        )
+        self.session = None
+        self.awaiting = False       # a request() is outstanding (waiting on user)
+        self.pending = None         # password typed before request() arrived
+        self.tries = 0
+        self.saw_error = False      # PAM emitted a show-error this try (don't clobber)
+        self.cancelled = False
+        self.done = False
+
+    @staticmethod
+    def _user_choices(identities):
+        # identities: list of (kind_str, {key: value}). Only unix-user ones can be
+        # authenticated here (a unix-group identity names no account to prompt for),
+        # so they are skipped exactly as before.
+        out = []
+        for kind, det in identities:
+            if kind != "unix-user":
+                continue
+            uid = det.get("uid")
+            if uid is None:
+                continue
+            uid = int(uid)
+            try:
+                name = pwd.getpwuid(uid).pw_name
+            except KeyError:
+                name = f"uid {uid}"
+            out.append({"uid": uid, "name": name})
+        return out
+
+    def _pick_identity(self):
+        # Prefer our own uid — the person at the keyboard authenticating as themselves
+        # is both the common case and the only one that needs no explanation. When we
+        # are NOT in the list (a non-admin triggering an auth_admin action), we still
+        # have to start somewhere, but the shell then gets the full list so the user
+        # can pick the administrator who is actually present instead of staring at an
+        # unlabelled field and typing a password that cannot work.
+        me = os.getuid()
+        for c in self.choices:
+            if c["uid"] == me:
+                return me, False
+        if not self.choices:
+            return None, False
+        return self.choices[0]["uid"], len(self.choices) > 1
+
+    def _current_name(self):
+        for c in self.choices:
+            if c["uid"] == self.identity_uid:
+                return c["name"]
+        return ""
+
+    def begin_msg(self):
+        return {
+            "type": "begin", "id": self.id, "kind": "password", "choice": "",
+            "message": self.message, "icon": self.icon, "action": self.action_id,
+            "user": self._current_name(),
+            "users": [c["name"] for c in self.choices] if self.selectable else [],
+        }
+
+    def start(self):
+        if self.identity is None:
+            self._finish("fail")
+            return
+        self.ui.send(self.begin_msg())
+        self._new_session()
+
+    def _new_session(self):
+        self.awaiting = False
+        self.pending = None
+        self.saw_error = False
+        self.session = PolkitAgent.Session.new(self.identity, self.cookie)
+        self.session.connect("request", self._on_request)
+        self.session.connect("show-info", self._on_info)
+        self.session.connect("show-error", self._on_error)
+        self.session.connect("completed", self._on_completed)
+        self.session.initiate()
+
+    def _stale(self, session):
+        # A session we walked away from (identity switch) may still emit — its PAM
+        # conversation unwinds on its own schedule. Ignore everything that does not
+        # come from the session we are currently driving, so a dead conversation can
+        # neither prompt the card nor count as a failed try.
+        return session is not self.session
+
+    def _on_request(self, session, prompt, echo):
+        if self._stale(session):
+            return
+        # pam_fprintd may still be blocking when the user types: if a password is
+        # already queued, answer immediately; otherwise ask the shell for one.
+        if self.pending is not None:
+            pw, self.pending = self.pending, None
+            session.response(pw)
+            return
+        self.awaiting = True
+        self.ui.send({"type": "request", "id": self.id, "prompt": prompt, "echo": bool(echo)})
+
+    def _on_info(self, session, text):
+        if self._stale(session):
+            return
+        self.ui.send({"type": "info", "id": self.id, "text": text})
+
+    def _on_error(self, session, text):
+        if self._stale(session):
+            return
+        # A real PAM message (e.g. faillock's "Account locked due to N failed
+        # logins"). Surface it verbatim and remember we did, so the retry path below
+        # does NOT overwrite it with a generic "Authentication failed".
+        self.saw_error = True
+        self.ui.send({"type": "error", "id": self.id, "text": text})
+
+    def _on_completed(self, session, gained):
+        if self._stale(session):
+            return
+        if gained:
+            self._finish("ok")
+            return
+        if self.cancelled:
+            self._finish("cancel")
+            return
+        self.tries += 1
+        if self.tries < self.MAX_TRIES:
+            # Retry in-place: tell the shell this try failed (it clears the field and
+            # stays open), then spin a fresh session. Deferred to idle so the current
+            # "completed" emission fully unwinds before we re-enter libpolkit-agent.
+            # If PAM already gave a real reason (faillock lockout etc.), keep it.
+            if not self.saw_error:
+                self.ui.send({"type": "error", "id": self.id, "text": "Authentication failed"})
+            GLib.idle_add(self._retry)
+        else:
+            self._finish("fail")
+
+    def _retry(self):
+        if not self.done:
+            self._new_session()
+        return GLib.SOURCE_REMOVE
+
+    def select_identity(self, name):
+        # Authenticate as a different administrator. PolkitAgent.Session.new() binds a
+        # session to ONE identity, so switching means a new session, not a new value in
+        # a field. We drop the old one rather than waiting for its "completed": that
+        # signal is what the retry path listens to, and hanging the switch off it would
+        # either double-spin a session or count the switch as a failed try. The stale
+        # guard (_stale) keeps the abandoned conversation silent.
+        if self.done or not self.selectable:
+            return
+        target = next((c for c in self.choices if c["name"] == name), None)
+        if target is None or target["uid"] == self.identity_uid:
+            return
+        old = self.session
+        self.session = None
+        if old is not None:
+            try:
+                old.cancel()
+            except GLib.Error:
+                pass
+        self.identity_uid = target["uid"]
+        self.identity = Polkit.UnixUser.new(self.identity_uid)
+        self.tries = 0
+        # Re-send `begin` (same id): the card already treats it as a fresh prompt —
+        # clears the field, the error and the failure count — so no new message type
+        # is needed, and it now carries the new name.
+        self.ui.send(self.begin_msg())
+        self._new_session()
+
+    def submit(self, password, choice=False):
+        # polkit has no "choice" (that is a gcr/keyring concept) — ignore it here.
+        if self.done:
+            return
+        if self.awaiting:
+            self.awaiting = False
+            self.session.response(password)
+        else:
+            self.pending = password   # request() has not arrived yet — queue it
+
+    def cancel(self):
+        if self.done:
+            return
+        self.cancelled = True
+        if self.session is not None:   # None if cancelled while still queued
+            try:
+                self.session.cancel()  # → completed(False) → _finish("cancel")
+            except GLib.Error:
+                pass
+        if not self.done:
+            self._finish("cancel")
+
+    def _finish(self, result):
+        if self.done:
+            return
+        self.done = True
+        self.ui.send({"type": "end", "id": self.id, "result": result})
+        self.ui.finish(self)           # clears active + promotes the next queued prompt
+        self.agent.forget(self.cookie)
+        # Complete the pending D-Bus call. Success reports the gained authorization
+        # to polkitd; failure/cancel return the matching PolicyKit1 error so pkexec &
+        # friends see a clean dismissal instead of a hang.
+        if result == "ok":
+            self.invocation.return_value(GLib.Variant("()", ()))
+        elif result == "cancel":
+            self.invocation.return_dbus_error(
+                "org.freedesktop.PolicyKit1.Error.Cancelled", "Authentication cancelled"
+            )
+        else:
+            self.invocation.return_dbus_error(
+                "org.freedesktop.PolicyKit1.Error.Failed", "Authentication failed"
+            )
+
+
+class Agent:
+    """Exports the AuthenticationAgent D-Bus object and registers it with polkitd."""
+
+    def __init__(self, ui):
+        self.ui = ui
+        self.by_cookie = {}
+        self.node = Gio.DBusNodeInfo.new_for_xml(AGENT_XML)
+        self.bus = None
+        self.reg_id = None
+        self.authority = None
+        self.subject = None
+
+    def register(self):
+        # The AuthenticationAgent lives on the SYSTEM bus; polkitd calls back to our
+        # unique name + object path. Polkit.Authority.get_sync shares the same singleton
+        # system-bus connection, so the name it registers matches the one we export on.
+        self.bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+        # register_object is deprecated in favour of the *_with_closures2 variant
+        # (same signature here); fall back on older GLib that lacks it.
+        reg = getattr(self.bus, "register_object_with_closures2", self.bus.register_object)
+        self.reg_id = reg(
+            OBJECT_PATH, self.node.interfaces[0], self._on_call, None, None
+        )
+        self.authority = Polkit.Authority.get_sync(None)
+        self.subject = Polkit.UnixSession.new_for_process_sync(os.getpid(), None)
+        locale = os.environ.get("LANG") or "en_US.UTF-8"
+        self.authority.register_authentication_agent_sync(
+            self.subject, locale, OBJECT_PATH, None
+        )
+
+    def unregister(self):
+        try:
+            if self.authority and self.subject:
+                self.authority.unregister_authentication_agent_sync(
+                    self.subject, OBJECT_PATH, None
+                )
+        except GLib.Error:
+            pass
+        if self.bus and self.reg_id:
+            self.bus.unregister_object(self.reg_id)
+
+    def forget(self, cookie):
+        self.by_cookie.pop(cookie, None)
+
+    def _on_call(self, conn, sender, path, iface, method, params, invocation):
+        if method == "BeginAuthentication":
+            action_id, message, icon, _details, cookie, identities = params.unpack()
+            req = AuthRequest(self.ui, self, action_id, message, icon,
+                              cookie, identities, invocation)
+            self.by_cookie[cookie] = req
+            self.ui.enqueue(req)       # shown now if idle, else queued (one at a time)
+        elif method == "CancelAuthentication":
+            (cookie,) = params.unpack()
+            req = self.by_cookie.get(cookie)
+            if req:
+                req.cancel()
+            invocation.return_value(GLib.Variant("()", ()))
+        else:
+            invocation.return_dbus_error(
+                "org.freedesktop.DBus.Error.UnknownMethod", method
+            )
+
+
+# ── gcr / keyring bridge ─────────────────────────────────────────────────────
+# We own org.gnome.keyring.SystemPrompter on the SESSION bus and implement the
+# org.gnome.keyring.internal.Prompter interface by hand (Gcr.SystemPrompter + a
+# Python Gcr.Prompt segfaults the same way PolkitAgent.Listener does). Callers
+# (gcr-ssh-agent, gnome-keyring-daemon) then send their SSH/keyring passphrase
+# prompts to us. The password is carried encrypted via GcrSecretExchange, which we
+# drive by hand: begin() (our public key) in the first PromptReady, receive() the
+# caller's key on PerformPrompt, send(password) back in the final PromptReady.
+
+GCR_PROMPTER_NAME = "org.gnome.keyring.SystemPrompter"
+GCR_PROMPTER_PATH = "/org/gnome/keyring/Prompter"
+GCR_CALLBACK_IFACE = "org.gnome.keyring.internal.Prompter.Callback"
+GCR_PROMPTER_XML = """
+<node>
+  <interface name="org.gnome.keyring.internal.Prompter">
+    <method name="BeginPrompting">
+      <arg type="o" name="callback" direction="in"/>
+    </method>
+    <method name="PerformPrompt">
+      <arg type="o" name="callback" direction="in"/>
+      <arg type="s" name="type" direction="in"/>
+      <arg type="a{sv}" name="properties" direction="in"/>
+      <arg type="s" name="exchange" direction="in"/>
+    </method>
+    <method name="StopPrompting">
+      <arg type="o" name="callback" direction="in"/>
+    </method>
+  </interface>
+</node>
+"""
+
+
+class GcrRequest:
+    """One PerformPrompt shown as a card. Mirrors AuthRequest's UI-facing surface."""
+
+    def __init__(self, ui, prompter, session, kind, props):
+        self.ui = ui
+        self.prompter = prompter
+        self.session = session
+        self.kind = kind or "password"
+        # gcr splits the human text across message/description; the card has one
+        # subtitle slot, so prefer the description (the specific line, e.g. the key
+        # path) and fall back to the generic message.
+        self.message = props.get("description") or props.get("message") or ""
+        self.choice = props.get("choice-label") or ""
+        self.id = ui.next_id()
+        self.done = False
+
+    def begin_msg(self):
+        return {
+            "type": "begin", "id": self.id, "kind": self.kind,
+            "message": self.message, "icon": "", "action": "", "choice": self.choice,
+        }
+
+    def start(self):
+        # The prompt is already "ready" (gcr did the PAM/keyring work); we just need
+        # the user's input. No PolkitAgent.Session to spin, so start = show the card.
+        self.ui.send(self.begin_msg())
+
+    def submit(self, password, choice=False):
+        if self.done:
+            return
+        self._finish("ok", password, choice)
+
+    def cancel(self):
+        if self.done:
+            return
+        self._finish("cancel", "", False)
+
+    def _finish(self, result, secret, chosen):
+        if self.done:
+            return
+        self.done = True
+        # "yes" = confirmed / password entered; "no" = dismissed. The caller decides
+        # if the passphrase was correct — on a wrong one it opens a fresh PerformPrompt
+        # (a new card), the same way polkit re-initiates.
+        self.prompter.send_result(self.session, "yes" if result == "ok" else "no",
+                                  secret, chosen)
+        if self.session.get("active") is self:
+            self.session["active"] = None
+        self.ui.send({"type": "end", "id": self.id, "result": result})
+        self.ui.finish(self)
+
+
+class GcrPrompter:
+    """Owns org.gnome.keyring.SystemPrompter and speaks the internal Prompter protocol."""
+
+    def __init__(self, ui):
+        self.ui = ui
+        self.conn = None
+        self.reg_id = None
+        self.owner_id = None
+        self.sessions = {}          # (sender, callback_path) -> session dict
+        self.node = Gio.DBusNodeInfo.new_for_xml(GCR_PROMPTER_XML)
+
+    def register(self):
+        self.conn = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        reg = getattr(self.conn, "register_object_with_closures2", self.conn.register_object)
+        self.reg_id = reg(
+            GCR_PROMPTER_PATH, self.node.interfaces[0], self._on_call, None, None
+        )
+        # Own the name so gcr-prompter is never D-Bus-activated in our place. NONE
+        # (no REPLACE): if a real prompter somehow already holds it, we stand down
+        # rather than fight, and the gcr half is simply inactive.
+        self.owner_id = Gio.bus_own_name_on_connection(
+            self.conn, GCR_PROMPTER_NAME, Gio.BusNameOwnerFlags.NONE, None, None
+        )
+
+    def _new_exchange(self):
+        return Gcr.SecretExchange.new(Gcr.SECRET_EXCHANGE_PROTOCOL_1)
+
+    def _on_call(self, conn, sender, path, iface, method, params, invocation):
+        if method == "BeginPrompting":
+            (cb_path,) = params.unpack()
+            key = (sender, cb_path)
+            watch = Gio.bus_watch_name_on_connection(
+                conn, sender, Gio.BusNameWatcherFlags.NONE,
+                None, lambda c, n: self._drop(key)
+            )
+            self.sessions[key] = {
+                "sender": sender, "path": cb_path,
+                "se": self._new_exchange(), "active": None, "watch": watch,
+            }
+            invocation.return_value(GLib.Variant("()", ()))
+            # First ready carries OUR public key (begin), no secret yet.
+            self._call_ready(self.sessions[key], "none", {}, self.sessions[key]["se"].begin())
+        elif method == "PerformPrompt":
+            cb_path, ptype, props, exchange = params.unpack()
+            sess = self.sessions.get((sender, cb_path))
+            if sess is None:
+                invocation.return_dbus_error("org.freedesktop.DBus.Error.Failed",
+                                             "no prompting session")
+                return
+            sess["se"].receive(exchange)          # ingest the caller's public key
+            invocation.return_value(GLib.Variant("()", ()))
+            req = GcrRequest(self.ui, self, sess, ptype, props)
+            sess["active"] = req
+            self.ui.enqueue(req)                  # shown now if idle, else queued
+        elif method == "StopPrompting":
+            (cb_path,) = params.unpack()
+            self._drop((sender, cb_path))
+            invocation.return_value(GLib.Variant("()", ()))
+        else:
+            invocation.return_dbus_error("org.freedesktop.DBus.Error.UnknownMethod", method)
+
+    def send_result(self, sess, reply, secret, chosen):
+        # received is always true by now (we got the caller's key on PerformPrompt),
+        # so the reply exchange carries the secret; choice-chosen rides in properties
+        # (that is what makes gcr-ssh-agent persist the passphrase into the keyring).
+        exchange = sess["se"].send(secret or "", -1)
+        # gcr's client double-unwraps each a{sv} value (it g_variant_get_variant()s the
+        # value it already pulled out of the sv), so property values must be wrapped
+        # as a variant-in-a-variant: v(v(b)) on the wire, not a bare v(b).
+        props = {"choice-chosen": GLib.Variant("v", GLib.Variant("b", chosen))}
+        self._call_ready(sess, reply, props, exchange)
+
+    def _call_ready(self, sess, reply, props, exchange):
+        body = GLib.Variant("(sa{sv}s)", (reply, props, exchange or ""))
+        self.conn.call(
+            sess["sender"], sess["path"], GCR_CALLBACK_IFACE, "PromptReady",
+            body, None, Gio.DBusCallFlags.NONE, -1, None, None
+        )
+
+    def _drop(self, key):
+        sess = self.sessions.pop(key, None)
+        if not sess:
+            return
+        if sess.get("watch"):
+            Gio.bus_unwatch_name(sess["watch"])
+        active = sess.get("active")
+        if active and not active.done:
+            active.done = True
+            self.ui.send({"type": "end", "id": active.id, "result": "cancel"})
+            self.ui.finish(active)
+
+    def unregister(self):
+        if self.owner_id:
+            Gio.bus_unown_name(self.owner_id)
+        if self.conn and self.reg_id:
+            self.conn.unregister_object(self.reg_id)
+
+
+def main():
+    ui = AuthUI(sock_path())
+    ui.start()
+
+    agent = Agent(ui)
+    try:
+        agent.register()
+    except GLib.Error as e:
+        print(f"w-authd: failed to register polkit agent: {e}", file=sys.stderr)
+        return 1
+
+    prompter = None
+    if HAVE_GCR:
+        prompter = GcrPrompter(ui)
+        try:
+            prompter.register()
+        except GLib.Error as e:
+            # gcr bridge is best-effort: a failure here must not take polkit down.
+            print(f"w-authd: gcr prompter unavailable: {e}", file=sys.stderr)
+            prompter = None
+
+    loop = GLib.MainLoop()
+
+    def shutdown(*_):
+        agent.unregister()
+        if prompter is not None:
+            prompter.unregister()
+        try:
+            os.unlink(ui.path)
+        except FileNotFoundError:
+            pass
+        loop.quit()
+        return GLib.SOURCE_REMOVE
+
+    unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, shutdown)
+    unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, shutdown)
+
+    loop.run()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

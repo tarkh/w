@@ -1,0 +1,25 @@
+# power.manifest — config owned by mod_power (power management).
+#
+# Three layers, two of them tracked here (update-system.md phase 2):
+#   • /usr/share/w/defaults/power.schema — WHO may set each key. Shipped data,
+#     class managed: W owns it, every update overwrites it.
+#   • /etc/w/power.conf — the admin's DEVIATIONS from the vendor defaults. Class
+#     override: the update never touches it; `w-reset power` drops the deviations
+#     so the machine falls back to the vendor layer ("as on a fresh install").
+#
+# NOT tracked here — generated output, regenerate with `sudo w-power apply`:
+#   • /usr/share/w/defaults/power.conf      (the vendor layer itself: w-power
+#     writes it from preset_sys()/preset_idle() for this machine's MODE, so it has
+#     no source file in the repo — same precedent as the rendered nodes below)
+#   • ~/.config/hypr/hypridle.conf          (idle timers; moved off mod_hyprland)
+#   • /etc/systemd/logind.conf.d/10-w-power.conf   (lid / power key)
+#   • the battery charge threshold sysfs (via w-charge-limit.service)
+# ~/.config/w/power.conf holds only per-user idle overrides, created on demand
+# with no vendor default — class user-conf: `w-reset power` deletes it (its
+# "default" IS absence). Re-rendering hypridle.conf from the drop still needs a
+# root `w-power apply` (see `reset_module`'s power/nightlight re-render step).
+#
+# Format: <path>\t<class>   class: managed | override | user-conf
+/usr/share/w/defaults/power.schema	managed
+/etc/w/power.conf	override
+.config/w/power.conf	user-conf

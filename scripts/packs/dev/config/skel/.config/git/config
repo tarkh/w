@@ -1,0 +1,52 @@
+# W Linux — git configuration owned by the `dev` W-Pack.
+#
+# ⚠️ W OWNS THIS FILE (manifest class `managed`). Every `w-pack install dev` — and
+# every W update that ships a change here — overwrites it. Do not edit it.
+#
+# Put your own settings in ~/.gitconfig instead. Git reads BOTH global files:
+# this one first, then ~/.gitconfig, and the later one wins — so anything you set
+# there overrides anything W sets here, key by key. `git config --global …` writes
+# to ~/.gitconfig (the bundle seeds a stub so it always exists), which is exactly
+# why W keeps its own settings out of your file: new W defaults can land on an
+# update without ever touching a line you wrote.
+
+# ── Theme ─────────────────────────────────────────────────────────────────────
+# Rendered by the w-style axis 500-git from the active W theme; re-rendered on
+# every `w-theme set`. git re-reads its config on each invocation, so a theme
+# switch shows up in the very next `git diff`.
+[include]
+	path = ~/.config/w/git-theme.conf
+
+# ── delta: the pager for diff / show / log / blame ────────────────────────────
+# `features = w` activates the [delta "w"] block defined in the theme file above —
+# delta's own documented convention for themes.
+[core]
+	pager = delta
+
+[interactive]
+	diffFilter = delta --color-only
+
+[delta]
+	features = w
+	navigate = true          # n / N jump between files in a diff
+	hyperlinks = true        # OSC-8 links (Ghostty/foot honour them)
+
+# ── Defaults W considers sane ─────────────────────────────────────────────────
+# Opinionated but never binding: override any of them in ~/.gitconfig.
+[merge]
+	# zdiff3 shows the common ancestor in a conflict — strictly more information
+	# than the default `merge` style, at no cost.
+	conflictStyle = zdiff3
+
+[diff]
+	colorMoved = default     # moved blocks get their own colour instead of ±
+	algorithm = histogram    # noticeably better hunks than the default myers
+
+[init]
+	defaultBranch = main
+
+[column]
+	ui = auto
+
+[branch]
+	sort = -committerdate    # most recently used branches first

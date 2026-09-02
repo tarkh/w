@@ -1,0 +1,8 @@
+W Linux live/install medium.
+
+The installer normally starts automatically on this console. If you're seeing
+this prompt, it exited or was interrupted — run it again with:
+  bash /root/w/scripts/install.sh
+
+For Wi-Fi, use nmcli (NetworkManager) — e.g. `nmcli device wifi connect <SSID> password <PASS>`.
+Ethernet should come up automatically via DHCP.

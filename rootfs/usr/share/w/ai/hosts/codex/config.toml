@@ -1,0 +1,12 @@
+# W preset — Codex CLI (opt-in host)  ->  ~/.codex/config.toml
+#
+# Codex is an opt-in provider-native host (OpenAI). W does not manage its key —
+# it uses its own auth (`codex login`) or OPENAI_API_KEY. This preset registers
+# W's MCP server so Codex can inspect the machine and read W's knowledge as MCP
+# resources. Copy the [mcp_servers.w-mcp] block into ~/.codex/config.toml.
+#
+# Install:  yay -S codex   (AUR)     Launch:  w-ai --host codex
+
+[mcp_servers.w-mcp]
+command = "w-mcp"
+args = []

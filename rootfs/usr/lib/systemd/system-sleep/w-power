@@ -1,0 +1,18 @@
+#!/bin/sh
+# W Linux — the suspend/resume edges owned by w-power. Managed by w-power
+# (apply.sh --power). See w-power.md.
+#   pre  — drop the lid from the ACPI wake sources when we are suspending with the
+#          lid already open (LID_WAKE=auto). Some firmware asserts that wake GPE on
+#          "lid open" rather than on "lid opening", so the machine would otherwise
+#          bounce awake within seconds of reaching S3.
+#   post — restore the wake sources, then re-assert the battery charge limit: some
+#          firmware resets charge_control_end_threshold across a suspend cycle.
+case "$1" in
+  pre)
+    /usr/bin/w-power _lidwake-pre 2>/dev/null || true
+    ;;
+  post)
+    /usr/bin/w-power _lidwake-post 2>/dev/null || true
+    /usr/bin/w-power _charge-apply 2>/dev/null || true
+    ;;
+esac

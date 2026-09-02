@@ -1,0 +1,39 @@
+# W Linux — the night light's transition engine.
+#
+# One process that walks the colour temperature currently on screen toward the
+# one the schedule asks for, and exits the moment it has arrived and the goal has
+# stopped moving. Outside a transition — which is most of the day — nothing of
+# this is running at all.
+#
+# Deliberately NOT enabled and NOT wanted by anything: it is started on demand,
+# by `w-nightlight` itself.
+#
+#   • every setter (and `w-nightlight apply`, and the resume hook) does
+#     `restart`, which preempts a transition already in flight — the new process
+#     reads the value actually on screen before it does anything, so it picks up
+#     exactly where the old one stopped, with no state handed over and nothing
+#     to abort cleanly;
+#   • w-nightlight-tick.service does `start`, a no-op while one is already
+#     running, and only when it has established there is real work to do.
+#
+# Why a real unit rather than a transient `systemd-run` timer chain (which is
+# what this replaces): a transition needs sub-second steps, and spawning a
+# transient unit per step is absurd where an in-process sleep is free. A named
+# unit also gives `restart` as an atomic, race-free "replace the goal" — systemd
+# serialises it for us — plus a journal and a cgroup that dies with the session.
+#
+# See w-nightlight.md.
+[Unit]
+Description=W night light — ease the screen to its scheduled colour temperature
+After=graphical-session.target
+PartOf=graphical-session.target
+# No Wayland session, nothing to tint — and nothing to talk to over hyprctl.
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/w-nightlight _ramp
+# A transition is interruptible by definition: the replacement process re-reads
+# the screen, so there is nothing to flush on the way out.
+KillMode=mixed
+TimeoutStopSec=5s

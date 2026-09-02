@@ -1,0 +1,288 @@
+#!/usr/bin/env bash
+# w-kbdlight — W Linux keyboard backlight control
+#
+# The one home for "which LED is the keyboard backlight, and what level is it at".
+# Everything else in W that touches the keyboard light goes through this script:
+# the media-key binds (hotkeys-catalog.lua), the idle listener w-power renders into
+# hypridle.conf, the Quickshell bar block / OSD, and the initramfs hook that lights
+# the keyboard for the LUKS password prompt.
+#
+# Why a resolver at all: `brightnessctl -c leds` picks the FIRST led-class device,
+# which on a typical laptop is an indicator (input6::numlock), not the backlight.
+# The backlight is the one matching `*kbd_backlight*` — vendor-prefixed per driver
+# (smc:: on Apple, tpacpi:: on ThinkPads, dell::, asus::). Auto-detected here, with
+# a DEVICE override in kbdlight.conf for machines that expose more than one.
+#
+# Writes go through brightnessctl, which falls back to logind's SetBrightness when
+# the sysfs node is root-owned (it always is) — so an ordinary user in an ACTIVE
+# graphical session needs no udev rule and no group membership. Outside a session
+# (SSH, a service) that fallback has nothing to talk to, hence the root path.
+#
+# See w-kbdlight.md. Idle-off ("go dark after N s") is NOT here: it is a link of the
+# idle policy and lives in the power subsystem (`w-power idle <ac|bat> kbdlight N`),
+# which renders a hypridle listener calling `w-kbdlight off` / `restore`.
+
+set -euo pipefail
+
+# shellcheck source=../lib/w/w-conf-lib.sh
+source /usr/lib/w/w-conf-lib.sh
+wconf_load kbdlight   # one pass up front; the reads below are cache hits
+conf_get() { wconf_get kbdlight "$1" "${2:-}"; }
+
+LEDS="/sys/class/leds"
+
+# Where the pre-off level is stashed so `restore` can put it back. Per-user tmpfs
+# when we are in a session (the idle listener runs as the user), /run/w otherwise.
+state_dir() {
+  if [[ -n "${XDG_RUNTIME_DIR:-}" && -d "${XDG_RUNTIME_DIR}" ]]; then
+    echo "${XDG_RUNTIME_DIR}/w"
+  else
+    echo "/run/w"
+  fi
+}
+STATE_FILE="$(state_dir)/kbdlight.level"
+
+err()  { echo "w-kbdlight: $*" >&2; }
+die()  { err "$*"; exit 1; }
+
+usage() {
+  cat <<EOF
+Usage: w-kbdlight <command> [value]
+
+Info: Keyboard backlight — level, media keys, and light at the LUKS prompt.
+
+Commands:
+  status              Show device, level and boot policy (default)
+  get [--raw]         Print the level as a percentage (--raw: device units)
+  set <N>[%]          Set the level (percent, or device units with no '%')
+  up [N] / down [N]   Step the level by N percent (default: STEP from the config)
+  toggle              Off <-> the last non-zero level
+  off / restore       Stash-and-clear / put back — used by the idle listener
+  device              Print the resolved backlight device name
+  boot <N|off>        Level for the LUKS/boot prompt, then rebuild the initramfs
+  help                Show this help
+
+Config: /etc/w/kbdlight.conf   (vendor defaults: /usr/share/w/defaults/kbdlight.conf)
+Idle-off is part of the idle policy: sudo w-power idle <ac|bat> kbdlight <seconds>
+
+Exit codes:
+  0  Success   1  Runtime error (no backlight on this machine)   2  Usage error
+
+Examples:
+  w-kbdlight status
+  w-kbdlight up
+  w-kbdlight set 40%
+  sudo w-kbdlight boot 50
+EOF
+}
+
+# ── Device resolution ──────────────────────────────────────────────────────────
+# Preference order: an explicit DEVICE from the config, else the first
+# `*kbd_backlight*` led in sorted order, preferring platform/vendor LEDs over ones
+# exposed by an input driver (a plugged-in lit USB keyboard also registers as
+# `*::kbd_backlight`, and the built-in keyboard is what the media keys mean).
+resolve_device() {
+  local want d n fallback=""
+  want="$(conf_get DEVICE)"
+  if [[ -n "$want" ]]; then
+    [[ -r "$LEDS/$want/brightness" ]] || return 1
+    printf '%s\n' "$want"; return 0
+  fi
+  for d in "$LEDS"/*kbd_backlight*; do
+    [[ -r "$d/brightness" && -r "$d/max_brightness" ]] || continue
+    n="${d##*/}"
+    if [[ "$n" == input* ]]; then fallback="${fallback:-$n}"; continue; fi
+    printf '%s\n' "$n"; return 0
+  done
+  [[ -n "$fallback" ]] && { printf '%s\n' "$fallback"; return 0; }
+  return 1
+}
+
+DEV=""
+need_device() {
+  [[ -n "$DEV" ]] && return 0
+  DEV="$(resolve_device)" || die "no keyboard backlight on this machine"
+  return 0
+}
+
+dev_max() { cat "$LEDS/$DEV/max_brightness"; }
+dev_raw() { cat "$LEDS/$DEV/brightness"; }
+
+# Percent of max, rounded to nearest — what every UI and the config speak.
+raw_to_pct() { # <raw> <max>
+  local raw="$1" max="$2"
+  (( max > 0 )) || { echo 0; return; }
+  echo $(( (raw * 100 + max / 2) / max ))
+}
+
+# Percent to device units. Anything above 0 must land on at least 1 unit, or a
+# small step on a coarse device would silently mean "off".
+pct_to_raw() { # <pct> <max>
+  local pct="$1" max="$2" raw
+  (( pct <= 0 )) && { echo 0; return; }
+  (( pct >= 100 )) && { echo "$max"; return; }
+  raw=$(( (pct * max + 50) / 100 ))
+  (( raw < 1 )) && raw=1
+  echo "$raw"
+}
+
+# Write device units. brightnessctl handles the privilege problem (direct sysfs
+# write as root, logind SetBrightness as a session user) — the reason we do not
+# just echo into sysfs ourselves.
+write_raw() { # <raw>
+  local raw="$1"
+  brightnessctl -q -d "$DEV" set "$raw" 2>/dev/null \
+    || die "cannot set the backlight (no active session and not root?)"
+}
+
+# Configured step, clamped to something sane. On a coarse device (ThinkPads expose
+# 0..2) percent steps round to zero, so step a single unit instead.
+step_pct() { # [override]
+  local s="${1:-}"
+  [[ -z "$s" ]] && s="$(conf_get STEP 10)"
+  [[ "$s" =~ ^[0-9]+$ ]] || die "step must be a whole number of percent"
+  (( s < 1 )) && s=1
+  (( s > 100 )) && s=100
+  echo "$s"
+}
+
+# ── Commands ───────────────────────────────────────────────────────────────────
+
+cmd_get() {
+  need_device
+  if [[ "${1:-}" == "--raw" ]]; then dev_raw; else raw_to_pct "$(dev_raw)" "$(dev_max)"; fi
+}
+
+cmd_set() { # <N|N%>
+  need_device
+  local v="$1" max raw
+  max="$(dev_max)"
+  if [[ "$v" =~ ^([0-9]+)%$ ]]; then
+    raw="$(pct_to_raw "${BASH_REMATCH[1]}" "$max")"
+  elif [[ "$v" =~ ^[0-9]+$ ]]; then
+    raw="$v"; (( raw > max )) && raw="$max"
+  else
+    err "value must be a number (device units) or a percentage like 40%"; exit 2
+  fi
+  write_raw "$raw"
+}
+
+cmd_step() { # <up|down> [pct]
+  need_device
+  local dir="$1" pct max raw cur new
+  pct="$(step_pct "${2:-}")"
+  max="$(dev_max)"; cur="$(dev_raw)"
+  # Coarse devices (ThinkPads expose 0..2) step by one unit; a percentage of a
+  # 3-step range rounds to zero, which would read as "the key does nothing".
+  if (( max <= 5 )); then raw=1; else raw="$(pct_to_raw "$pct" "$max")"; fi
+  if [[ "$dir" == up ]]; then new=$(( cur + raw )); else new=$(( cur - raw )); fi
+  (( new < 0 ))    && new=0
+  (( new > max ))  && new="$max"
+  write_raw "$new"
+}
+
+cmd_toggle() {
+  need_device
+  local cur; cur="$(dev_raw)"
+  if (( cur > 0 )); then cmd_off; else cmd_restore; fi
+}
+
+# `off` remembers the current level first, so `restore` is exact. Called from the
+# hypridle listener, so it must never fail the session: an already-dark keyboard
+# keeps the stash it has (re-stashing 0 would lose the level to restore to).
+cmd_off() {
+  need_device
+  local cur; cur="$(dev_raw)"
+  if (( cur > 0 )); then
+    install -d -m700 "$(state_dir)"
+    printf '%s\n' "$cur" > "$STATE_FILE"
+  fi
+  write_raw 0
+}
+
+cmd_restore() {
+  need_device
+  local saved="" max
+  [[ -r "$STATE_FILE" ]] && saved="$(cat "$STATE_FILE" 2>/dev/null || true)"
+  if [[ ! "$saved" =~ ^[0-9]+$ ]] || (( saved <= 0 )); then
+    # Nothing stashed (a fresh boot, or the light was already off when idle hit):
+    # come back at the configured boot level rather than guessing a raw value.
+    max="$(dev_max)"
+    saved="$(pct_to_raw "$(boot_level)" "$max")"
+  fi
+  (( saved > 0 )) && write_raw "$saved"
+  rm -f "$STATE_FILE"
+}
+
+boot_level() { # percent for the initramfs; 0/off = leave the keyboard dark
+  local v; v="$(conf_get BOOT_LEVEL 50)"
+  [[ "$v" == off ]] && v=0
+  [[ "$v" =~ ^[0-9]+$ ]] || v=50
+  (( v > 100 )) && v=100
+  echo "$v"
+}
+
+# Changing the boot level is not just a config write: the value is baked into the
+# initramfs (that is the only filesystem the LUKS prompt has), so the image has to
+# be rebuilt or the change is a no-op. Same "copy is not activation" rule the
+# Plymouth theme follows.
+cmd_boot() { # <N|off>
+  [[ $EUID -eq 0 ]] || die "this command requires root"
+  local v="$1"
+  [[ "$v" == off ]] && v=0
+  [[ "$v" =~ ^[0-9]+$ ]] && (( v <= 100 )) || { err "boot level must be 0-100 or 'off'"; exit 2; }
+  wconf_set kbdlight BOOT_LEVEL "$v"
+  if resolve_device >/dev/null; then
+    echo "Rebuilding the initramfs so the boot level takes effect..."
+    w-mkinitcpio
+  fi
+}
+
+secs_str() { # <seconds> → "90s" | "off"
+  local s="${1:-0}"
+  if [[ "$s" =~ ^[0-9]+$ ]] && (( s > 0 )); then echo "${s}s"; else echo off; fi
+}
+
+cmd_status() {
+  local dev max raw pct
+  if ! dev="$(resolve_device)"; then
+    echo "Keyboard backlight: not present on this machine"
+    return 0
+  fi
+  DEV="$dev"
+  max="$(dev_max)"; raw="$(dev_raw)"; pct="$(raw_to_pct "$raw" "$max")"
+  echo "Keyboard backlight"
+  echo "  Device       : $dev  ($LEDS/$dev)"
+  echo "  Level        : ${pct}%  ($raw / $max)"
+  echo "  Key step     : $(step_pct)%"
+  local bl; bl="$(boot_level)"
+  if (( bl > 0 )); then
+    echo "  At boot      : ${bl}%  (lit for the LUKS/boot prompt)"
+  else
+    echo "  At boot      : off"
+  fi
+  # The idle link lives in the power subsystem; show it here anyway so the user
+  # does not have to know which subsystem owns which half.
+  if command -v w-power >/dev/null 2>&1; then
+    local ac bat
+    ac="$(secs_str "$(w-conf get power AC_KBDLIGHT 0 2>/dev/null || echo 0)")"
+    bat="$(secs_str "$(w-conf get power BAT_KBDLIGHT 0 2>/dev/null || echo 0)")"
+    echo "  Idle-off     : AC $ac, battery $bat"
+    echo "                 (change with: w-power idle <ac|bat> kbdlight <seconds>)"
+  fi
+}
+
+case "${1:-}" in
+  status|"")      cmd_status ;;
+  get)            cmd_get "${2:-}" ;;
+  set)            [[ -n "${2:-}" ]] || { err "set requires a value"; usage; exit 2; }; cmd_set "$2" ;;
+  up)             cmd_step up   "${2:-}" ;;
+  down)           cmd_step down "${2:-}" ;;
+  toggle)         cmd_toggle ;;
+  off)            cmd_off ;;
+  restore)        cmd_restore ;;
+  device)         need_device; printf '%s\n' "$DEV" ;;
+  boot)           [[ -n "${2:-}" ]] || { err "boot requires <N|off>"; usage; exit 2; }; cmd_boot "$2" ;;
+  help|-h|--help) usage ;;
+  *)              err "unknown command: $1"; usage; exit 2 ;;
+esac

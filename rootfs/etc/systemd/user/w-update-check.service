@@ -1,0 +1,9 @@
+# W Linux — refresh the package-update status for the bar's `updates` block.
+# Non-root, runs in the user session; writes ~/.local/state/w/updates.json.
+[Unit]
+Description=W Linux — check for package updates
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/w-update check

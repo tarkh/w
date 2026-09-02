@@ -1,0 +1,55 @@
+# ai.schema — who may set each key of the `ai` subsystem (see w-conf.md).
+# Format: <KEY>\t<scope>   scope: system | user | both
+#
+# The assistant is a per-user tool with a machine-wide default, so most keys are
+# `both`: the admin sets what a fresh account gets, and each user overrides it —
+# that is exactly what `w-ai profile use` does when it writes ~/.config/w/ai.conf.
+
+# ── Active selection ─────────────────────────────────────────────────────────
+HOST	both
+PROVIDER	both
+MODEL	both
+MODE	both
+MCP_PROFILE	both
+OLLAMA_HOST	both
+
+# ── Provider → env-var mapping ───────────────────────────────────────────────
+# Vendor data, not a preference: it says which environment variable a provider's
+# CLI expects, so a user file has no business redefining it (a wrong mapping would
+# silently stop passing the key). New providers arrive with the vendor layer.
+# A GLOB row, so a provider added to the vendor layer tomorrow arrives already
+# declared instead of silently unconstrained.
+PROVIDER_ENV_*	system
+
+# ── Per-tool switches (W_AI_TOOL_*) ──────────────────────────────────────────
+# `both` on purpose. These decide which privileged tools are OFFERED to the model;
+# they are UX, not the security boundary — every Tier-2 tool still goes through
+# pkexec + polkit and raises W's own auth window regardless of any switch
+# (ai-integration.md §3). So a user may narrow their own assistant's surface, and
+# the admin sets the machine default. Tightening this to `system` would be a
+# policy change, not a refactor — do it deliberately, if ever.
+W_AI_TOOL_DNS	both
+W_AI_TOOL_FIREWALL	both
+W_AI_TOOL_FWUPD	both
+W_AI_TOOL_PACMAN	both
+W_AI_TOOL_APPLY	both
+W_AI_TOOL_PACKS	both
+W_AI_TOOL_UPDATE	both
+W_AI_TOOL_LOCALE	both
+W_AI_TOOL_MAINTAIN	both
+W_AI_TOOL_HOSTNAME	both
+W_AI_TOOL_TIMEZONE	both
+W_AI_TOOL_NTP	both
+W_AI_TOOL_POWER	both
+W_AI_TOOL_SYNC	both
+W_AI_TOOL_RUN	both
+
+# ── ai-extra features (written by `w-ai features set`) ───────────────────────
+# Per-user by design: they live in ~/.config/w/ai-features.conf so they survive a
+# profile switch, and they cost only that user's own resources (an embedding model
+# in their session's VRAM budget).
+W_AI_SEARCH_PROVIDER	both
+W_AI_EMBED	both
+W_AI_EMBED_MODEL	both
+W_AI_EMBED_URL	both
+W_AI_EMBED_KEEPALIVE	both

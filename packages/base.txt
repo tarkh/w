@@ -1,0 +1,108 @@
+# W Linux — base system packages (installed via pacstrap)
+# One package per line. Lines starting with # are ignored.
+
+# Core
+base
+base-devel
+# linux-zen is the W default kernel (desktop responsiveness — workstation first).
+# Switchable to vanilla `linux` at any time via `w-kernel set vanilla`. NOT
+# linux-hardened: it disables unprivileged userns (breaks Flatpak/bubblewrap) and
+# complicates DKMS (W ships linux-apfs-rw-dkms). See security.md (point A).
+linux-zen
+# DKMS modules (apfs-rw) must build against the running kernel's headers.
+linux-zen-headers
+linux-firmware
+# linux-firmware's hard deps cover realtek/intel/mediatek/atheros/broadcom, but
+# marvell/qcom Wi-Fi firmware is an *optional* dep pacstrap won't pull in on its
+# own — without it the driver never binds and the card never appears as a netdev
+# (found on real hardware: firstboot's apply --all ran fully offline because of
+# this). The live ISO doesn't hit this — archiso/profile/packages.x86_64 already
+# adds linux-firmware-marvell for broad live-boot hardware support.
+linux-firmware-marvell
+linux-firmware-qcom
+
+# broadcom-wl-dkms is NOT listed here — its own kernel module has an overly broad
+# PCI alias (pci:v*d*sv*sd*bc02sc80i*, vendor/device wildcarded, matched only by
+# PCI class "Network controller/Other" — i.e. any Wi-Fi card of any vendor), a
+# known quirk of the old Broadcom STA driver. Installing it unconditionally would
+# risk `wl` racing the correct driver on unrelated hardware (Intel/Atheros/
+# Realtek/other Broadcom chips). scripts/install/modules/wifi.sh installs it
+# ONLY on machines where lspci confirms a chip that actually needs it.
+
+# CPU microcode — applies vendor security/errata mitigations at early boot. Both
+# vendors shipped; GRUB auto-detects /boot/*-ucode.img and prepends the initrd.
+intel-ucode
+amd-ucode
+
+# Filesystem
+btrfs-progs
+# cryptsetup — LUKS2 tooling; required in the initramfs at build time for the
+# `sd-encrypt` hook on the ENCRYPTED install path. Harmless (small) on the plain
+# GRUB path. TPM2 auto-unlock uses systemd-cryptenroll (part of systemd) + the
+# already-present tpm2-tss. See package-limine.md / w-crypt.md.
+cryptsetup
+
+# Boot splash
+plymouth
+
+# Bootloader
+# Two mutually-exclusive stacks, chosen at install time (CONF_ENCRYPT):
+#  - plain (default): GRUB + grub-btrfs (installed AND deployed to the ESP).
+#  - encrypted:       Limine + limine-snapper-sync + sbctl. Limine/sbctl/tpm2-tools
+#    are pulled by mod_limine (Limine is official; the *-hook/-sync helpers are AUR,
+#    installed post-boot). GRUB is NOT deployed on this path; the boot recovery
+#    fallback is the hash-free unsigned Limine at EFI/BOOT/BOOTX64.EFI. grub stays in
+#    base.txt only because it is shared by the plain path (harmless, unused when encrypted).
+grub
+efibootmgr
+grub-btrfs
+
+# Swap
+zram-generator
+
+# Snapshots
+snapper
+snap-pac
+# grub-btrfsd watches snapshots via inotifywait; without it the service fails
+inotify-tools
+
+# Network
+networkmanager
+# WiFi backend for NetworkManager. wpa_supplicant is NM's default backend (zero
+# config, widest compatibility) — required for WiFi laptops, otherwise NM can
+# associate only wired links. wireless-regdb ships the regulatory database so the
+# card is allowed its region's channels/power. The installer connects WiFi live
+# (nmcli) and copies the resulting profile into the target so the first boot comes
+# up online for the firstboot `apply --all`. See network.sh / installer.md.
+wpa_supplicant
+wireless-regdb
+openssh
+
+# Essential tools
+# sudo stays (base-devel hard-depends on it). sudo-rs (memory-safe) is the W default:
+# apply.sh --sudo shadows the `sudo` command via /usr/local/bin -> sudo-rs. sudo-rs
+# does NOT `provides` sudo, so both coexist. See security.md (point Б).
+sudo
+sudo-rs
+vim
+which
+rsync
+# less — pager for git/journalctl et al. Without it, git log/diff (e.g. w-sync)
+# falls over with "unable to execute pager 'less'" whenever stdout is a real tty;
+# scripted/AI callers are unaffected since git/journalctl auto-disable the pager
+# when stdout isn't a tty (isatty check), regardless of less being installed.
+less
+# dialog — needed by w-firstboot's own progress TUI on the very first boot, BEFORE
+# apply.sh --all (which would otherwise install it via pacman.txt) has run. Must be
+# pacstrapped here, not left to the apply-time package list. See installer.md.
+dialog
+
+# Python — was already a hard transitive dependency (python-mcp for w-mcp,
+# python-gobject for w-authd) but never an explicit, intentional one. Made
+# explicit here instead of relying on those pulling it in. Arch's `python` does
+# NOT bundle pip, hence the separate package. Single rolling version, no
+# system-level multi-version story (see package-python.md / apply.sh --uv):
+# venv creation, tool installs and pinned interpreters go through uv, not a bare
+# system-wide `pip install` (blocked anyway — PEP 668 externally-managed-environment).
+python
+python-pip

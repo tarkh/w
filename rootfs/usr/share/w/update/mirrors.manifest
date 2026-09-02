@@ -1,0 +1,28 @@
+# mirrors.manifest — config owned by mod_mirrors (package mirror maintenance).
+#
+# Layered (update-system.md phase 3):
+#   • /usr/share/w/defaults/mirrors.conf   — W's ranking policy. Class managed:
+#     overwritten by every update, so a retuned default (the reflector numbers are
+#     calibrated, see the file's header) reaches machines that never set their own.
+#   • /usr/share/w/defaults/mirrors.schema — who may set each key (all system-scope:
+#     there is one mirrorlist, and a user layer over it would let any account steer
+#     where the machine downloads its software from).
+#   • /etc/w/mirrors.conf — this machine's DEVIATIONS only. Class override: the
+#     update never touches it; `w-reset mirrors` drops them back to the vendor layer.
+#
+# /etc/pacman.d/mirrorlist is deliberately NOT tracked here. It is neither W's file
+# nor config: pacman ships it, pacstrap bakes the installer's ranked copy into the
+# machine, and w_pac reorders it live during a failing transaction. W rebuilds it
+# (`w-mirrors rank`) but never claims ownership of it — declaring it `managed` would
+# make an update overwrite a list that is machine state, and `override` would be a
+# lie about a file W does not seed.
+#
+# The timer/service units are static W-owned system files (class managed); the state
+# file /var/lib/w/mirrors.state is runtime output, not config.
+#
+# Format: <path>\t<class>   class: managed | override
+/usr/share/w/defaults/mirrors.conf	managed
+/usr/share/w/defaults/mirrors.schema	managed
+/etc/w/mirrors.conf	override
+/usr/lib/systemd/system/w-mirrors.service	managed
+/usr/lib/systemd/system/w-mirrors.timer	managed

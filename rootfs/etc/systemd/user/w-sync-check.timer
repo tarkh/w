@@ -1,0 +1,13 @@
+# W Linux — periodic edge-update check (drives the bar's sync status file).
+# Enabled for every user via `systemctl --global enable` (modules/updatesys.sh),
+# but only on an edge install; on stable `w-sync check` is a quiet no-op.
+[Unit]
+Description=W Linux — periodic edge-update check
+
+[Timer]
+OnStartupSec=3min
+OnUnitActiveSec=6h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

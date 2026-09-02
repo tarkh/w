@@ -1,0 +1,51 @@
+# power.schema — which layer may decide each key of the `power` subsystem.
+#
+# Read by /usr/lib/w/w-conf-lib.sh (and its Python twin) during the load
+# pass; a user-layer assignment to a `system` key is dropped with a warning. This
+# replaces folklore that used to live inside w-power's head ("idle timers may be
+# overridden per user, lid/charge may not") with one declaration that w-power,
+# the Hub, the AI tools and `w-conf` all obey. See update-system.md (decision 3).
+#
+# Format: <KEY>\t<scope>       scope: system | user | both
+#   system — root domain: the admin (or fleet policy) decides, per machine.
+#   user   — the logged-in user may override it in ~/.config/w/power.conf.
+#   both   — either layer may speak; the usual priority order applies.
+#
+# The values themselves come from the generated vendor layer
+# (/usr/share/w/defaults/power.conf, written by w-power from preset_sys/
+# preset_idle) — this file only says WHO may change them.
+
+# ── Machine mode: the selector that chooses the whole preset table ────────────
+MODE	system
+
+# ── Power profiles (power-profiles-daemon) ───────────────────────────────────
+DEFAULT_PROFILE	system
+AUTO_PROFILE	system
+PROFILE_ON_AC	system
+PROFILE_ON_BATTERY	system
+
+# ── Battery / lid / power key: hardware policy, root domain ──────────────────
+CHARGE_LIMIT	system
+LID_ON_BATTERY	system
+LID_ON_AC	system
+LID_DOCKED	system
+LID_WAKE	system
+POWER_KEY	system
+
+# ── Idle cascade: the user's own session, per user ───────────────────────────
+# Tweaking "lock my screen after N seconds" has never needed root, and the two
+# power sources are separate because a laptop on battery wants a tighter cascade.
+AC_LOCK	user
+AC_DISPLAY	user
+AC_SUSPEND	user
+BAT_LOCK	user
+BAT_DISPLAY	user
+BAT_SUSPEND	user
+
+# ── Keyboard backlight off on idle ───────────────────────────────────────────
+# Same domain as the cascade above (my session, my timers, no root), but NOT a
+# cascade link: an independent listener counting from last activity. The level,
+# the device and the boot-time light are a different subsystem — see
+# /usr/share/w/defaults/kbdlight.schema — this is only "when does it go dark".
+AC_KBDLIGHT	user
+BAT_KBDLIGHT	user

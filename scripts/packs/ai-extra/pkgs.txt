@@ -1,0 +1,9 @@
+# ai-extra bundle — packages (official repo).
+# One per line; '#' comments and blank lines ignored. Installed by w-pack via yay
+# (repo + AUR in one pass) as the build user; pacman fallback if yay is absent.
+#
+# ollama/ollama-cuda/ollama-rocm is NOT listed here — the right GPU variant is
+# chosen and installed by setup.sh (mirrors mod_gpu's vendor detection), not a
+# fixed package name.
+
+python-numpy         # brute-force cosine search over embeddings (memory.py vec index)

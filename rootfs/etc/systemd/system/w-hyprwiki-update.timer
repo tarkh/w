@@ -1,0 +1,13 @@
+# W Linux — periodic Hyprland wiki refresh (system-scope, root writes /usr/share).
+# Enabled by mod_ai (apply.sh --ai). Weekly is plenty: the wiki tracks compositor
+# syntax, not fast-moving state. Persistent so a machine that was off catches up.
+[Unit]
+Description=W Linux — periodic Hyprland wiki refresh for the AI skill
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1w
+Persistent=true
+
+[Install]
+WantedBy=timers.target

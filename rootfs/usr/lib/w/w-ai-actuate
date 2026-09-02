@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# w-ai-actuate — W Linux AI privileged actuation dispatcher (Tier-2).
+#
+# The single root entry point the OS AI assistant reaches for privileged actions.
+# w-mcp (running as the user) never gains privilege itself: its Tier-2 tools exec
+#   pkexec /usr/lib/w/w-ai-actuate <capability> [args...]
+# and the com.w.ai.actuate polkit action makes hyprpolkitagent prompt the user
+# (fingerprint / password) before this runs as root. Every invocation is audited to
+# journald (tag w-ai-actuate, authpriv) with the caller uid, capability and args.
+#
+# The allowlist + argument validation + audited execution live in the shared core
+# w-actuate-lib.sh (also used by w-hub-actuate for the W Hub GUI) — a single source
+# of truth for what privileged operations exist and how their arguments are checked.
+# See ai-integration.md §3.
+#
+# Exit codes: 0 success · 1 runtime/validation error · 2 usage error.
+
+set -euo pipefail
+source /usr/lib/w/w-actuate-lib.sh
+w_actuate_main w-ai-actuate "$@"

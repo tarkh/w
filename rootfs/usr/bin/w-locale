@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# w-locale — W Linux system locale (LANG) control
+#
+# Thin front over glibc locales: reports and switches the system UI language
+# (/etc/locale.conf `LANG=`), generating the chosen locale on demand. It is the
+# privileged (root) backend for the W Hub Input panel's "system language" section,
+# reached via pkexec + the com.w.hub.actuate polkit action (capability locale-set).
+#
+# The change takes effect only for sessions started afterwards — the Hub warns the
+# user to log back in. The selectable catalog is glibc's /usr/share/i18n/SUPPORTED
+# (UTF-8 entries), nothing W-specific to install. See w-locale.md and security.md.
+
+set -euo pipefail
+
+CONF="/etc/locale.conf"
+GEN="/etc/locale.gen"
+SUPPORTED="/usr/share/i18n/SUPPORTED"
+
+err() { echo "w-locale: $*" >&2; }
+die() { err "$*"; exit 1; }
+need_root() { [[ $EUID -eq 0 ]] || die "this command requires root"; }
+
+usage() {
+  cat <<EOF
+Usage: w-locale <command> [args]
+
+Info: Show and switch the system UI language (LANG).
+
+Commands:
+  status [--porcelain]   Show the current LANG
+  list [--porcelain]     List selectable UTF-8 locales
+  set <locale>           Switch LANG (root; generates the locale; needs relogin)
+  help                   Show this help
+
+Config: $CONF   Catalog: $SUPPORTED
+
+Exit codes: 0 success · 1 runtime/validation error · 2 usage
+
+Examples:
+  w-locale status
+  sudo w-locale set ru_RU.UTF-8
+EOF
+}
+
+# UTF-8 locales from the glibc catalog (field 1 where the charset field is UTF-8).
+list_locales() {
+  [[ -r "$SUPPORTED" ]] || die "$SUPPORTED not found (glibc missing?)"
+  awk '$2=="UTF-8"{print $1}' "$SUPPORTED" | sort -u
+}
+locale_supported() { list_locales | grep -qxF "$1"; }
+
+cmd_status() {
+  local lang=""
+  [[ -r "$CONF" ]] && lang="$(sed -n 's/^LANG=//p' "$CONF" | tr -d '"' | head -1)"
+  if [[ "${1:-}" == "--porcelain" ]]; then echo "LANG=${lang}"
+  else echo "${lang:-—}"; fi
+}
+
+cmd_list() {
+  if [[ "${1:-}" == "--porcelain" ]]; then list_locales
+  else list_locales | while read -r l; do echo "  $l"; done; fi
+}
+
+cmd_set() {
+  local loc="${1:-}"; [[ -n "$loc" ]] || { err "set: <locale> required"; exit 2; }
+  [[ "$loc" =~ ^[A-Za-z0-9@._-]+$ ]] || die "invalid locale: $loc"
+  need_root
+  locale_supported "$loc" || die "unsupported locale: $loc (see: w-locale list)"
+
+  # Ensure the locale is enabled in locale.gen (uncomment or append), then generate.
+  local esc; esc="$(printf '%s' "$loc" | sed 's/[.[\*^$/]/\\&/g')"
+  if grep -qE "^[#[:space:]]*${esc}[[:space:]]+UTF-8" "$GEN" 2>/dev/null; then
+    sed -i -E "s|^[#[:space:]]*(${esc}[[:space:]]+UTF-8)|\1|" "$GEN"
+  else
+    echo "$loc UTF-8" >> "$GEN"
+  fi
+  locale-gen
+  echo "LANG=$loc" > "$CONF"
+  echo "w-locale: LANG set to $loc (log back in to apply)"
+}
+
+case "${1:-}" in
+  status) shift; cmd_status "$@" ;;
+  list)   shift; cmd_list "$@" ;;
+  set)    shift; cmd_set "$@" ;;
+  help|-h|--help) usage ;;
+  "")     usage; exit 2 ;;
+  *)      err "unknown command: $1"; usage; exit 2 ;;
+esac

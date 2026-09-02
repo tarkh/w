@@ -1,0 +1,14 @@
+NAME="W Linux"
+PRETTY_NAME="W Linux"
+ID=w
+ID_LIKE=arch
+BUILD_ID=rolling
+IMAGE_ID=w
+IMAGE_VERSION=0.3.0
+W_BUILD_DATE=
+ANSI_COLOR="1;38;2;165;38;191"
+LOGO=w
+HOME_URL="https://github.com/tarkh/w"
+DOCUMENTATION_URL="https://github.com/tarkh/w"
+SUPPORT_URL="https://github.com/tarkh/w/issues"
+BUG_REPORT_URL="https://github.com/tarkh/w/issues"

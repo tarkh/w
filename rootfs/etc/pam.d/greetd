@@ -1,0 +1,22 @@
+#%PAM-1.0
+# W Linux — greetd PAM stack (security.md, point 6: gnome-keyring).
+#
+# Mirrors the greetd package default (system-local-login, no password phase); the
+# only W additions are the two `pam_gnome_keyring` lines, which unlock the user's
+# login keyring (Secret Service) with the login password at sign-in:
+#   auth    — captures the password (must come AFTER system-local-login's pam_unix)
+#   session — `auto_start` launches gnome-keyring-daemon and unlocks the keyring,
+#             exporting GNOME_KEYRING_CONTROL into the launched user session.
+# Strictly `optional`: a keyring failure never blocks login.
+#
+# Caveat: auto-unlock needs the password. Fingerprint-only login leaves the keyring
+# locked (PAM never sees a password) — expected, not a bug.
+# SSH is NOT handled here: gcr-ssh-agent (separate, swappable layer) owns the agent.
+
+auth       required     pam_securetty.so
+auth       requisite    pam_nologin.so
+auth       include      system-local-login
+auth       optional     pam_gnome_keyring.so
+account    include      system-local-login
+session    include      system-local-login
+session    optional     pam_gnome_keyring.so auto_start

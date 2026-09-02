@@ -1,0 +1,16 @@
+# W Linux — apply the battery charge limit (CHARGE_LIMIT in /etc/w/power.conf) to the
+# firmware threshold sysfs at boot. Managed by w-power (apply.sh --power); enabled by
+# `w-power charge-limit`/`w-power apply`. A no-op on machines with no threshold sysfs.
+[Unit]
+Description=W battery charge limit
+# Batteries appear as power_supply devices; run once they are up.
+After=multi-user.target
+ConditionPathExistsGlob=/sys/class/power_supply/BAT*
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/w-power _charge-apply
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

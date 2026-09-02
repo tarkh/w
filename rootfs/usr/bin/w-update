@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+# w-update — W Linux native update manager
+#
+# One self-contained front for keeping W current: official repo + AUR in a single
+# interactive pass (yay), a non-root status check that feeds the bar's `updates`
+# block, an Arch-news reader, and control of the periodic-check interval. No
+# third-party helpers (no informant/needrestart) — everything here is native.
+#
+#   • upgrade (default)  interactive `yay -Syu --sudoloop` (repo + AUR in one
+#                        transaction — never split, never --noconfirm: partial
+#                        upgrades break Arch, and AUR builds/PKGBUILD diffs need
+#                        review). snap-pac snapshots the pacman transaction itself,
+#                        so rollback is already covered (grub-btrfs).
+#   • check              non-root: count repo (checkupdates, own temp DB — never
+#                        `pacman -Sy`) + AUR (yay -Qua), detect a pending reboot,
+#                        write ~/.local/state/w/updates.json (the bar reads it).
+#   • news               fetch + print the latest Arch news items (read before big
+#                        upgrades). Bound to the bar block's right-click.
+#   • interval [min]     show / set the user check-timer period via a systemd
+#                        drop-in (like w-dns rendering a resolved drop-in).
+#
+# Reboot detection (see quickshell-bar.md / essentials.md): a running kernel whose
+# module directory /usr/lib/modules/$(uname -r) no longer exists means the kernel
+# was upgraded in place and you are on a stale one → reboot needed. Zero-dependency,
+# non-root, zero false positives. (W does NOT ship kernel-modules-hook, which would
+# defeat this by keeping the old modules around.)
+
+set -euo pipefail
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/w"
+STATE_FILE="$STATE_DIR/updates.json"
+NEWS_FEED="https://archlinux.org/feeds/news/"
+NEWS_COUNT=5
+TIMER_UNIT="w-update-check.timer"
+DROPIN_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/${TIMER_UNIT}.d"
+DROPIN="$DROPIN_DIR/interval.conf"
+DEFAULT_INTERVAL="60min"
+
+err() { echo "w-update: $*" >&2; }
+
+# shellcheck source=../lib/w/w-priv-lib.sh
+source /usr/lib/w/w-priv-lib.sh
+
+usage() {
+  cat <<EOF
+Usage: w-update [command]
+
+Info: Update all system and AUR packages (repo + AUR in one pass).
+
+Commands:
+  (none) | upgrade   Interactive full upgrade: repo + AUR (yay -Syu --sudoloop),
+                     then refresh status and offer a reboot if the kernel changed.
+  plan [--porcelain] Preflight (read-only): what a repo upgrade would touch, pending
+                     AUR, kernel/reboot, free disk. Backs the AI-driven upgrade.
+  check              Refresh the update count + reboot flag (non-root, quiet).
+                     Writes $STATE_FILE for the bar block.
+  status             Print the last known update status + checker state.
+  news               Show the latest Arch Linux news (read before upgrading).
+  enable             Turn the periodic update checker ON for this user.
+  disable            Turn the periodic update checker OFF for this user.
+  interval [min]     Show, or set, the periodic-check interval (systemd user timer).
+  help               Show this help.
+
+Status file : $STATE_FILE   Timer: $TIMER_UNIT (default $DEFAULT_INTERVAL)
+
+Exit codes:
+  0  Success   1  Runtime error   2  Usage error
+EOF
+}
+
+# ── reboot needed? (running kernel's modules removed by an in-place upgrade) ──────
+reboot_pending() { [[ ! -d "/usr/lib/modules/$(uname -r)" ]]; }
+
+# ── check: count updates, detect reboot, write the status file (non-root) ────────
+cmd_check() {
+  local repo_out aur_out repo aur reboot tmp
+  # checkupdates: syncs a private temp DB (never the system DB) — no root, no
+  # partial-upgrade risk. `|| true`: it exits 2 when there are simply no updates.
+  repo_out=$(checkupdates 2>/dev/null) || true
+  aur_out=$(yay -Qua 2>/dev/null)      || true
+  repo=$(printf '%s\n' "$repo_out" | awk 'NF{c++} END{print c+0}')
+  aur=$(printf '%s\n' "$aur_out"   | awk 'NF{c++} END{print c+0}')
+  if reboot_pending; then reboot=true; else reboot=false; fi
+
+  mkdir -p "$STATE_DIR"
+  tmp=$(mktemp "$STATE_FILE.XXXXXX")
+  printf '{"repo":%d,"aur":%d,"rebootPending":%s,"ts":%d}\n' \
+    "$repo" "$aur" "$reboot" "$(date +%s)" > "$tmp"
+  mv -f "$tmp" "$STATE_FILE"
+}
+
+# Human-readable checker (timer) state for this user: active + enabled.
+svc_state() {
+  local act en
+  act=$(systemctl --user is-active  "$TIMER_UNIT" 2>/dev/null || true)
+  en=$(systemctl --user is-enabled "$TIMER_UNIT" 2>/dev/null || true)
+  echo "checker: ${act:-unknown} (${en:-unknown})"
+}
+
+cmd_status() {
+  if [[ -r "$STATE_FILE" ]]; then
+    local repo aur reboot
+    repo=$(grep -oP '"repo":\s*\K[0-9]+'                  "$STATE_FILE" 2>/dev/null || echo '?')
+    aur=$(grep -oP '"aur":\s*\K[0-9]+'                    "$STATE_FILE" 2>/dev/null || echo '?')
+    reboot=$(grep -oP '"rebootPending":\s*\K(true|false)' "$STATE_FILE" 2>/dev/null || echo '?')
+    echo "Updates — repo: $repo   AUR: $aur   reboot needed: $reboot"
+    echo "Source : $STATE_FILE"
+  else
+    echo "Updates — no status yet (run: w-update check)"
+  fi
+  svc_state
+}
+
+# Per-user ON/OFF of the check timer. `disable` uses mask (not plain disable): the
+# timer is enabled system-wide via `systemctl --global enable` (modules/update.sh),
+# whose symlink a non-root `--user disable` cannot remove — only a user-level mask
+# reliably overrides it. `enable` unmasks first, then enables+starts.
+cmd_enable() {
+  systemctl --user unmask "$TIMER_UNIT" 2>/dev/null || true
+  systemctl --user enable --now "$TIMER_UNIT"
+  echo "w-update: update checker enabled"
+}
+cmd_disable() {
+  systemctl --user mask --now "$TIMER_UNIT" 2>/dev/null || true
+  echo "w-update: update checker disabled"
+}
+
+# ── news: print the latest Arch news items from the RSS feed ──────────────────────
+cmd_news() {
+  command -v curl >/dev/null 2>&1 || { err "curl not installed (needed for 'news')"; return 1; }
+  local xml
+  xml=$(curl -fsSL --max-time 10 "$NEWS_FEED") \
+    || { err "could not fetch Arch news ($NEWS_FEED)"; return 1; }
+  echo "Arch Linux — latest news (newest first):"
+  echo
+  printf '%s' "$xml" | awk -v n="$NEWS_COUNT" '
+    function field(s, tag,   a) {
+      if (match(s, "<" tag ">[^<]*</" tag ">")) {
+        a = substr(s, RSTART, RLENGTH); gsub("<[^>]*>", "", a); return a;
+      }
+      return "";
+    }
+    function unent(s) {
+      gsub(/&lt;/,"<",s); gsub(/&gt;/,">",s); gsub(/&quot;/,"\"",s);
+      gsub(/&#39;/,"'\''",s); gsub(/&amp;/,"\\&",s); return s;
+    }
+    BEGIN { RS="<item>"; c=0 }
+    NR>1 && c<n {
+      t=field($0,"title"); d=field($0,"pubDate"); l=field($0,"link");
+      sub(/^[A-Za-z]+, /,"",d); sub(/ [0-9]+:[0-9].*/,"",d);   # trim weekday + time
+      printf "  \342\200\242 %s  (%s)\n    %s\n\n", unent(t), d, l;
+      c++
+    }
+  '
+}
+
+# ── interval: show / set the user check-timer period (systemd drop-in) ────────────
+cmd_interval() {
+  if [[ -z "${1:-}" ]]; then
+    if [[ -r "$DROPIN" ]]; then
+      echo "check interval: $(grep -oP 'OnUnitActiveSec=\K.*' "$DROPIN" | tail -1) (override)"
+    else
+      echo "check interval: $DEFAULT_INTERVAL (default)"
+    fi
+    return 0
+  fi
+  local min="$1"
+  [[ "$min" =~ ^[0-9]+$ && "$min" -ge 1 ]] \
+    || { err "interval must be a positive integer (minutes)"; exit 2; }
+  mkdir -p "$DROPIN_DIR"
+  cat > "$DROPIN" <<EOF
+# W Linux — generated by 'w-update interval'. Do NOT hand-edit.
+[Timer]
+OnUnitActiveSec=${min}min
+EOF
+  systemctl --user daemon-reload 2>/dev/null || true
+  systemctl --user restart "$TIMER_UNIT" 2>/dev/null || true
+  echo "w-update: check interval set to ${min}min"
+}
+
+# ── plan: machine-facing preflight for the AI-driven upgrade (read-only) ──────────
+# Emits what a repo upgrade would touch WITHOUT applying it, so an assistant can
+# triage risky items (a kernel bump → reboot, low disk, pending AUR that stays a
+# manual/terminal job) before actuating `pacman -Syu`. Read-only: no root, no
+# `pacman -Sy` (checkupdates uses its own temp DB). Conflicts/removals that only
+# surface during transaction resolution are caught at apply time — the actuated
+# pacman returns a non-zero error instead of the tool hanging, and the assistant
+# escalates. AUR is reported but never auto-applied (yay builds as the user and its
+# PKGBUILD diffs want review).
+cmd_plan() {
+  local repo_out aur_out repo aur kernel reboot disk_kb
+  repo_out=$(checkupdates 2>/dev/null) || true
+  aur_out=$(yay -Qua 2>/dev/null)      || true
+  repo=$(printf '%s\n' "$repo_out" | awk 'NF{c++} END{print c+0}')
+  aur=$(printf  '%s\n' "$aur_out"  | awk 'NF{c++} END{print c+0}')
+  # A kernel package in the repo set means the running kernel is replaced in place
+  # → a reboot is needed after the upgrade.
+  if printf '%s\n' "$repo_out" | awk '{print $1}' | grep -qxE 'linux|linux-lts|linux-zen|linux-hardened'; then
+    kernel=true; else kernel=false; fi
+  reboot=false; reboot_pending && reboot=true || true
+  disk_kb=$(df -Pk / | awk 'NR==2{print $4+0}')
+
+  if [[ "${1:-}" == "--porcelain" ]]; then
+    local repo_json aur_json
+    repo_json=$(printf '%s\n' "$repo_out" | awk 'NF{printf "%s\"%s\"",(n++?",":""),$1}')
+    aur_json=$( printf '%s\n' "$aur_out"  | awk 'NF{printf "%s\"%s\"",(n++?",":""),$1}')
+    printf '{"repo":%d,"aur":%d,"kernelChange":%s,"rebootPendingNow":%s,"diskFreeKB":%d,"repoPkgs":[%s],"aurPkgs":[%s]}\n' \
+      "$repo" "$aur" "$kernel" "$reboot" "$disk_kb" "$repo_json" "$aur_json"
+    return 0
+  fi
+
+  echo "W update plan (preflight — nothing is applied):"
+  echo "  repo updates  : $repo"
+  echo "  AUR updates   : $aur   (not auto-applied — review + build with 'w-update' in a terminal)"
+  echo "  kernel change : $kernel   (reboot needed after upgrade)"
+  echo "  disk free /   : $((disk_kb/1024)) MiB"
+  if [[ "$repo" -gt 0 ]]; then echo; echo "Pending repo packages:"; printf '%s\n' "$repo_out" | sed 's/^/  /'; fi
+  echo
+  echo "Tip: review Arch news before a big upgrade (w-update news)."
+}
+
+# ── upgrade: the interactive full system upgrade (repo + AUR in one pass) ─────────
+# A failed upgrade used to end in "try again later", which is the wrong advice for
+# the single most common cause of one — a mirror that has stopped serving data.
+# installer.md §5 layer 3 puts the fix on the machine (w-mirrors), so the updater
+# can offer it instead of a shrug.
+#
+# What it must NOT do is guess. yay's output cannot be classified here the way
+# w_pac classifies pacman's (the upgrade is interactive; piping it through tee to
+# read it back would degrade the very prompts it exists to show). So ask the
+# question that IS cheap and local: is the head of the mirrorlist serving data at
+# all? `w-mirrors check` is the same throughput probe as the installer's
+# pre-flight — read-only, a few seconds, no root. Only a mirror that fails it earns
+# the suggestion, so a real dependency conflict never gets told to blame its
+# mirrors. The re-ranking itself is never automatic: it costs minutes and hundreds
+# of megabytes, and the user is right here.
+offer_mirror_rerank() {
+  command -v w-mirrors >/dev/null 2>&1 || return 0
+  echo
+  echo "The upgrade did not finish. Checking whether the mirrors are still serving data..."
+  if w-mirrors check; then
+    echo "Mirrors look healthy — the failure above is not a delivery problem; read it and retry."
+    return 0
+  fi
+  echo
+  echo "The head of the mirrorlist is not serving data. Re-ranking rebuilds it from the"
+  echo "Arch mirror status API (a few minutes, and it downloads a database per candidate)."
+  [[ -t 0 ]] || { echo "Fix it with: sudo w-mirrors rank"; return 0; }
+  local ans
+  read -rp "Re-rank mirrors now? [y/N] " ans
+  if [[ "${ans:-}" == [yY]* ]]; then
+    sudo w-mirrors rank && echo "Mirrors re-ranked — run w-update again."
+  else
+    echo "Skipped. Re-rank later with: sudo w-mirrors rank"
+  fi
+}
+
+cmd_upgrade() {
+  # yay escalates to `sudo pacman` on its own; without this a non-admin gets a bare
+  # sudoers refusal halfway through, after the package lists have been resolved.
+  # Only this command is gated — check/status/news/plan are read-only.
+  if ! w_is_admin; then err "$(w_admin_msg "upgrading system packages")"; exit 1; fi
+  echo "W update — repo + AUR (interactive). Tip: review Arch news first (w-update news)."
+  echo
+  # One transaction: repo (via pacman) + AUR. --sudoloop keeps sudo alive across long
+  # AUR builds. No --noconfirm on purpose: you review the package list, .pacnew files
+  # and AUR PKGBUILD diffs. snap-pac auto-snapshots the pacman transaction.
+  local rc=0
+  yay -Syu --sudoloop || rc=$?
+  if (( rc != 0 )); then
+    offer_mirror_rerank
+    return "$rc"
+  fi
+
+  cmd_check || true   # refresh the bar immediately (count → 0, maybe reboot flag)
+
+  if reboot_pending; then
+    echo
+    echo "A new kernel was installed — the running kernel's modules are gone."
+    echo "A reboot is recommended to switch to it."
+    read -rp "Reboot now? [y/N] " ans
+    if [[ "${ans:-}" == [yY]* ]]; then
+      # The same graceful path as the power menu: every window is asked to close
+      # first, so an editor with unsaved work pops a reachable "Save changes?"
+      # dialog, and cancelling one calls the reboot off. Detaching is
+      # w-session-exit's own job — this terminal is one of the windows it closes.
+      echo "Closing windows (unsaved work will prompt), then rebooting..."
+      w-session-exit reboot
+    fi
+  fi
+}
+
+case "${1:-upgrade}" in
+  upgrade|"")     cmd_upgrade                          ;;
+  plan)           cmd_plan "${2:-}"                    ;;
+  check)          cmd_check                            ;;
+  status)         cmd_status                           ;;
+  news)           cmd_news                             ;;
+  enable)         cmd_enable                           ;;
+  disable)        cmd_disable                          ;;
+  interval)       cmd_interval "${2:-}"                ;;
+  help|-h|--help) usage                                ;;
+  *)              err "unknown command: $1"; usage; exit 2 ;;
+esac

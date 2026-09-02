@@ -1,0 +1,9 @@
+[Trigger]
+Operation = Upgrade
+Type = Package
+Target = grub
+
+[Action]
+Description = Silencing GRUB boot messages...
+When = PostTransaction
+Exec = /bin/sh -c 'sed -i "/echo.*message.*grub_quote/d" /etc/grub.d/10_linux && grub-mkconfig -o /boot/grub/grub.cfg'

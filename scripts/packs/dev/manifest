@@ -1,0 +1,54 @@
+# dev bundle — config ownership (deploy.sh SDK + w-reset).
+# TSV: <path>\t<class>. Absolute path → config/root<path> (always managed);
+# home-relative → config/skel/<path>. class: user = seed-if-absent, managed =
+# overwrite (W owns it). A trailing '/' marks a directory tree.
+#
+# NOTE: three themed files are deliberately NOT listed here — they are owned by the
+# bundle's w-style axes and re-rendered on every theme switch (listing them would
+# mean two writers for one file):
+#   ~/.config/zed/themes/w.json    → axis 400-zed
+#   ~/.config/w/git-theme.conf     → axis 500-git
+#   ~/.config/w/lazygit-theme.yml  → axis 500-lazygit
+# Same split as helix (config.toml user / themes/w.toml w-style) and micro.
+
+# Zed user settings: selects the "W" theme, W fonts, privacy/update policy and
+# wires w-mcp (MCP) + goose (ACP) into the editor's agent panel. User-seed: the
+# single settings file is also where the user's own preferences live, so W writes
+# it once and never again (update-system.md bucket C, like helix/micro/btop).
+.config/zed/settings.json	user
+
+# Git — layered, so W can ship changes without ever touching the user's file. Git
+# reads BOTH global configs: ~/.config/git/config first, ~/.gitconfig second, later
+# wins. So W takes the first (managed: delta wiring, the theme [include], defaults)
+# and leaves the second entirely to the user, who thereby overrides W key by key.
+#
+# The ~/.gitconfig stub is seeded even though it carries no settings: `git config
+# --global` writes to it ONLY if it exists — otherwise git would write the user's
+# identity into W's managed file, and the next update would erase it.
+#
+# git re-reads its config on every invocation, so a `w-theme set` is visible in the
+# very next `git diff`.
+.config/git/config	managed
+.gitconfig	user
+
+# lazygit behaviour (delta as the pager). Colours live in the axis-rendered
+# ~/.config/w/lazygit-theme.yml; the session env below merges the two, so this file
+# stays 100% the user's.
+.config/lazygit/config.yml	user
+
+# mise settings: the uv/mise boundary (uv owns Python venvs) and nothing else. The
+# tool list itself (`mise use -g …`) is written here by mise on the user's command,
+# which is exactly why this is a user-seed and not managed.
+.config/mise/config.toml	user
+
+# Session env: LG_CONFIG_FILE layers the user config + the W theme file for lazygit
+# (lazygit's own documented comma-separated merge), and mise's shim dir goes on PATH
+# so GUI apps launched from Hyprland — Zed and its language servers above all — see
+# the project toolchain. Sourced by env-hyprland at graphical-session-pre → active
+# from the next login.
+/etc/w/env.d/dev.sh	managed
+
+# Interactive-shell hook: `mise activate zsh` (per-prompt PATH, the mode upstream
+# recommends for interactive use). Sourced by the /etc/w/zshrc.d drop-in loop in
+# .zshrc → active in the next NEW shell.
+/etc/w/zshrc.d/dev.zsh	managed

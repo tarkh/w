@@ -1,0 +1,12 @@
+# W shellcheck baseline (scripts/check.sh --bash gates at severity=warning).
+# Only structural noise is silenced globally; point exceptions live as inline
+# directives next to the code they excuse. Everything else must stay clean.
+
+# `source` targets are runtime paths ($SRC/…, $CONF) — unresolvable statically.
+# Cross-file breakage is caught instead by `bash -n` over the full inventory.
+disable=SC1090,SC1091
+
+# "Unused" variables are the norm here: apply.sh/w-style/tui source fragments
+# that consume each other's globals (DESC, ANSWERS, palettes, CONF_*), so the
+# writer and the reader are never in the same file.
+disable=SC2034

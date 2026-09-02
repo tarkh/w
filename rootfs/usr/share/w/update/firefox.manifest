@@ -1,0 +1,12 @@
+# firefox.manifest — user-owned profile seeded by mod_firefox (seed-if-absent).
+# Single source of truth: deploy iterates this; w-reset/drift reuse it.
+# Format: <home-relative-path>\t<class>   class: user | managed | override
+# Managed (overwrite), hence absent: chrome/userChrome.css is a w-style render
+# artifact (concept ③ chrome translucency, rendered by `w-style apply firefox` on
+# --style / login); chrome/userContent.css is static W brand theming (about: pages)
+# deployed overwrite by the module. The system-wide policy lives in /etc/firefox.
+# profiles.ini MUST stay seed-if-absent — Firefox mutates it at runtime ([Install…]
+# sections); overwriting would clobber its state. user.js is the user's pref layer.
+.mozilla/firefox/profiles.ini	user
+.mozilla/firefox/w.default/user.js	user
+.mozilla/firefox/w.default/chrome/userContent.css	managed

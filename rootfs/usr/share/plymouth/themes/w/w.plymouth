@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=W
+Description=W Linux boot splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/w
+ScriptFile=/usr/share/plymouth/themes/w/w.script

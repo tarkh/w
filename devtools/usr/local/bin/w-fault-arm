@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# w-fault-arm — route a mirrorlist through the Ф.4 fault endpoint, and back again.
+#
+# Dev-only (devtools/ never ships: it is not staged into the ISO and is not part of
+# `apply --all`). Runs INSIDE the guest, either off the virtiofs share during the
+# unattended install (mod_fault_inject in modules/base.sh calls it) or from PATH on
+# a dev VM, where `apply.sh --devtools` puts it, for calibration runs.
+#
+# WHAT ARMING DOES
+#
+# The Nth `Server = <prefix>/$repo/os/$arch` line becomes
+#
+#     Server = http://<host>:<base+N>/<base64url(prefix)>/$repo/os/$arch
+#
+# so the whole ranked list keeps its depth, its order and the identity of each
+# mirror reflector picked — each entry still carries its own upstream, just via a
+# relay that can be made to stall. That is the difference between testing "package
+# delivery survives a sick pool" and testing "pacman skips one dead host", and only
+# the first is worth an assertion: measured against a real pacman, a single stalled
+# entry with healthy mirrors below costs ~12 s and the transaction still succeeds.
+#
+# A PORT PER ENTRY, because pacman identifies a mirror as host:port and so does the
+# seam's demotion. Pointing every line at one port collapses the list into a single
+# host: pacman's "too many errors from X" then skips the whole pool after three
+# errors (measured — the attempt fails in ~30 s whatever the depth), and demoting X
+# moves all twenty lines together, so the head stays poisoned and the run proves
+# neither mechanism while still going green. Distinct ports keep them distinct hosts.
+#
+# Restoring decodes the same segment back, so it needs nothing but the file itself —
+# which matters because the file is INHERITED by the installed system (pacstrap
+# copies the host mirrorlist into the target) and has to be put right there, on a
+# disk that outlives the test run as the dev VM. e2e-preset.md's rule: a test does
+# not leave behind state it cannot restore.
+#
+# Usage:
+#   w-fault-arm arm     <mirrorlist> <fault.conf>
+#   w-fault-arm restore <mirrorlist>
+#   w-fault-arm status  <mirrorlist>
+set -euo pipefail
+
+MARK='# W-FAULT: armed by w-fault-arm (Ф.4 e2e scenario) — restore with `w-fault-arm restore`'
+
+die() { echo "w-fault-arm: $*" >&2; exit 1; }
+
+b64url_encode() { printf '%s' "$1" | base64 -w0 | tr '+/' '-_' | tr -d '='; }
+
+b64url_decode() {
+  local s="${1//-/+}"; s="${s//_//}"
+  # base64 -d rejects an unpadded string; restore the padding it stripped.
+  case $(( ${#s} % 4 )) in 2) s+='==' ;; 3) s+='=' ;; esac
+  printf '%s' "$s" | base64 -d
+}
+
+# The suffix always starts at $repo — reflector emits <prefix>/$repo/os/$arch, and
+# splitting there keeps this correct for mirrors whose prefix carries a path of its
+# own (…/archlinux/, …/pub/archlinux/) instead of assuming a fixed tail.
+arm() {
+  local list="$1" conf="$2"
+  [[ -f "$list" ]] || die "no such mirrorlist: $list"
+  [[ -r "$conf" ]] || die "no such scenario file: $conf"
+
+  local FAULT_HOST="" FAULT_PORT_BASE=18080 FAULT_PORTS=24 FAULT_SICK_SECONDS=auto
+  # shellcheck source=/dev/null
+  source "$conf"
+  [[ -n "$FAULT_HOST" ]] || die "FAULT_HOST is not set in $conf"
+
+  if grep -qF "$MARK" "$list"; then
+    echo "MIRRORS: mirrorlist is already armed — leaving it alone"
+    return 0
+  fi
+
+  local tmp="$list.w-fault.$$" line url prefix suffix n=0 port
+  { echo "$MARK"
+    while IFS= read -r line; do
+      if [[ "$line" != Server* ]]; then printf '%s\n' "$line"; continue; fi
+      url="${line#*=}"; url="${url//[[:space:]]/}"
+      if [[ "$url" != *'$repo'* ]]; then printf '%s\n' "$line"; continue; fi
+      prefix="${url%%\$repo*}"; prefix="${prefix%/}"
+      suffix="\$repo${url#*\$repo}"
+      # Wrap if the list is deeper than the relay's port range: two entries sharing
+      # a port merely merge into one host, which degrades the fidelity of those two
+      # rather than breaking the run — and the harness sizes the range off the list.
+      port=$(( FAULT_PORT_BASE + n % FAULT_PORTS ))
+      printf 'Server = http://%s:%s/%s/%s\n' "$FAULT_HOST" "$port" "$(b64url_encode "$prefix")" "$suffix"
+      n=$(( n + 1 ))
+    done < "$list"
+  } > "$tmp"
+  cat "$tmp" > "$list"
+  rm -f "$tmp"
+
+  (( n <= FAULT_PORTS )) \
+    || echo "MIRRORS: WARNING list depth $n exceeds the relay's $FAULT_PORTS ports — entries share hosts"
+  echo "MIRRORS: fault injected — $n mirror(s) routed through $FAULT_HOST:$FAULT_PORT_BASE+ (depth unchanged)"
+
+  # How long to stay sick. Derived from the list, not guessed: pacman gives each
+  # server 10 s before "Operation too slow", walks them in order, and syncs the
+  # repos in PARALLEL — so one fully-sick attempt costs depth × 10 s whatever the
+  # repo count (measured: 200 s at depth 20 for both one and two repos). Covering
+  # exactly one attempt plus a margin means attempt 1 fails and attempt 2 heals;
+  # the seam's three tries absorb the slack if the estimate is off either way.
+  # The 10 s is pacman's own built-in low-speed timeout and is not tunable without
+  # --disable-download-timeout, which §5 rejects for making stalls unbounded.
+  if [[ "$FAULT_SICK_SECONDS" == auto ]]; then
+    FAULT_SICK_SECONDS=$(( n * 10 + 20 ))
+  fi
+
+  # Start the sick window HERE rather than when the endpoint was launched: the
+  # window has to cover the first transaction and expire before the retry, so it is
+  # anchored to the moment of injection, not to harness start-up.
+  if command -v curl &>/dev/null; then
+    curl -sf --max-time 10 -o /dev/null \
+      "http://$FAULT_HOST:$FAULT_PORT_BASE/__ctl/sick?seconds=$FAULT_SICK_SECONDS" \
+      && echo "MIRRORS: fault endpoint armed sick for ${FAULT_SICK_SECONDS}s" \
+      || echo "MIRRORS: could not arm the fault endpoint"
+  fi
+}
+
+restore() {
+  local list="$1"
+  [[ -f "$list" ]] || die "no such mirrorlist: $list"
+  grep -qF "$MARK" "$list" || { echo "MIRRORS: mirrorlist is not armed — nothing to restore"; return 0; }
+
+  local tmp="$list.w-fault.$$" line rest enc suffix n=0
+  while IFS= read -r line; do
+    if [[ "$line" == "$MARK" ]]; then continue; fi
+    if [[ "$line" != Server*http://* ]]; then printf '%s\n' "$line"; continue; fi
+    rest="${line#*://}"; rest="${rest#*/}"        # strip scheme + endpoint host:port
+    enc="${rest%%/*}"; suffix="${rest#*/}"
+    printf 'Server = %s/%s\n' "$(b64url_decode "$enc")" "$suffix"
+    n=$(( n + 1 ))
+  done < "$list" > "$tmp"
+  cat "$tmp" > "$list"
+  rm -f "$tmp"
+  echo "MIRRORS: fault removed — $n mirror(s) restored to their real upstreams"
+}
+
+status() {
+  local list="$1"
+  local depth; depth=$(grep -c '^Server' "$list" 2>/dev/null || true)
+  if grep -qF "$MARK" "$list" 2>/dev/null; then
+    echo "armed depth=${depth:-0}"
+  else
+    echo "clean depth=${depth:-0}"
+  fi
+}
+
+case "${1:-}" in
+  arm)     [[ $# -eq 3 ]] || die "usage: w-fault-arm arm <mirrorlist> <fault.conf>"; arm "$2" "$3" ;;
+  restore) [[ $# -eq 2 ]] || die "usage: w-fault-arm restore <mirrorlist>"; restore "$2" ;;
+  status)  [[ $# -eq 2 ]] || die "usage: w-fault-arm status <mirrorlist>"; status "$2" ;;
+  *)       die "usage: w-fault-arm {arm <list> <conf>|restore <list>|status <list>}" ;;
+esac

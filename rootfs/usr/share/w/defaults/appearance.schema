@@ -1,0 +1,19 @@
+# appearance.schema — which layer may decide each key of the `appearance`
+# subsystem (Hub -> Appearance -> Settings: per-user overrides that beat the
+# active theme).
+#
+# Read by /usr/lib/w/w-conf-lib.sh during the load pass; see w-conf.md.
+#
+# Both keys are `user`: they tint only the logged-in user's own session (their
+# rendered Hyprland config), so there is no root domain to protect — same
+# reasoning as nightlight.schema. No vendor .conf ships for this subsystem: the
+# unset default ("follow the active theme") is a plain fallback in the reader
+# code, exactly like w-power's per-user idle keys.
+#
+# Format: <KEY>\t<scope>       scope: system | user | both
+
+# "" (unset) = follow the active theme's effects.conf/motion.conf. "off" =
+# forced off regardless of theme. Bar position is NOT here — it already has a
+# dedicated override slot in config/bar.json (see w-appearance).
+BLUR	user
+MOTION	user

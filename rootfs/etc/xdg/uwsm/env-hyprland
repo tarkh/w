@@ -1,0 +1,78 @@
+# W Linux — uwsm environment preloader for the Hyprland session.
+# Sourced by wayland-wm-env@hyprland.service (graphical-session-pre.target) as
+# the logging-in user, before Hyprland parses its config. Replaces the old
+# hyprland-session wrapper: render this user's effective theme (personal pin or
+# system fallback) so ~/.config/hypr/colors.conf reflects the active theme at
+# login. Best-effort — never block the session on a render failure.
+
+# Route Qt apps through the W theme (brand palette + font + widget style, see
+# config-qt.md). Colon-list: Qt loads the first list entry whose plugin is built
+# for the running version — Qt5 → qt5ct, Qt6 → qt6ct (each ct backend builds only
+# for its own Qt, and Qt cleanly skips the non-matching one to reach the next).
+# Both from the official repo. The colon-list (not a bare qt6ct) is REQUIRED so
+# both Qt versions read their own *ct.conf — that is where the per-theme widget
+# engine W_QT_STYLE=fusion|kvantum lives. (A QT_STYLE_OVERRIDE would force one
+# engine globally and defeat that flag, so we do not set it.) Must be exported
+# before any Qt app.
+export QT_QPA_PLATFORMTHEME=qt6ct
+
+# Run Electron/Chromium apps natively on Wayland instead of XWayland. The bulletproof,
+# app-agnostic switch (no per-.desktop tweaks): Electron reads this hint, Chromium the
+# matching --ozone-platform-hint. XWayland-mode Electron (e.g. bitwarden) otherwise
+# glitches menus (blur artifacts) and spawns ephemeral toplevels that pollute the bar's
+# apps area. Session-wide here, so every Electron app is covered at once.
+export ELECTRON_OZONE_PLATFORM_HINT=wayland
+
+# Pin Firefox to the W profile. Modern Firefox uses a dedicated profile per install
+# (a random *.default-release), which would ignore the profiles.ini we ship and put
+# the user on an unthemed profile. MOZ_LEGACY_PROFILES=1 restores the legacy shared
+# selection so Firefox uses our pinned `w.default` (Default=1) — giving the firefox
+# w-style axis a deterministic userChrome.css path. See package-firefox.md.
+export MOZ_LEGACY_PROFILES=1
+
+# GPU session env (NVIDIA only). mod_gpu renders /etc/w/gpu-env.sh with the Wayland
+# vars (LIBVA_DRIVER_NAME, __GLX_VENDOR_LIBRARY_NAME) when an NVIDIA card is present,
+# and removes it otherwise — so this guard is a no-op on Intel/AMD. See package-gpu.md.
+[ -r /etc/w/gpu-env.sh ] && . /etc/w/gpu-env.sh
+
+# User-scope CLI tools installed via `uv tool install` (e.g. the ai-extra pack's
+# ddgs/trafilatura) land in ~/.local/bin, which is not on PATH by default — add it
+# once, session-wide, so every consumer (goose→w-mcp, terminal) picks them up
+# without each one needing its own fix. Guarded against double-prepending on
+# re-source (e.g. a nested shell inheriting an already-patched PATH).
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
+
+# Session-env drop-in root for optional W-Packs bundles (packs.md). A bundle that
+# needs session variables (e.g. containers → DOCKER_HOST/DOCKER_BUILDKIT) ships a
+# managed /etc/w/env.d/<bundle>.sh via its manifest; removing the bundle removes the
+# file. Core carries no per-bundle env — same self-containment as the w-style
+# modules.d drop-in root. No-op when no bundle is installed.
+if [ -d /etc/w/env.d ]; then
+  for _wenv in /etc/w/env.d/*.sh; do
+    [ -r "$_wenv" ] && . "$_wenv"
+  done
+  unset _wenv
+fi
+
+# Rescue a monitor layout that would come up with nothing drawing on it. `w-monitor
+# disable` refuses to turn off the last ACTIVE output, but that check is
+# point-in-time: turn the laptop panel off while an external is attached (allowed —
+# two outputs are live), then unplug the external, and the only connected output now
+# starts disabled=true. That is the one state hyprland.lua's boot safety net
+# documents as unrecoverable — Hyprland synthesises its FALLBACK pseudo-monitor and
+# never bootstraps a real renderer, so the screen stays black with the IPC alive and
+# no way back from the GUI. Here it is still fixable: this runs at
+# graphical-session-pre, before Hyprland parses monitors.lua. A no-op in every other
+# case, and never allowed to cost a login.
+w-monitor sanity 2>&1 | systemd-cat -t w-monitor-sanity || true
+
+# Render this user's theme. Log (don't /dev/null) — a silent failure here once hid a
+# root-owned ~/.local that aborted the render mid-way (no icons/qt/gtk). Keep it
+# best-effort, but leave a trace: ~/.local/state/w-style-apply.log + the journal.
+{ mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}"
+  w-style apply user 2>&1 | tee "${XDG_STATE_HOME:-$HOME/.local/state}/w-style-apply.log" \
+    | systemd-cat -t w-style-apply
+} || true

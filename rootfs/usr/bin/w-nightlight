@@ -1,0 +1,942 @@
+#!/usr/bin/env bash
+# w-nightlight — W Linux night light (blue-light filter)
+#
+# The front end and the renderer for W's night light. The engine underneath is
+# hyprsunset, which shifts the compositor's colour transform (hyprland-ctm-
+# control-v1) rather than a shader — so the warm tint is NOT captured by
+# screenshots or screen recording, and it costs nothing per frame.
+#
+# The settings live in the nightlight subsystem (vendor → /etc/w → ~/.config/w,
+# see `w-conf cat nightlight`): MODE, NIGHT_TEMP, DAY_TEMP, the NIGHT_START/
+# NIGHT_END window and RAMP_MINUTES.
+#
+# ── The shape of the whole thing ──────────────────────────────────────────────
+#
+# Two pieces, and the split is what makes every transition smooth:
+#
+#   goal_now()   a PURE function of (config, wall clock) — what the screen should
+#                show at this instant. During a scheduled transition it moves on
+#                its own, second by second.
+#   the mover    `_ramp`, one process (w-nightlight-ramp.service), which walks
+#                the CURRENT value toward that goal at a bounded rate and exits
+#                as soon as it has arrived and the goal has stopped moving.
+#
+# The mover closes any gap over MINI_RAMP_SEC and then simply tracks the live
+# goal. That one rule covers every case there is, with no case-specific code:
+#
+#   • scheduled ramp        the goal creeps at (span / RAMP_MINUTES); the mover follows
+#   • off → always          the goal jumps; the mover eases across in MINI_RAMP_SEC
+#   • a setting changed     mid-ramp the setter restarts the mover, which starts from
+#                           wherever the screen actually is — no discontinuity
+#   • wake at midday        big gap → one MINI_RAMP_SEC ease back to the day anchor
+#   • wake mid-ramp         ease onto the schedule's current point in MINI_RAMP_SEC,
+#                           then carry on at the schedule's own pace
+#
+# The last two are the suspend requirement, and they need no resume-specific code.
+#
+# ── Why we ask the daemon instead of remembering ──────────────────────────────
+#
+# The mover reads the value currently on screen from hyprsunset itself
+# (`hyprctl hyprsunset temperature` / `identity get`) rather than from a file it
+# wrote earlier. That is ground truth in both directions: a daemon that crashed
+# and was restarted by Restart=on-failure reports its own neutral state, and one
+# that slept through a suspend reports the value we left it on. It removes the
+# whole "is our record still true" heuristic AND the state files that carried it
+# — the only runtime file left is the preview hold.
+#
+# ── What hyprsunset actually does with a kelvin value ─────────────────────────
+#
+# Verified by compiling its own matrixForKelvin() verbatim (2026-08-12):
+#
+#   • It TRUNCATES to 100 K. The function takes `unsigned long long temp` and
+#     does `temp /= 100`, so 6000 and 6099 produce a byte-identical matrix and
+#     only every 100th kelvin has any effect. That is why the mover deduplicates
+#     on exactly the same bucket (K / HW_QUANTUM_K): pushing finer would be pure
+#     no-op IPC. Reported upstream; if it is ever fixed, drop HW_QUANTUM_K and
+#     RAMP_STEP_K to 10 and everything else here already works.
+#   • `identity` is NOT 6000 K. 6000 K is a 7.1% cut on blue; the closest any
+#     kelvin gets to an untouched screen is 6600 K (0.97%). The old code called
+#     6000 "neutral" and snapped to `identity` near it, which put a hidden 7%
+#     jump at the start and end of every ramp. Hence IDENTITY_K and DAY_TEMP.
+#
+# ── The daemon's config file ──────────────────────────────────────────────────
+#
+# ~/.config/hypr/hyprsunset.conf deliberately ships NO `profile {}` block.
+# hyprsunset parses its profile list exactly ONCE at startup and then reasserts
+# it later, wholesale, on its own wall-clock timer (confirmed in Hyprsunset.cpp:
+# `KELVIN`/`GAMMA`/`identity` get overwritten from that one-time parse) — which
+# silently resurrected a value last true days earlier (incident 2026-08-11).
+# `currentProfile()` returns -1 for an empty profile list and both the loader and
+# the scheduler thread bail out on that, so shipping NO profile removes the whole
+# class of bug by construction. render_conf() exists only to keep that true, and
+# to purge a profile-bearing file left behind by a pre-2026-08-11 version.
+#
+# There is no separate "is the daemon running" state to keep in sync, because
+# `off` is just the identity IPC call, same shape as every other value — a
+# disabled unit would be a second source of truth and would kill the live
+# preview.
+#
+# Everything here is user scope: the config it writes, the file it renders and
+# the units it drives all belong to one login session. There is no polkit path in
+# this subsystem and no root command. See w-nightlight.md.
+
+set -euo pipefail
+
+SUBSYS=nightlight
+
+err() { echo "w-nightlight: $*" >&2; }
+die() { err "$*"; exit 1; }
+
+# shellcheck source=../lib/w/w-conf-lib.sh
+source /usr/lib/w/w-conf-lib.sh
+
+# `--user <name>` may appear anywhere in the command line: mod_nightlight renders
+# for every account of the machine and calls us once per user. Root-only,
+# enforced by the resolver.
+ARG_USER=""
+_ARGV=()
+while (($#)); do
+  case "$1" in
+    --user)   ARG_USER="${2:-}"; shift 2 ;;
+    --user=*) ARG_USER="${1#*=}"; shift ;;
+    *)        _ARGV+=("$1"); shift ;;
+  esac
+done
+set -- "${_ARGV[@]}"
+
+# Whose session config we render: the invoker, an explicit --user, or — at
+# firstboot only — the machine's single account. There is no privileged *command*
+# here, only a privileged *caller*. The resolver exports WCONF_HOME, which MUST
+# happen before the load pass: as root the user layer would otherwise resolve to
+# /root/.config. See w-conf-lib.sh.
+TARGET_USER=""; TARGET_HOME=""
+_rc=0; wconf_resolve_target "$ARG_USER" || _rc=$?
+# `if`, not `[[…]] && exit`: a false test at the end of an AND-list returns 1 and
+# `set -e` would kill the script right here (checks.md, landmines rule 2).
+if [[ $_rc -eq 2 ]]; then exit 1; fi
+TARGET_USER="$WCONF_TARGET_USER"; TARGET_HOME="$WCONF_TARGET_HOME"
+
+wconf_load "$SUBSYS"
+
+SUNSET_CONF="${TARGET_HOME:-$HOME}/.config/hypr/hyprsunset.conf"
+RAMP_UNIT=w-nightlight-ramp.service
+
+# ══ Tunables ══════════════════════════════════════════════════════════════════
+# Everything the engine's behaviour depends on, in one place. The four keys the
+# USER sets (MODE, NIGHT_TEMP, DAY_TEMP, the window, RAMP_MINUTES) live in the
+# layered config instead — these are the mechanics, not the preferences.
+
+# The range hyprsunset itself accepts; anything outside is rejected by the daemon.
+TEMP_MIN=1000
+TEMP_MAX=20000
+
+# The kelvin value whose colour matrix is closest to an untouched screen (0.97%
+# off; no value reaches it exactly). This is the anchor "no filter" means, and
+# the default for DAY_TEMP. Measured against hyprsunset's own matrixForKelvin().
+IDENTITY_K=6600
+
+# hyprsunset truncates its input to this (`temp /= 100` on an integer), so two
+# values inside one bucket are literally the same matrix. The mover pushes only
+# when the BUCKET changes, which is what keeps a smooth ramp from turning into a
+# stream of no-op IPC calls. Lower this if the upstream truncation is ever fixed.
+HW_QUANTUM_K=100
+
+# Target kelvin granularity of a transition — how big a step we aim for. It is
+# only an aim: the real step is whatever the elapsed time dictates (the mover is
+# time-parametrised, see ramp_frame_ms), and it is floored by IPC_MAX_HZ. Values
+# below HW_QUANTUM_K change nothing on screen today.
+RAMP_STEP_K=100
+
+# How long the mover takes to close ANY gap that is not the schedule's own pace:
+# turning the filter on or off, changing a setting mid-ramp, catching up after a
+# suspend. Short enough not to feel laggy, long enough not to read as a jump.
+MINI_RAMP_SEC=2
+
+# Ceiling on IPC pushes per second. The mover never sleeps less than 1/this
+# between two calls to hyprsunset, so a very short MINI_RAMP_SEC costs bounded
+# work instead of a fork storm. The widest realistic mini-ramp (6600 → 1000 K =
+# 56 buckets in MINI_RAMP_SEC) needs 28 Hz, so this has headroom; raising it
+# buys nothing while HW_QUANTUM_K is 100.
+IPC_MAX_HZ=30
+
+# Upper bound on a single sleep inside the mover. During a long scheduled ramp
+# the next bucket can be minutes away, but we still want to notice a resume (and
+# to re-evaluate a goal that moved while we slept) reasonably promptly.
+RAMP_IDLE_POLL_SEC=5
+
+# How long a hyprctl call may hang before we give up on it — a wedged compositor
+# socket must not block a tick, let alone a frame, indefinitely.
+IPC_TIMEOUT_SEC=5
+
+# Consecutive failed pushes before assuming the daemon is wedged rather than
+# unlucky, and restarting it instead of retrying the same connection…
+MAX_CONSEC_FAILS=3
+# …and how many such restarts one mover may attempt before giving up and leaving
+# the retry to the next minute's tick. Without this a dead session would spin.
+MAX_RESTARTS=2
+
+# How long a manual `preview` holds the tick off before expiring on its own. A
+# forgotten preview must not freeze the night light until the next login.
+PREVIEW_HOLD_SEC=300
+
+usage() {
+  cat <<EOF
+Usage: w-nightlight <command> [value]
+
+Info: Night light — warm the screen on a schedule to cut blue light in the evening.
+
+Commands:
+  status [--porcelain]   Show mode, temperatures, window and whether it is on now
+  mode <off|schedule|always>
+                         off      never filter
+                         schedule warm between the start and end times
+                         always   warm around the clock
+  temp <K>               Night colour temperature, ${TEMP_MIN}-${TEMP_MAX} (lower is warmer)
+  day <K>                Daytime colour temperature — the other end of the ramp.
+                         ${IDENTITY_K} (the default) means an untouched screen.
+  schedule <HH:MM> <HH:MM>
+                         Start and end of the night window (crossing midnight is fine)
+  transition <minutes>   How long the change from day to night takes (0 = instant)
+  toggle                 Flip between off and schedule
+  preview <K|off|reset>  Live, NOT saved: try a temperature, drop to neutral, or
+                         (reset) go straight back to what the schedule says
+  apply                  Re-compute and ease to what should be on screen right now
+  help                   Show this help
+
+Options:
+  --user <name>          Act for that account instead of the invoker (root).
+                         apply.sh --nightlight uses it to render every account,
+                         not just the first one.
+
+Config: ~/.config/w/nightlight.conf   (defaults: /usr/share/w/defaults/nightlight.conf)
+Renders: ~/.config/hypr/hyprsunset.conf  — generated, do not edit by hand
+GUI: W Hub -> Displays -> Night light
+
+Exit codes:
+  0  Success   1  Runtime error   2  Usage error
+
+Examples:
+  w-nightlight mode schedule
+  w-nightlight temp 3400
+  w-nightlight day 6500
+  w-nightlight schedule 22:30 06:45
+  w-nightlight transition 30
+  w-nightlight preview 2700
+EOF
+}
+
+# ── Config access ─────────────────────────────────────────────────────────────
+
+get() { wconf_get "$SUBSYS" "$1" "${2:-}"; }
+# Every key is user-scope (nightlight.schema), so all writes go to the user
+# layer. wconf_set is the only writer: it is atomic, it refuses a key locked by
+# fleet policy instead of writing a value the next read would shadow, and it
+# refreshes the load pass so the render below sees the new value.
+set_kv() { wconf_set "$SUBSYS" "$1" "$2" user; }
+
+valid_mode() { case "$1" in off|schedule|always) return 0 ;; *) return 1 ;; esac; }
+valid_temp() { [[ "$1" =~ ^[0-9]+$ ]] && (( $1 >= TEMP_MIN && $1 <= TEMP_MAX )); }
+
+# Accepts H:MM or HH:MM; prints the zero-padded form. Rejects everything else,
+# including the 25:00 / 07:60 that a typo produces and hyprsunset would take.
+norm_time() { # <HH:MM> → HH:MM
+  local t="$1" h m
+  [[ "$t" =~ ^([0-9]{1,2}):([0-9]{2})$ ]] || return 1
+  h="${BASH_REMATCH[1]}"; m="${BASH_REMATCH[2]}"
+  (( 10#$h <= 23 && 10#$m <= 59 )) || return 1
+  printf '%02d:%02d\n' "$((10#$h))" "$((10#$m))"
+}
+
+t2s() { local t="$1"; echo $(( 10#${t%%:*} * 3600 + 10#${t##*:} * 60 )); }   # HH:MM → seconds
+
+mode_now()  { local m; m="$(get MODE off)"; valid_mode "$m" || m=off; echo "$m"; }
+temp_now()  { local t; t="$(get NIGHT_TEMP 4300)"; valid_temp "$t" || t=4300; echo "$t"; }
+day_now()   { local t; t="$(get DAY_TEMP "$IDENTITY_K")"; valid_temp "$t" || t=$IDENTITY_K; echo "$t"; }
+start_now() { norm_time "$(get NIGHT_START 21:00)" 2>/dev/null || echo "21:00"; }
+end_now()   { norm_time "$(get NIGHT_END   07:00)" 2>/dev/null || echo "07:00"; }
+ramp_now()  {
+  local r; r="$(get RAMP_MINUTES 30)"
+  [[ "$r" =~ ^[0-9]+$ ]] || r=30
+  (( r > 720 )) && r=720
+  echo "$r"
+}
+
+# One snapshot of the merged config, so the hot path does no command
+# substitution at all. Re-taken after every setter.
+CFG_MODE=off CFG_NIGHT=4300 CFG_DAY=$IDENTITY_K CFG_START=0 CFG_END=0 CFG_RAMP=30
+config_cache() {
+  CFG_MODE="$(mode_now)"; CFG_NIGHT="$(temp_now)"; CFG_DAY="$(day_now)"
+  CFG_START="$(t2s "$(start_now)")"; CFG_END="$(t2s "$(end_now)")"; CFG_RAMP="$(ramp_now)"
+}
+
+# ── Clock ─────────────────────────────────────────────────────────────────────
+# Both forms are fork-free builtins (EPOCHREALTIME and printf %()T), which is
+# what lets a mover frame cost exactly one fork — the push itself.
+#
+# NOW_SEC is seconds since LOCAL midnight, at second resolution. The old code
+# worked in whole minutes, which is why a sub-minute tick could never make a ramp
+# any smoother: it recomputed the identical target four times and skipped three.
+#
+# W_NIGHTLIGHT_NOW=HH:MM[:SS] overrides it so the schedule maths can be exercised
+# at any time of day (same testability seam as W_HOME_BASE elsewhere in W).
+# Nothing in production sets it.
+NOW_SEC=0 NOW_MS=0
+now_refresh() {
+  local r hms
+  if [[ -n "${EPOCHREALTIME:-}" ]]; then
+    r="${EPOCHREALTIME/[.,]/}"          # microseconds; strips a locale comma too
+    NOW_MS=$(( 10#$r / 1000 ))
+  else
+    NOW_MS=$(( $(date +%s) * 1000 ))
+  fi
+  if [[ -n "${W_NIGHTLIGHT_NOW:-}" && "$W_NIGHTLIGHT_NOW" =~ ^([0-9]{1,2}):([0-9]{2})(:([0-9]{2}))?$ ]]; then
+    NOW_SEC=$(( 10#${BASH_REMATCH[1]} * 3600 + 10#${BASH_REMATCH[2]} * 60 + 10#0${BASH_REMATCH[4]} ))
+    return 0
+  fi
+  printf -v hms '%(%H%M%S)T' -1
+  NOW_SEC=$(( 10#${hms:0:2} * 3600 + 10#${hms:2:2} * 60 + 10#${hms:4:2} ))
+}
+
+# ── The goal: a pure function of config and wall clock ────────────────────────
+# W owns the schedule and hyprsunset is a pure applicator. Two reasons, both
+# verified against its sources: it has no interpolation of any kind (profiles are
+# instant switches at a wall-clock time), and it has no "reload config" IPC, so a
+# daemon holding its own schedule would keep using what it parsed at startup.
+#
+# Driving values over IPC is also what makes the change visible as a fade at all:
+# Hyprland animates a CTM change on a LIVE client (render:ctm_animation), and
+# restarting the daemon disconnects it, which drops the CTM instantly.
+#
+# Sets GOAL_K (always a kelvin number, even when the answer is "no filter"),
+# GOAL_IDENT (1 = send `identity`, dropping the CTM outright) and GOAL_MOVING
+# (1 = we are inside a scheduled transition, so the goal is still moving).
+GOAL_K=0 GOAL_IDENT=0 GOAL_MOVING=0
+goal_now() {
+  local night=$CFG_NIGHT day=$CFG_DAY s=$CFG_START e=$CFG_END r win gap d_in d_out num den
+  GOAL_MOVING=0
+  case "$CFG_MODE" in
+    # `off` is the FEATURE being off — an untouched screen, whatever DAY_TEMP
+    # says. DAY_TEMP is the daytime end of the night-light curve, not a
+    # substitute for disabling it.
+    off)    GOAL_K=$IDENTITY_K; GOAL_IDENT=1; return 0 ;;
+    always) GOAL_K=$night;      GOAL_IDENT=0; return 0 ;;
+  esac
+
+  r=$(( CFG_RAMP * 60 ))
+  win=$(( (e - s + 86400) % 86400 ))          # seconds the window is open
+  gap=$(( 86400 - win ))                      # seconds it is closed
+  d_in=$(( (NOW_SEC - s + 86400) % 86400 ))   # seconds since it opened
+  d_out=$(( (NOW_SEC - e + 86400) % 86400 ))  # seconds since it closed
+
+  # A ramp can never be longer than the stretch it has to fit in, or the screen
+  # would still be on its way somewhere when the next boundary arrives.
+  if (( d_in < win )); then                   # inside the window: ramping in, then held
+    (( r > win )) && r=$win
+    if (( r > 0 && d_in < r )); then
+      num=$d_in; den=$r; GOAL_MOVING=1
+    else
+      GOAL_K=$night; GOAL_IDENT=0; return 0
+    fi
+  else                                        # outside: ramping back out, then day
+    (( r > gap )) && r=$gap
+    if (( r > 0 && d_out < r )); then
+      num=$(( r - d_out )); den=$r; GOAL_MOVING=1
+    else
+      GOAL_K=$day
+      GOAL_IDENT=$(( day == IDENTITY_K ? 1 : 0 ))
+      return 0
+    fi
+  fi
+
+  # Linear in kelvin between the day anchor and the night temperature. There is
+  # deliberately no "close enough, call it identity" shortcut here: the old one
+  # snapped to identity near 6000 K, which is a 7% step on blue (see the header).
+  GOAL_K=$(( day + (night - day) * num / den ))
+  GOAL_IDENT=0
+}
+
+# What actually goes on the wire for a (kelvin, identity) pair — and therefore
+# what two values have to differ in before a push is worth making. hyprsunset
+# truncates to HW_QUANTUM_K, so this is its own arithmetic, not an approximation
+# of it.
+KEY=""
+key_of() { # <kelvin> <ident>
+  if (( $2 )); then KEY=identity; else KEY=$(( $1 / HW_QUANTUM_K )); fi
+}
+
+# Prints the goal the way the CLI talks about it: `identity` or a kelvin value.
+target_now() {
+  now_refresh; goal_now
+  if (( GOAL_IDENT )); then echo identity; else echo "$GOAL_K"; fi
+}
+
+# Is the filter in effect right now? True when the goal differs from the day
+# anchor — resting at DAY_TEMP is the daytime state, not "the night light is on".
+# Derived from the config, so the answer holds with no daemon reachable at all
+# (root, SSH, a headless AI call).
+is_active() {
+  now_refresh; goal_now
+  if (( GOAL_IDENT )); then return 1; fi
+  (( GOAL_K != CFG_DAY ))
+}
+
+# ── Talking to hyprsunset ─────────────────────────────────────────────────────
+
+# hyprctl reaches hyprsunset through the running compositor's instance
+# signature, so this only works from inside the session — every caller treats it
+# as best-effort and falls back to the config being the truth.
+in_session() { [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] && command -v hyprctl >/dev/null 2>&1; }
+
+# Raw call: prints the daemon's reply. Used for the QUERY commands, whose reply
+# is the answer rather than "ok".
+ipc_raw() { # <args...>
+  in_session || return 1
+  timeout "${IPC_TIMEOUT_SEC}s" hyprctl hyprsunset "$@" 2>/dev/null
+}
+
+# Setter call. hyprsunset answers "ok" on success and an error STRING otherwise,
+# while hyprctl exits 0 either way — so checking the exit status alone cannot
+# tell a value that landed from one that was rejected.
+ipc() { # <args...>
+  local out
+  out="$(ipc_raw "$@")" || return 1
+  [[ "${out//[$'\n\r ']/}" == ok ]]
+}
+
+# What is on screen RIGHT NOW, straight from the daemon. This is why there is no
+# applied-value file any more: whatever happened to the daemon since our last
+# push — a crash and an automatic restart, or a suspend it slept through — its
+# own answer is correct and our record would only have been a guess.
+CUR_K=0 CUR_IDENT=0
+ipc_current() {
+  local t i
+  t="$(ipc_raw temperature)" || return 1
+  i="$(ipc_raw identity get)" || return 1
+  t="${t//[$'\n\r ']/}"; i="${i//[$'\n\r ']/}"
+  [[ "$t" =~ ^[0-9]+$ ]] || return 1
+  CUR_K="$t"
+  if [[ "$i" == true ]]; then CUR_IDENT=1; else CUR_IDENT=0; fi
+}
+
+# WHOSE daemon. A bare `pgrep -x hyprsunset` answers "somebody's on this machine":
+# on a multi-user box the second account would see the first user's daemon, skip
+# its own start and sit with no engine at all while reporting one as running.
+daemon_running() { pgrep -x -u "${TARGET_USER:-$(id -un)}" hyprsunset >/dev/null 2>&1; }
+
+# ── Render ────────────────────────────────────────────────────────────────────
+# A STATIC file with NO `profile {}` block — see the header for why. It carries
+# no value, so it only has to exist in this shape before the daemon (re)starts.
+#
+# ⚠️ It is also a MIGRATION: a machine updated from a pre-2026-08-11 version
+# still has a profile-bearing file on disk, and the previous revision only ever
+# rewrote the file from inside reload() — i.e. only when no daemon was running —
+# so on a machine that was updated mid-session it never got rewritten at all, and
+# every subsequent login re-parsed the stale profile. Hence: called on every
+# forced apply, and it reports back whether it had to purge a profile so the
+# caller can restart the daemon once to drop the copy it already parsed.
+RENDER_PURGED=0
+render_conf() {
+  [[ -n "${TARGET_HOME:-}" ]] || return 0
+  RENDER_PURGED=0
+
+  if [[ -f "$SUNSET_CONF" ]]; then
+    if grep -qE '^[[:space:]]*profile[[:space:]]*\{' "$SUNSET_CONF" 2>/dev/null; then
+      RENDER_PURGED=1
+    elif grep -qF 'GENERATED by w-nightlight' "$SUNSET_CONF" 2>/dev/null; then
+      return 0                      # already ours and already profile-free
+    fi
+  fi
+
+  # Rendering into ANOTHER user's home is the normal case (mod_nightlight iterates
+  # every account), so the parent chain has to end up owned by that user: a bare
+  # `install -d` leaves a freshly created ~/.config root-owned and their session
+  # can no longer write beside our file — the trap lib/deploy.sh guards in
+  # seed_user_file.
+  local dir tmp; dir="$(dirname "$SUNSET_CONF")"
+  if [[ $EUID -eq 0 && -n "$TARGET_USER" ]]; then
+    install -d -m755 -o "$TARGET_USER" -g "$TARGET_USER" "$(dirname "$dir")" "$dir"
+  else
+    install -d -m755 "$dir"
+  fi
+  tmp="$(mktemp "${SUNSET_CONF}.XXXXXX")"
+  cat > "$tmp" <<EOF
+# W Linux — GENERATED by w-nightlight. Do NOT edit.
+#
+# Deliberately empty — no \`profile {}\` block. W owns the whole schedule (mode,
+# day and night temperature, window, transition length — \`w-conf cat nightlight\`)
+# and drives hyprsunset purely over IPC:
+#   w-nightlight mode <off|schedule|always>
+#   w-nightlight temp <K>          # night
+#   w-nightlight day <K>           # day
+#   w-nightlight schedule <HH:MM> <HH:MM>
+#   w-nightlight transition <minutes>
+# or in W Hub -> Displays -> Night light.
+#
+# A profile here would be more than useless: hyprsunset parses it once at its
+# own startup and can silently reassert it again later, wholesale, entirely on
+# its own — see w-nightlight.md for the 2026-08-11 incident this caused. An
+# empty profile list makes that structurally impossible instead of racing it.
+EOF
+  mv -f "$tmp" "$SUNSET_CONF"
+  chmod 644 "$SUNSET_CONF"
+  if [[ $EUID -eq 0 && -n "$TARGET_USER" ]]; then
+    chown "$TARGET_USER:$TARGET_USER" "$SUNSET_CONF"
+  fi
+  return 0
+}
+
+# Starts (or restarts) the daemon — genuine crash/first-start recovery and the
+# migration purge above, never to "pick up a change": every value goes out over
+# IPC instead, specifically so the daemon is never disconnected while showing a
+# value. That instant-drops the CTM where an IPC push fades it.
+#
+# ⚠️ `restart`, NOT `try-restart` — this cost a live debugging round on real
+# hardware. `try-restart` is a no-op on a unit that is not already running, and on
+# a machine that gets this subsystem by UPDATE the unit never is: `systemctl
+# --global enable` only affects sessions started afterwards, so the session that
+# is running right now never pulls the new want in. The result was the worst kind
+# of failure — the Hub said "always on, 4300 K", but the screen simply never
+# changed until the next login.
+#
+# Still best-effort: with no session (firstboot, chroot, SSH as root) the unit's
+# ConditionEnvironment=WAYLAND_DISPLAY simply skips the start, which is correct —
+# the session will start it.
+reload() {
+  if [[ $EUID -eq 0 ]]; then
+    [[ -n "$TARGET_USER" && -d /run/systemd/system ]] || return 0
+    systemctl --user --machine="${TARGET_USER}@.host" restart hyprsunset.service 2>/dev/null || true
+  else
+    systemctl --user restart hyprsunset.service 2>/dev/null || true
+  fi
+}
+
+# ── The mover ─────────────────────────────────────────────────────────────────
+
+# How long to sleep before the next frame.
+#
+# The mover is TIME-parametrised (`cur` is a function of elapsed time, not of a
+# step count), so the step size is simply whatever the sleep length works out to
+# — which makes the framerate cap and the step-size rule one and the same thing.
+# Concretely, for a catch-up of `dist` kelvin in `rem` ms:
+#
+#   steps = ceil(dist / RAMP_STEP_K)            frames we would like
+#   dt    = rem / steps                         and how long each may take
+#   dt    = max(dt, 1000 / IPC_MAX_HZ)          but never faster than the cap
+#
+# and clamping dt is exactly equivalent to the alternative formulation "if the
+# implied rate exceeds IPC_MAX_HZ, enlarge the step to ceil(dist / (IPC_MAX_HZ *
+# rem))" — the trajectory covers whatever ground the elapsed time calls for.
+# 2000 K in 2 s at RAMP_STEP_K=10 and a 60 Hz cap gives ~17 K per frame either way.
+FRAME_MS=0
+ramp_frame_ms() { # <cur> <goal> <remaining-ms> <locked>
+  local cur="$1" goal="$2" rem="$3" locked="$4" dist steps ms span
+  # Round the floor UP, or integer truncation quietly lets the real rate exceed
+  # the cap (1000/60 = 16 ms is 62.5 Hz, not 60).
+  local floor=$(( (1000 + IPC_MAX_HZ - 1) / IPC_MAX_HZ )) ceiling=$(( RAMP_IDLE_POLL_SEC * 1000 ))
+  (( floor < 1 )) && floor=1
+
+  if (( locked )); then
+    # Locked on and merely tracking a scheduled transition: the goal moves at
+    # (span / RAMP_MINUTES), so the next bucket is that far away. Usually well
+    # past the ceiling, which is fine — the ceiling is what keeps us responsive.
+    span=$(( CFG_NIGHT - CFG_DAY )); (( span < 0 )) && span=$(( -span ))
+    if (( span > 0 && CFG_RAMP > 0 )); then
+      ms=$(( RAMP_STEP_K * CFG_RAMP * 60 * 1000 / span ))
+    else
+      ms=$ceiling
+    fi
+  else
+    dist=$(( goal - cur )); (( dist < 0 )) && dist=$(( -dist ))
+    steps=$(( (dist + RAMP_STEP_K - 1) / RAMP_STEP_K ))
+    (( rem < 1 )) && rem=1
+    if (( steps < 1 )); then ms=$rem; else ms=$(( rem / steps )); fi
+  fi
+
+  (( ms < floor )) && ms=$floor
+  (( ms > ceiling )) && ms=$ceiling
+  FRAME_MS=$ms
+}
+
+# `sleep` parses its argument with the locale's decimal point, so a fractional
+# frame would be read as a bare integer (i.e. 0 → a busy loop) under a comma
+# locale. Same C-locale discipline as w-style's sort.
+frame_sleep() {
+  local s; printf -v s '%d.%03d' $(( FRAME_MS / 1000 )) $(( FRAME_MS % 1000 ))
+  LC_ALL=C sleep "$s"
+}
+
+push_target() { # <key> <kelvin>
+  if [[ "$1" == identity ]]; then ipc identity true; else ipc temperature "$2"; fi
+}
+
+# Is there anything for the mover to do at all? Answered from the daemon's live
+# state, so it costs two IPC calls and no guesswork. Used by the tick to stay
+# silent on an ordinary minute instead of spawning a mover 1440 times a day.
+work_pending() {
+  now_refresh; goal_now
+  (( GOAL_MOVING )) && return 0
+  daemon_running || return 0
+  ipc_current || return 0                 # cannot tell → let the mover sort it out
+  local gk ck
+  key_of "$GOAL_K" "$GOAL_IDENT"; gk="$KEY"
+  key_of "$CUR_K"  "$CUR_IDENT";  ck="$KEY"
+  [[ "$gk" != "$ck" ]]
+}
+
+# The whole transition engine. One process, started on demand, gone again as soon
+# as it has arrived — nothing of this runs during the ~23 hours a day when the
+# screen is simply holding a value.
+cmd_ramp() {
+  # A manual preview owns the screen until it expires; do not fight it.
+  if hold_active; then return 0; fi
+  if ! in_session; then return 0; fi
+
+  daemon_running || reload
+  # A daemon we have just started (or that Restart=on-failure has just brought
+  # back) needs a moment before its socket answers. Waiting here beats returning
+  # and leaving the screen wrong until the next minute's tick.
+  local from tries=0
+  while ! ipc_current; do
+    tries=$(( tries + 1 ))
+    if (( tries >= MAX_CONSEC_FAILS )); then
+      err "hyprsunset is not answering — leaving the screen alone, the next tick will retry"
+      return 0
+    fi
+    LC_ALL=C sleep 0.5
+  done
+  from=$(( CUR_IDENT ? IDENTITY_K : CUR_K ))
+
+  now_refresh; goal_now
+  local t0=$NOW_MS mini_ms=$(( MINI_RAMP_SEC * 1000 ))
+  local elapsed cur locked=0 key last_key="" last_val=-1 fails=0 restarts=0
+
+  # Already there, and the goal is standing still: nothing to ease.
+  key_of "$GOAL_K" "$GOAL_IDENT"; key="$KEY"
+  key_of "$from" "$CUR_IDENT"
+  if (( ! GOAL_MOVING )) && [[ "$key" == "$KEY" ]]; then return 0; fi
+
+  while :; do
+    now_refresh; goal_now
+    elapsed=$(( NOW_MS - t0 ))
+    if (( elapsed >= mini_ms )); then
+      locked=1; cur=$GOAL_K              # caught up: from here we ARE the goal
+    else
+      cur=$(( from + (GOAL_K - from) * elapsed / mini_ms ))
+    fi
+
+    # `identity` is only ever the final state, never a step: dropping the CTM
+    # part-way through would be the very jump this engine exists to avoid.
+    if (( locked && GOAL_IDENT )); then key=identity; else key_of "$cur" 0; key="$KEY"; fi
+
+    # Is this the landing frame?
+    local final=0
+    if (( locked && ! GOAL_MOVING )); then final=1; fi
+
+    # Normally we push only when the visible bucket changes — inside one bucket
+    # hyprsunset computes an identical matrix, so finer pushes are no-ops. The
+    # landing frame is the exception: it sends the exact target even when the
+    # bucket already matches, so the daemon ends up holding the configured value
+    # rather than whatever the last step happened to land on (4376 for a 4300
+    # setting looks identical but makes every readback disagree with the config).
+    local want_push=0
+    if [[ "$key" != "$last_key" ]]; then
+      want_push=1
+    elif (( final )) && [[ "$key" != identity ]] && (( last_val != cur )); then
+      want_push=1
+    fi
+
+    if (( want_push )); then
+      if push_target "$key" "$cur"; then
+        fails=0; last_key="$key"; last_val=$cur
+      else
+        fails=$(( fails + 1 ))
+        if (( fails >= MAX_CONSEC_FAILS )); then
+          if (( restarts >= MAX_RESTARTS )); then
+            err "hyprsunset is not accepting IPC after $restarts restarts — giving up, the next tick will retry"
+            return 0
+          fi
+          err "hyprsunset IPC failed $fails times in a row, restarting the daemon"
+          reload; restarts=$(( restarts + 1 )); fails=0; last_key=""
+        fi
+        # Back off at a human pace rather than at frame rate: a dead session must
+        # not turn this into a spin loop.
+        LC_ALL=C sleep 1
+        # A push only fails because the daemon went away, and a daemon that comes
+        # back — whether systemd's Restart=on-failure did it or reload() above —
+        # comes back showing its OWN default, not what we were easing from. Pick
+        # the trajectory up from what is actually on screen now, or the first
+        # successful push after a crash lands as one big jump (measured: 6000 →
+        # 2510 in a single frame) instead of a fresh ease.
+        if ipc_current; then
+          from=$(( CUR_IDENT ? IDENTITY_K : CUR_K ))
+          now_refresh; t0=$NOW_MS; last_key=""; last_val=-1
+        fi
+        continue
+      fi
+    fi
+
+    if (( final )); then return 0; fi
+    ramp_frame_ms "$cur" "$GOAL_K" $(( mini_ms - elapsed )) "$locked"
+    frame_sleep
+  done
+}
+
+# Hand the goal to the mover. `restart` preempts a transition already in flight:
+# the new mover reads the screen's ACTUAL value first, so it picks up exactly
+# where the old one stopped and eases from there — there is no state to hand over
+# and nothing to abort cleanly.
+ramp_go() { # <start|restart>
+  if ! in_session; then return 0; fi
+  if systemctl --user "${1:-start}" "$RAMP_UNIT" 2>/dev/null; then return 0; fi
+  # No user manager to run it under (or the unit is missing): a single direct
+  # push still beats leaving the screen on a stale value.
+  now_refresh; goal_now
+  if (( GOAL_IDENT )); then ipc identity true || true; else ipc temperature "$GOAL_K" || true; fi
+  return 0
+}
+
+# Every setter goes through here: persist, drop any preview, make sure the file
+# and the daemon are in the shape the next start needs, then ease to the new goal.
+apply_now() {
+  config_cache
+  render_conf
+  # Runtime files the pre-2026-08-12 engine kept, which nothing reads any more:
+  # the daemon is the state now. They live in tmpfs and would go on the next
+  # reboot anyway, but a session that gets this by update would keep them for the
+  # rest of the day, and a stale `nightlight.applied` reads exactly like live
+  # state to whoever debugs this next.
+  rm -f "$(state_dir)/nightlight.applied" "$(state_dir)/nightlight.failcount"
+  # Only reason left to bounce the daemon on a value change: it is still holding
+  # a profile parsed from a file we have just purged (migration, see render_conf).
+  if (( RENDER_PURGED )) && daemon_running; then
+    err "purged a stale profile from $SUNSET_CONF — restarting hyprsunset once to drop it"
+    reload
+  fi
+  daemon_running || reload
+  ramp_go restart
+}
+
+# ── Preview hold ──────────────────────────────────────────────────────────────
+# The one runtime file this subsystem still keeps. Per-user tmpfs in a session,
+# /run/w otherwise — same resolver idiom as w-kbdlight's stash.
+#
+# It follows the ACCOUNT WE ACT FOR, not whoever runs the command: two accounts
+# must not share one file under /run/w, or one of them would honour the other's
+# preview.
+state_dir() {
+  local uid=""
+  [[ -n "${TARGET_USER:-}" ]] && uid="$(id -u "$TARGET_USER" 2>/dev/null || true)"
+  if [[ -n "$uid" && -d "/run/user/$uid" ]]; then echo "/run/user/$uid/w"
+  elif [[ -n "${XDG_RUNTIME_DIR:-}" && -d "${XDG_RUNTIME_DIR}" ]]; then echo "${XDG_RUNTIME_DIR}/w"
+  else echo "/run/w${TARGET_USER:+/$TARGET_USER}"; fi
+}
+HOLD_FILE="$(state_dir)/nightlight.hold"
+
+hold_active() {
+  local until; until="$(cat "$HOLD_FILE" 2>/dev/null || echo 0)"
+  [[ "$until" =~ ^[0-9]+$ ]] || return 1
+  (( $(date +%s) < until ))
+}
+hold_set() {
+  local d; d="$(state_dir)"
+  install -d -m700 "$d"
+  # Root writing into the target's runtime dir must leave it owned by them, or
+  # their own session can no longer clear the hold it just read.
+  if [[ $EUID -eq 0 && -n "${TARGET_USER:-}" ]]; then
+    chown "$TARGET_USER:$TARGET_USER" "$d" 2>/dev/null || true
+  fi
+  echo $(( $(date +%s) + PREVIEW_HOLD_SEC )) > "$HOLD_FILE"
+}
+hold_clear() { rm -f "$HOLD_FILE"; }
+
+# ── Commands ──────────────────────────────────────────────────────────────────
+
+cmd_mode() { # <off|schedule|always>
+  local m="${1:-}"
+  valid_mode "$m" || { err "mode must be off, schedule or always"; exit 2; }
+  set_kv MODE "$m"
+  hold_clear
+  apply_now
+}
+
+cmd_temp() { # <K>
+  local t="${1:-}"
+  [[ "$t" =~ ^[0-9]+$ ]] || { err "temperature must be a whole number of kelvin"; exit 2; }
+  valid_temp "$t" || { err "temperature must be ${TEMP_MIN}-${TEMP_MAX} K"; exit 2; }
+  set_kv NIGHT_TEMP "$t"
+  hold_clear
+  apply_now
+}
+
+# The daytime end of the ramp. Screens differ in what "no tint" looks like, and
+# some people want a deliberately cooler or warmer day — so this is a setting,
+# not the 6000 K constant it used to be (which was never neutral in the first
+# place; see the header).
+cmd_day() { # <K>
+  local t="${1:-}"
+  [[ "$t" =~ ^[0-9]+$ ]] || { err "day temperature must be a whole number of kelvin"; exit 2; }
+  valid_temp "$t" || { err "day temperature must be ${TEMP_MIN}-${TEMP_MAX} K"; exit 2; }
+  set_kv DAY_TEMP "$t"
+  hold_clear
+  apply_now
+}
+
+cmd_schedule() { # <start> <end>
+  local s e
+  s="$(norm_time "${1:-}")" || { err "start time must be HH:MM (00:00-23:59)"; exit 2; }
+  e="$(norm_time "${2:-}")" || { err "end time must be HH:MM (00:00-23:59)"; exit 2; }
+  # An empty window is not a schedule. Saying so beats letting the user work out
+  # why nothing ever changes.
+  [[ "$s" == "$e" ]] && { err "start and end are the same time — that is 'mode always', not a window"; exit 2; }
+  set_kv NIGHT_START "$s"
+  set_kv NIGHT_END "$e"
+  hold_clear
+  apply_now
+}
+
+cmd_transition() { # <minutes>
+  local v="${1:-}"
+  [[ "$v" =~ ^[0-9]+$ ]] || { err "transition must be a whole number of minutes (0 = instant)"; exit 2; }
+  (( v <= 720 )) || { err "transition must be 0-720 minutes"; exit 2; }
+  set_kv RAMP_MINUTES "$v"
+  hold_clear
+  apply_now
+}
+
+# The settings-level toggle: off <-> schedule (from `always` it turns off, which
+# is the only unambiguous reading of "toggle" there). Bound to a hotkey, so it
+# reports the new state — in daylight with a night window set, nothing changes on
+# screen and silence would look like a dead key.
+cmd_toggle() {
+  local new
+  if [[ "$(mode_now)" == off ]]; then new=schedule; else new=off; fi
+  set_kv MODE "$new"
+  hold_clear
+  apply_now
+  local detail
+  if is_active; then detail="filtering now"; else detail="neutral until $(start_now)"; fi
+  [[ "$new" == off ]] && detail="filter disabled"
+  if [[ -t 1 ]]; then
+    echo "Night light: $new ($detail)"
+  elif command -v w-notify >/dev/null 2>&1; then
+    w-notify send -a "W Night light" "Night light: $new" "$detail" >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
+# Live and deliberately NOT persisted — "what would 2700 K look like?" without
+# committing to it. A single push, which Hyprland fades on its own; the mini-ramp
+# is for goal changes, and easing a value the user is scrubbing through would
+# only add lag. Holds off the tick for a few minutes so the answer stays on
+# screen, then expires.
+cmd_preview() { # <K|off|reset>
+  local v="${1:-}"
+  case "$v" in
+    off)   ipc identity true || die "no running hyprsunset in this session"; hold_set ;;
+    reset) hold_clear; apply_now ;;
+    "")    err "preview needs a temperature, 'off' or 'reset'"; exit 2 ;;
+    *)
+      [[ "$v" =~ ^[0-9]+$ ]] || { err "preview value must be a number of kelvin, 'off' or 'reset'"; exit 2; }
+      valid_temp "$v" || { err "temperature must be ${TEMP_MIN}-${TEMP_MAX} K"; exit 2; }
+      ipc temperature "$v" || die "no running hyprsunset in this session"
+      hold_set
+      ;;
+  esac
+}
+
+# Driven once a minute by w-nightlight-tick.timer (user unit), and cheap by
+# design: on an ordinary minute it asks the daemon what it is showing, finds it
+# already correct, and returns without starting anything.
+cmd_tick() {
+  if hold_active; then return 0; fi
+  # A hold that has just EXPIRED is not "nothing to do": the screen still shows
+  # whatever `preview` pushed. The Hub sends `preview reset` when its section
+  # closes, but a preview from the CLI (or a Hub that was killed) has no such
+  # courtesy — so ease back from wherever it left the screen.
+  if [[ -e "$HOLD_FILE" ]]; then hold_clear; ramp_go restart; return 0; fi
+  if work_pending; then ramp_go start; fi
+}
+
+nl_porcelain() {
+  echo "MODE=$CFG_MODE"
+  echo "NIGHT_TEMP=$CFG_NIGHT"
+  echo "DAY_TEMP=$CFG_DAY"
+  echo "NIGHT_START=$(start_now)"
+  echo "NIGHT_END=$(end_now)"
+  echo "RAMP_MINUTES=$CFG_RAMP"
+  echo "ACTIVE=$(is_active && echo 1 || echo 0)"
+  # What is on screen right now: `identity` or a kelvin value. During a ramp this
+  # sits between the day anchor and the night temperature, which is exactly what
+  # the Hub wants to show — NIGHT_TEMP alone would claim the destination has
+  # already been reached.
+  echo "CURRENT=$(target_now)"
+  echo "TEMP_MIN=$TEMP_MIN"
+  echo "TEMP_MAX=$TEMP_MAX"
+  echo "IDENTITY_K=$IDENTITY_K"
+  # Whether the engine is actually up. The panel stays usable without it (the
+  # config is the truth), but the live preview needs a daemon to talk to.
+  echo "RUNNING=$(daemon_running && echo 1 || echo 0)"
+  echo "CONF=$SUNSET_CONF"
+}
+
+cmd_status() {
+  [[ "${1:-}" == --porcelain ]] && { nl_porcelain; return 0; }
+  echo "Night light"
+  case "$CFG_MODE" in
+    off)      echo "  Mode         : off" ;;
+    always)   echo "  Mode         : always on" ;;
+    schedule) echo "  Mode         : scheduled  ($(start_now) -> $(end_now))" ;;
+  esac
+  echo "  Night temp   : $CFG_NIGHT K  (lower is warmer)"
+  if (( CFG_DAY == IDENTITY_K )); then
+    echo "  Day temp     : $CFG_DAY K  (untouched screen)"
+  else
+    echo "  Day temp     : $CFG_DAY K  ($IDENTITY_K K would be an untouched screen)"
+  fi
+  if (( CFG_RAMP > 0 )); then echo "  Transition   : ${CFG_RAMP} min  (eased in and out of the window)"
+  else echo "  Transition   : instant"; fi
+  local cur; cur="$(target_now)"
+  if [[ "$cur" == identity ]]; then
+    echo "  Right now    : neutral"
+  elif [[ "$cur" == "$CFG_NIGHT" ]]; then
+    echo "  Right now    : filtering at ${cur} K"
+  elif [[ "$cur" == "$CFG_DAY" ]]; then
+    echo "  Right now    : daytime, ${cur} K"
+  else
+    # Mid-ramp: saying "filtering at 4300 K" here would be a lie the user can see.
+    echo "  Right now    : in transition, ${cur} K (heading to ${CFG_NIGHT} K)"
+  fi
+  echo "  Engine       : hyprsunset $(daemon_running && echo "running" || echo "not running")"
+  echo "  Rendered to  : $SUNSET_CONF"
+  echo
+  # Which layer each value came from. Without this the three files are invisible
+  # and "why is my window 22:00 when I set 21:00" has no mechanical answer.
+  echo "== Config layers =="
+  local lay n
+  for lay in vendor site-default system user policy; do
+    n=0
+    while IFS=$'\t' read -r _ _ o _; do [[ "$o" == "$lay" ]] && n=$((n + 1)); done \
+      < <(wconf_list_porcelain "$SUBSYS")
+    [[ "$n" -gt 0 ]] && printf '  %-13s %d key(s) in effect\n' "$lay" "$n"
+  done
+  echo "  full view: w-conf cat nightlight"
+}
+
+config_cache
+
+case "${1:-}" in
+  "")              cmd_status ;;
+  status)          cmd_status "${2:-}" ;;
+  mode)            cmd_mode "${2:-}" ;;
+  temp)            cmd_temp "${2:-}" ;;
+  day)             cmd_day "${2:-}" ;;
+  schedule)        cmd_schedule "${2:-}" "${3:-}" ;;
+  toggle)          cmd_toggle ;;
+  preview)         cmd_preview "${2:-}" ;;
+  transition)      cmd_transition "${2:-}" ;;
+  apply)           apply_now ;;
+  _tick)           cmd_tick ;;
+  _ramp)           cmd_ramp ;;
+  help|--help|-h)  usage ;;
+  *)               err "unknown command: $1"; usage >&2; exit 2 ;;
+esac

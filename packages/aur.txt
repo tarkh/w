@@ -1,0 +1,26 @@
+# W Linux — AUR packages (installed via apply.sh --packages, requires yay)
+# One package per line. Lines starting with # are ignored.
+
+# (Qt theming: qt5ct + qt6ct, both in the official repo — see pacman.txt. The
+#  former hyprqt6engine AUR engine was dropped: it isn't picked up as a non-first
+#  colon-list entry, so it couldn't coexist with qt5ct in one global var.)
+
+# (Advanced PipeWire mixer moved to the official repo: extra/wiremix — a TUI
+#  themed by the w-style `wiremix` axis, launched from the Volume Control popup.
+#  It replaced pwvucontrol here to drop the slow AUR Rust build. See pacman.txt /
+#  quickshell-volumecontrol.md.)
+
+# zsh fuzzy tab-completion (fzf-tab). Pure-zsh plugin, PKGBUILD is arch=any with
+# no build() (just installs a tarball) → no compilation, installs in seconds.
+# Installs to /usr/share/zsh/plugins/fzf-tab/; .zshrc sources it after compinit.
+# Themed via the shell axis FZF_DEFAULT_OPTS. (fzf-tab = tagged release, pinned;
+# preferred over the VCS fzf-tab-git which git-clones on every build.)
+fzf-tab
+
+# ── Limine bootloader automation — NOT listed here on purpose ─────────────────
+# limine-mkinitcpio-hook + limine-snapper-sync wrap `limine-entry-tool` with pacman
+# hooks (the Limine analog of grub-mkconfig + grub-btrfs). They are installed by
+# `mod_limine` (apply.sh --limine) ONLY on the encrypted/Limine install path — NOT
+# from this shared list, because their pacman hooks would deploy Limine to the ESP on
+# plain GRUB systems too (aur.txt is installed unconditionally for every install).
+# See package-limine.md.

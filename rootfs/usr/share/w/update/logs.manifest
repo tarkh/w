@@ -1,0 +1,21 @@
+# logs.manifest — config owned by mod_logs (unified log retention).
+#
+# Layered (update-system.md phase 3):
+#   • /usr/share/w/defaults/logs.conf   — W's retention default. Class managed:
+#     overwritten by every update, so a changed distro default reaches machines
+#     that never set their own.
+#   • /usr/share/w/defaults/logs.schema — who may set each key (system-scope: one
+#     user must not decide how long the machine keeps everyone's logs).
+#   • /etc/w/logs.conf — this machine's DEVIATIONS only. Class override: the update
+#     never touches it; `w-reset logs` drops them back to the vendor layer.
+#
+# The rendered files (journald 10-w-retention.conf, tmpfiles w-logs.conf, the
+# logrotate global region + zz-w-catchall) are w-logs output, not tracked here:
+# regenerate them with `sudo w-logs apply`.
+# The logrotate.service ExecStartPre drop-in is a static W-owned system file.
+#
+# Format: <path>\t<class>   class: managed | override
+/usr/share/w/defaults/logs.conf	managed
+/usr/share/w/defaults/logs.schema	managed
+/etc/w/logs.conf	override
+/etc/systemd/system/logrotate.service.d/10-w-catchall-refresh.conf	managed

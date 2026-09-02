@@ -1,0 +1,43 @@
+#!/bin/sh
+# w-kbdlight-boot — light the keyboard from inside the initramfs.
+#
+# Runs before the LUKS password prompt so the user can actually see the keys while
+# typing it in the dark. The initramfs is a different world from the booted system:
+# no bash, no w-conf, no /usr/lib/w — so this is plain sh reading two files the
+# mkinitcpio install hook bakes in next to it:
+#
+#   /etc/w/kbdlight.boot      the level in percent ("0" = stay dark)
+#   /etc/w/kbdlight.modules   the LED driver module(s) detected on this machine
+#
+# Both are snapshots taken when the image was built, which is why changing the
+# level goes through `w-kbdlight boot <N>` (it rebuilds the image). The module list
+# matters: the led-class device does not exist until its driver is loaded, and
+# modprobe returning IS the "device is now registered" barrier — no udev settle,
+# no sleep loop.
+#
+# Deliberately generic: whatever driver owns `*kbd_backlight*` on this machine gets
+# baked in (applesmc on a MacBook, thinkpad_acpi on a ThinkPad, ...). Nothing here
+# knows about any particular vendor. See w-kbdlight.md.
+
+lvl=50
+[ -r /etc/w/kbdlight.boot ] && lvl=$(cat /etc/w/kbdlight.boot 2>/dev/null)
+case "$lvl" in ''|*[!0-9]*) lvl=50 ;; esac
+[ "$lvl" -eq 0 ] && exit 0
+
+if [ -r /etc/w/kbdlight.modules ]; then
+    for m in $(cat /etc/w/kbdlight.modules 2>/dev/null); do
+        modprobe -q "$m" 2>/dev/null || true
+    done
+fi
+
+for d in /sys/class/leds/*kbd_backlight*; do
+    [ -f "$d/brightness" ] || continue
+    max=$(cat "$d/max_brightness" 2>/dev/null) || continue
+    case "$max" in ''|*[!0-9]*) continue ;; esac
+    [ "$max" -gt 0 ] || continue
+    raw=$(( max * lvl / 100 ))
+    [ "$raw" -lt 1 ] && raw=1
+    echo "$raw" > "$d/brightness" 2>/dev/null || true
+done
+
+exit 0

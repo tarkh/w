@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# w-test-users — W Linux DEV-ONLY multi-user test fixture (dev VM only)
+#
+# W is a single-user distro by default, but several subsystems are explicitly
+# multi-user contracts: the edge updater runs git as the *checkout's owner* for
+# everyone, the machine-wide sync state has one writer and many readers, and the
+# admin gate (group wheel) decides who gets a polkit/sudo prompt at all. Proving
+# those needs two more accounts than the VM has, and hand-rolling `useradd` for
+# every session loses them on the next reinstall — hence a fixture in git:
+#
+#   admin2   member of wheel     — a second ADMIN who does NOT own /var/lib/w/src
+#   plain    NOT in wheel        — a NON-ADMIN (also covers the plain "reader")
+#
+# Both get the same known password (see PASSWORD below) so the interactive half
+# of the matrix — sudo, the w-authd polkit prompt, a Hub action on a non-admin
+# session — can actually be driven by hand. Shell/home come from the machine's
+# own useradd defaults, so these accounts are ordinary W users (zsh + /etc/skel),
+# not a special case that would prove nothing.
+#
+# DEV-ONLY: lives in the devtools/ overlay (like the fake `sensors` and
+# w-ai-lib-check) and ships to no real system — deployed only by an explicit
+# `apply.sh --devtools` inside the dev VM. Deliberately carries no `Info:` line:
+# the w-info catalog lists W's tools, and a test fixture is not one of them
+# (same call as the other devtools).
+#
+# Usage: w-test-users {add|status|remove}   (--remove is accepted for remove)
+
+set -euo pipefail
+
+ADMIN_USER="admin2"
+PLAIN_USER="plain"
+PASSWORD="w-test"
+SHARE="/mnt/w-src"
+
+err()  { echo -e "\033[1;31mw-test-users:\033[0m $*" >&2; }
+info() { echo -e "\033[1;35m==>\033[0m $*"; }
+die()  { err "$*"; exit 1; }
+
+usage() {
+  cat <<EOF
+Usage: w-test-users <command>
+
+DEV-ONLY multi-user fixture for the development VM: creates the two accounts the
+multi-user contracts of W need in order to be testable at all.
+
+  $ADMIN_USER   in group wheel  — a second admin who does not own /var/lib/w/src
+  $PLAIN_USER    not in wheel    — a non-admin (soft refusals, state reader)
+
+Both accounts get the password '$PASSWORD' so the interactive paths (sudo, the
+polkit prompt, a Hub action on a non-admin session) can be driven by hand.
+
+Commands:
+  add       Create both accounts, or bring existing ones back to spec (idempotent)
+  status    Show whether each account exists, its uid, groups and admin verdict
+  remove    Delete both accounts and their home directories (--remove works too)
+
+Exit codes:
+  0  Success
+  1  Runtime error
+  2  Usage error
+
+Examples:
+  w-test-users add
+  w-test-users status
+  w-test-users remove
+EOF
+}
+
+# Refuse outside the dev VM. The virtiofs project share is the VM's unmistakable
+# signature (absent on real hardware) — the same guard mod_devtools uses, repeated
+# here because this script creates accounts and a stray run on a real machine
+# would be an actual mess, not just a stray file.
+require_dev_vm() {
+  mountpoint -q "$SHARE" \
+    || die "$SHARE is not mounted — this is not the dev VM, refusing to touch accounts."
+  [[ $EUID -eq 0 ]] || die "must run as root (creates and deletes accounts)."
+}
+
+# Bring one account to spec. Existing accounts are adjusted rather than recreated,
+# so a re-run after a partial matrix (someone added admin2 to wheel by hand) is
+# still authoritative instead of merely "no error".
+ensure_user() {
+  local user="$1" want_wheel="$2"
+  if id -u "$user" &>/dev/null; then
+    info "$user exists — bringing it back to spec."
+  else
+    # No -s/-m defaults of our own: useradd's machine defaults already point at
+    # zsh (mod_shell sets them), and /etc/skel is W's real user seed.
+    useradd -m "$user" || die "useradd $user failed."
+    info "$user created."
+  fi
+
+  if [[ "$want_wheel" == yes ]]; then
+    id -nG "$user" | tr ' ' '\n' | grep -qx wheel || gpasswd -a "$user" wheel >/dev/null
+  else
+    # The point of `plain` is the *absence* of wheel — enforce it, do not assume.
+    if id -nG "$user" | tr ' ' '\n' | grep -qx wheel; then
+      gpasswd -d "$user" wheel >/dev/null
+      info "$user removed from wheel (the fixture requires a non-admin)."
+    fi
+  fi
+
+  printf '%s:%s\n' "$user" "$PASSWORD" | chpasswd || die "setting the password for $user failed."
+}
+
+cmd_add() {
+  require_dev_vm
+  ensure_user "$ADMIN_USER" yes
+  ensure_user "$PLAIN_USER" no
+  echo
+  cmd_status
+  echo
+  info "Both accounts use the password '$PASSWORD'."
+}
+
+cmd_status() {
+  local user
+  for user in "$ADMIN_USER" "$PLAIN_USER"; do
+    if id -u "$user" &>/dev/null; then
+      local groups verdict
+      groups="$(id -nG "$user" | tr ' ' ',')"
+      if id -nG "$user" | tr ' ' '\n' | grep -qx wheel; then verdict="admin"; else verdict="non-admin"; fi
+      printf '%-8s uid=%-6s %-9s groups=%s\n' "$user" "$(id -u "$user")" "$verdict" "$groups"
+    else
+      printf '%-8s absent\n' "$user"
+    fi
+  done
+}
+
+cmd_remove() {
+  require_dev_vm
+  local user
+  for user in "$ADMIN_USER" "$PLAIN_USER"; do
+    if ! id -u "$user" &>/dev/null; then
+      info "$user absent — nothing to remove."
+      continue
+    fi
+    # A live session (greeter login, lingering user manager) makes userdel refuse;
+    # end it first, then force, because a half-removed fixture is worse than none.
+    loginctl terminate-user "$user" &>/dev/null || true
+    pkill -KILL -u "$user" &>/dev/null || true
+    sleep 1
+    userdel -rf "$user" || die "userdel $user failed — check for live processes (loginctl user-status $user)."
+    info "$user removed (home included)."
+  done
+}
+
+case "${1:-}" in
+  add)             shift; cmd_add ;;
+  status)          shift; cmd_status ;;
+  remove|--remove) shift; cmd_remove ;;
+  help|--help|-h)  usage; exit 0 ;;
+  "")              usage >&2; exit 2 ;;
+  *)               err "unknown command: $1"; usage >&2; exit 2 ;;
+esac

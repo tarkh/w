@@ -1,0 +1,35 @@
+# W Linux — say so, at login, when the session is running from a snapshot.
+#
+# A snapshot boot is the recovery path and its root is read-only, but the desktop
+# looks entirely normal: without this, a plain/GRUB user has no way to know, because
+# grub-btrfs ships no notifier of its own. The helper defers to limine-snapper-sync's
+# notification where that package exists, so the encrypted path keeps the vendor's
+# version, which has an actionable Restore button.
+#
+# Global-enabled from fix_snapper for the same reason hypridle and the night-light
+# tick are (see w-session-restore.service): every login user's uwsm session raises
+# graphical-session.target and needs its own instance, and a line in hyprland.lua
+# would only ever reach accounts created afterwards — that file is ownership class
+# `user`, seed-if-absent.
+#
+# See w-rollback.md.
+[Unit]
+Description=W — notify when this session is running from a snapshot
+PartOf=graphical-session.target
+After=graphical-session.target
+# No Wayland session, no one to notify.
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+# Not oneshot: the notification does not expire and the helper stays alive holding it,
+# waiting for the click that launches the rollback — exactly how limine-snapper-sync's
+# own notifier behaves. A oneshot would have to finish, and any start timeout would
+# eventually take the notification away with it.
+Type=simple
+ExecStart=/usr/lib/w/w-snapshot-notify
+# Never a session-status failure: an unsent notification is a missed hint, not a broken
+# login, and on a normal boot this exits immediately having done nothing.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=graphical-session.target

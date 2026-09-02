@@ -1,0 +1,49 @@
+vm/*.qcow2
+vm/*.img
+vm/*.iso
+vm/OVMF_VARS*.fd
+vm/tmp/
+vm/logs/
+# E2E working presets (may carry real passwords) + the machine-written active
+# slot preset.conf + the harness's SSH keypair — only *.sample.conf files are
+# versioned.
+vm/e2e/preset.conf
+# Fault scenario file: written by `e2e.sh --fault-mirror`, deleted when the run ends.
+vm/e2e/fault.conf
+vm/e2e/preset-plain.conf
+vm/e2e/preset-encrypted.conf
+# …and any hand-kept variant beside them. The working copies carry the edge_repo
+# credentials for dev-edge; a backup named preset-encrypted.conf.<something> is the
+# obvious thing to make while switching remotes, and would otherwise be picked up
+# by the next `git add -A`.
+vm/e2e/preset-*.conf.*
+vm/e2e/id_ed25519
+vm/e2e/id_ed25519.pub
+archiso/work/
+archiso/out/
+archiso/w-repo/
+# Staged at build time by build-iso.sh (scripts/packages/rootfs + w-repo + the
+# Plymouth theme, all baked into the ISO) — generated, not part of the profile.
+archiso/profile-build/
+archiso/profile/airootfs/root/w/
+archiso/profile/airootfs/root/w-repo/
+archiso/profile/airootfs/usr/share/plymouth/themes/w/
+tmp/
+.claude/skills/hyprland/hyprland-wiki/
+
+# Python bytecode caches (w-mcp is a Python tool under rootfs/, which rsyncs to
+# the target — never ship a stray cache).
+__pycache__/
+*.pyc
+
+# local dev backups (git already versions the originals)
+backups/
+
+# Linter/test caches (tooling writes these into the repo root).
+.ruff_cache/
+.pytest_cache/
+
+# Never again: a scratch file at the repo root that collected an API key and,
+# in an earlier revision, an SSH private key (both found by the pre-publication
+# history scan, 2026-08-26). Credentials belong in a password manager, never here.
+authorized_keys

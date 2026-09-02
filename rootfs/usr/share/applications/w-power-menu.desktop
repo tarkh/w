@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Power Menu
+Comment=Lock, log out, suspend, restart or shut down
+Exec=sh -c "hyprctl dispatch 'hl.dsp.global(\"quickshell:powermenu\")'"
+Icon=system-shutdown
+Type=Application
+Categories=System;
+Keywords=power;logout;log out;lock;suspend;sleep;reboot;restart;shutdown;poweroff;

@@ -1,0 +1,231 @@
+#!/usr/bin/env bash
+# w-conf — W Linux layered configuration front end
+#
+# The human/GUI/AI face of /usr/lib/w/w-conf-lib.sh, which is the single
+# reader every W subsystem uses (w-power, w-term, w-time, w-dns, w-logs, w-crypt,
+# w-ai + the w-mcp Python mirror). Layers, low → high priority:
+#
+#   vendor  →  site-default  →  system (/etc/w)  →  user (~/.config/w)  →  policy
+#
+# `origin` and `cat` exist because layers you cannot see are layers you cannot
+# debug: every value reports which file it came from, so "why is this 600 and not
+# 300" has a mechanical answer instead of a guess. See update-system.md.
+#
+# Note for scripts: prefer sourcing the library (one load pass, no forks) over
+# calling this CLI per key. This front end is for people, Quickshell panels and
+# the AI tools.
+
+set -euo pipefail
+
+# W_CONF_LIB is a dev/test seam so this CLI can be exercised from a source
+# checkout without installing to /usr/lib/w; on a real system it is never set.
+# The subsystem scripts (w-power, w-dns, …) deliberately keep the absolute path:
+# they only ever run on a target where the library is installed.
+# shellcheck source=../lib/w/w-conf-lib.sh
+source "${W_CONF_LIB:-/usr/lib/w/w-conf-lib.sh}"
+
+# Whose user layer we inspect. Running as root (the normal way to debug a
+# machine) must NOT resolve it to /root/.config/w: the subsystems themselves act
+# for the invoking user in that situation (w-power's TARGET_USER), so a debugger
+# that looked at root's home would confidently report "not set" for a value the
+# user's file is actually supplying — the exact confusion `origin` exists to end.
+# The rule itself now lives in the library (wconf_resolve_target), so this CLI
+# and the subsystems it debugs cannot disagree about whose layer is whose.
+TARGET_USER=""
+resolve_target_user() { # <name|"">
+  local rc=0
+  wconf_resolve_target "${1:-}" || rc=$?
+  # rc 1 = no human account at all (an installer chroot, a container): keep the
+  # invoker, which for root means /root — there is nothing better to point at.
+  if [[ $rc -eq 2 ]]; then exit 1; fi
+  TARGET_USER="${WCONF_TARGET_USER:-$(id -un)}"
+}
+
+MAGENTA='\033[1;35m'; DIM='\033[2m'; NC='\033[0m'
+err() { echo "w-conf: $*" >&2; }
+
+usage() {
+  cat <<EOF
+Usage: w-conf <command> [options]
+
+Info: Read and write W's layered configuration (vendor → admin → user).
+
+Commands:
+  get <subsys> <key> [default]   Print the effective value
+  origin <subsys> <key>          Print the layer that won (--path: its file)
+  list [<subsys>]                Print KEY=VALUE (no subsys: list subsystems)
+  cat <subsys>                   Annotated view: layers, files, winner per key
+  layers <subsys>                Print the layer chain and which files exist
+  scope <subsys> [<key>]         Who may set a key: system | user | both
+                                 (no key: KEY<TAB>scope for the whole subsystem)
+  set <subsys> <key> <value>     Write to the system layer (--user: user layer)
+  unset <subsys> <key>           Drop the key from that layer (--user likewise)
+  help                           Show this help
+
+Options:
+  --user            Act on the user layer (~/.config/w) instead of /etc/w
+  --user-of <name>  Inspect/write THAT user's layer (root defaults to the
+                    invoking user, matching what the subsystems read)
+  --porcelain       list: KEY<TAB>VALUE<TAB>LAYER<TAB>locked<TAB>SCOPE (for GUIs)
+  --prefix <P>      list/cat: only keys starting with P (e.g. NTP_)
+  --path            origin: print the winning file instead of the layer name
+
+Exit codes:
+  0  Success
+  1  Runtime error (unwritable layer, policy-locked key, bad value)
+  2  Usage error
+
+Examples:
+  w-conf get power CHARGE_LIMIT
+  w-conf origin ai HOST
+  w-conf cat power
+  w-conf list time --prefix NTP_
+  sudo w-conf set power CHARGE_LIMIT 80
+EOF
+}
+
+# ── Option parsing ───────────────────────────────────────────────────────────
+# Options may appear anywhere; what remains in ARGS is positional.
+LAYER=system; PORCELAIN=0; PREFIX=""; WANT_PATH=0; USER_OF=""; ARGS=()
+parse_opts() {
+  while (($#)); do
+    case "$1" in
+      --user)      LAYER=user ;;
+      --user-of)   shift; USER_OF="${1:-}"; [[ -n "$USER_OF" ]] || { err "--user-of needs a name"; exit 2; } ;;
+      --system)    LAYER=system ;;
+      --porcelain) PORCELAIN=1 ;;
+      --path)      WANT_PATH=1 ;;
+      --prefix)    shift; PREFIX="${1:-}"; [[ -n "$PREFIX" ]] || { err "--prefix needs a value"; exit 2; } ;;
+      -*)          err "unknown option: $1"; usage >&2; exit 2 ;;
+      *)           ARGS+=("$1") ;;
+    esac
+    shift
+  done
+  resolve_target_user "$USER_OF"
+  return 0
+}
+
+need_args() { # <count> <usage hint>
+  (( ${#ARGS[@]} >= $1 )) || { err "usage: w-conf $2"; exit 2; }
+}
+
+# ── Commands ─────────────────────────────────────────────────────────────────
+cmd_get() {
+  need_args 2 "get <subsys> <key> [default]"
+  wconf_get "${ARGS[0]}" "${ARGS[1]}" "${ARGS[2]:-}"
+}
+
+cmd_origin() {
+  need_args 2 "origin <subsys> <key>"
+  local s="${ARGS[0]}" k="${ARGS[1]}"
+  wconf_has "$s" "$k" || { err "$k is not set in any layer of '$s'"; exit 1; }
+  if ((WANT_PATH)); then wconf_path "$s" "$k"; else wconf_origin "$s" "$k"; fi
+}
+
+cmd_list() {
+  # No subsystem: enumerate the ones W ships (a name outside the list still
+  # resolves — the layer paths are pure convention).
+  if ((${#ARGS[@]} == 0)); then printf '%s\n' "${WCONF_SUBSYS[@]}"; return 0; fi
+  if ((PORCELAIN)); then wconf_list_porcelain "${ARGS[0]}" "$PREFIX"
+  else wconf_list "${ARGS[0]}" "$PREFIX"; fi
+}
+
+cmd_layers() {
+  need_args 1 "layers <subsys>"
+  local lay base f present
+  while IFS=$'\t' read -r lay base; do
+    present=""
+    [[ -f "$base" ]] && present="file"
+    if [[ -d "$base.d" ]]; then
+      for f in "$base.d"/*.conf; do
+        [[ -f "$f" ]] && present="${present:+$present+}drop-ins"
+        break
+      done
+    fi
+    printf '%-13s %-46s %s\n' "$lay" "$base" "${present:-—}"
+  done < <(wconf_layer_table "${ARGS[0]}")
+}
+
+# Annotated effective view — the layer debugger. Shows the chain first (so an
+# absent vendor file is visible, not merely implied), then every effective key
+# with the layer that won it.
+cmd_cat() {
+  need_args 1 "cat <subsys>"
+  local s="${ARGS[0]}" line k v o lock scope w
+  # Load in THIS shell: the porcelain reader below runs in a process
+  # substitution, and its parse warnings would otherwise die with the subshell.
+  wconf_load "$s"
+  echo -e "${MAGENTA}==>${NC} $s — layer chain (low → high priority), user layer of '$TARGET_USER'"
+  cmd_layers | sed 's/^/  /'
+  echo
+  echo -e "${MAGENTA}==>${NC} $s — effective configuration"
+  while IFS= read -r line; do
+    # NOT `IFS=$'\t' read -r k v o lock`: TAB is IFS whitespace, so bash collapses
+    # runs of it and an EMPTY value (MAX_SIZE=, MODEL=, MCP_PROFILE= are all
+    # legitimately empty) would shift every later field left — the layer name
+    # would print in the value column. Split by hand instead.
+    k="${line%%$'\t'*}";     line="${line#*$'\t'}"
+    v="${line%%$'\t'*}";     line="${line#*$'\t'}"
+    o="${line%%$'\t'*}";     line="${line#*$'\t'}"
+    lock="${line%%$'\t'*}";  scope="${line#*$'\t'}"
+    [[ -n "$lock" ]] && o="$o, locked"
+    [[ -n "$scope" ]] && o="$o, $scope-scope"
+    printf "  %-24s %-28s ${DIM}[%s]${NC}\n" "$k" "$v" "$o"
+  done < <(wconf_list_porcelain "$s" "$PREFIX")
+  # The lenient parser never breaks a subsystem over a stray line, but it must
+  # not swallow it either — this is the one place a human gets told.
+  if ((${#WCONF_WARN[@]})); then
+    echo
+    echo -e "${MAGENTA}==>${NC} ignored lines"
+    for w in "${WCONF_WARN[@]}"; do echo "  $w"; done
+  fi
+}
+
+# The scope declaration, readable by anyone who needs to ROUTE a write rather
+# than perform it: the Hub decides polkit-vs-direct, the AI tools decide whether
+# to refuse before prompting. Without this they would each re-encode the same
+# folklore the schema exists to replace.
+cmd_scope() {
+  need_args 1 "scope <subsys> [<key>]"
+  local s="${ARGS[0]}"
+  if ((${#ARGS[@]} >= 2)); then
+    local sc; sc="$(wconf_scope "$s" "${ARGS[1]}")"
+    [[ -n "$sc" ]] || { err "${ARGS[1]} has no scope row in $s.schema (unconstrained)"; exit 1; }
+    printf '%s\n' "$sc"
+  else
+    wconf_scopes "$s"
+  fi
+}
+
+cmd_set() {
+  need_args 3 "set <subsys> <key> <value> [--user]"
+  wconf_set "${ARGS[0]}" "${ARGS[1]}" "${ARGS[2]}" "$LAYER"
+  echo "w-conf: ${ARGS[0]}.${ARGS[1]} = ${ARGS[2]}  ($LAYER layer)"
+}
+
+cmd_unset() {
+  need_args 2 "unset <subsys> <key> [--user]"
+  wconf_unset "${ARGS[0]}" "${ARGS[1]}" "$LAYER"
+  local s="${ARGS[0]}" k="${ARGS[1]}"
+  if wconf_has "$s" "$k"; then
+    echo "w-conf: $s.$k dropped from the $LAYER layer → now $(wconf_get "$s" "$k") [$(wconf_origin "$s" "$k")]"
+  else
+    echo "w-conf: $s.$k dropped from the $LAYER layer (no value in any layer)"
+  fi
+}
+
+# ── Dispatch ─────────────────────────────────────────────────────────────────
+CMD="${1:-}"; [[ $# -gt 0 ]] && shift
+case "$CMD" in
+  get)             parse_opts "$@"; cmd_get ;;
+  origin)          parse_opts "$@"; cmd_origin ;;
+  list)            parse_opts "$@"; cmd_list ;;
+  cat)             parse_opts "$@"; cmd_cat ;;
+  layers)          parse_opts "$@"; need_args 1 "layers <subsys>"; cmd_layers ;;
+  scope)           parse_opts "$@"; cmd_scope ;;
+  set)             parse_opts "$@"; cmd_set ;;
+  unset)           parse_opts "$@"; cmd_unset ;;
+  help|--help|-h)  usage; exit 0 ;;
+  "")              usage >&2; exit 2 ;;
+  *)               err "unknown command: $CMD"; usage >&2; exit 2 ;;
+esac

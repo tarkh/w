@@ -1,0 +1,17 @@
+# crypt.manifest — config owned by the disk-encryption subsystem (w-crypt).
+#
+# Layered (update-system.md phase 3):
+#   • /usr/share/w/defaults/crypt.conf   — W's default TPM2 PCR set. Class managed.
+#   • /usr/share/w/defaults/crypt.schema — who may set each key (system-scope: a
+#     user file must never be able to relax what seals the LUKS unlock key).
+#   • /etc/w/crypt.conf — this machine's DEVIATIONS only. Class override: silently
+#     restoring the vendor PCR set would break auto-unlock until a re-enroll, so the
+#     update never touches it. `w-reset limine` drops the deviations; re-run the
+#     relevant `w-crypt` command afterwards to re-seal.
+#
+# The Limine/LUKS boot bits ship separately (package-limine.md), not tracked here.
+#
+# Format: <path>\t<class>   class: managed | override
+/usr/share/w/defaults/crypt.conf	managed
+/usr/share/w/defaults/crypt.schema	managed
+/etc/w/crypt.conf	override

@@ -1,0 +1,23 @@
+# kbdlight.schema — which layer may decide each key of the `kbdlight` subsystem.
+#
+# Read by /usr/lib/w/w-conf-lib.sh (and its Python twin) during the load
+# pass; a user-layer assignment to a `system` key is dropped with a warning, and
+# `wconf_set` refuses to write it in the first place. See update-system.md
+# (decision 3) and w-conf.md.
+#
+# Format: <KEY>\t<scope>       scope: system | user | both
+#   system — root domain: the admin (or fleet policy) decides, per machine.
+#   user   — the logged-in user may override it in ~/.config/w/kbdlight.conf.
+#   both   — either layer may speak; the usual priority order applies.
+
+# The boot level is baked into the initramfs — a machine-wide artifact one user
+# must not be able to rewrite, and changing it needs root anyway (image rebuild).
+BOOT_LEVEL	system
+
+# Which physical LED is "the keyboard backlight" is a fact about the hardware,
+# not a preference.
+DEVICE	system
+
+# How far one keypress moves the level is pure personal feel, and changing it
+# has never needed root.
+STEP	user

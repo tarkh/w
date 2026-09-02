@@ -1,0 +1,1214 @@
+#!/usr/bin/env bash
+# w-ai — W Linux AI assistant launcher (host layer)
+#
+# The single entry point to W's OS assistant. It reads the selection from
+# /etc/w/ai.conf (+ ~/.config/w/ai.conf override), then launches the chosen host
+# (goose by default) wired to the W knowledge + w-mcp actions layers. Provider API
+# keys live in gnome-keyring, never on disk: w-ai looks up the key for the active
+# provider and exports it as that provider's env var right before exec'ing the
+# host. One secret path, host-agnostic. See ai-integration.md §4-6.
+#
+# Unlike most w-* tools, bare `w-ai` is not an error — it launches the assistant
+# (the primary UX). Subcommands: status, config, key.
+
+set -euo pipefail
+
+# W_CONF_LIB override + the source-guard before the dispatch: the same pair
+# w-conf carries, so scripts/check/tests can source this file for the pure host-
+# contract resolvers without a W installation on the machine.
+# shellcheck source=../lib/w/w-conf-lib.sh
+source "${W_CONF_LIB:-/usr/lib/w/w-conf-lib.sh}"
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+SYS_ROOT="${W_AI_SYS_ROOT:-/usr/share/w/ai}"   # knowledge + host presets (shipped)
+USER_ROOT="$HOME/.config/w/ai"                 # per-user overlay (wins)
+SYS_CONF="/etc/w/ai.conf"                      # selection: source of truth
+USER_CONF="$HOME/.config/w/ai.conf"            # per-user override
+# Advanced feature toggles (ai-extra pack, Stage 3) — a separate file from
+# USER_CONF because `w-ai profile use` overwrites that whole file wholesale;
+# feature toggles (W_AI_EMBED and friends) must survive a profile switch.
+FEATURES_CONF="$HOME/.config/w/ai-features.conf"
+FEATURE_KEYS="W_AI_EMBED W_AI_EMBED_MODEL W_AI_EMBED_URL W_AI_EMBED_KEEPALIVE W_AI_SEARCH_PROVIDER"
+MCP_LIB="${W_MCP_LIB:-/usr/lib/w/w-mcp}" # w-mcp's core.py — reused read-only for MEMORY_DB
+PROFILE_DIR="$USER_ROOT/profiles"              # named provider presets (user-scope only)
+PROFILE_MARKER="# w-ai:profile="                # first line of a profile-generated USER_CONF
+KEY_ATTR="w-ai-provider"                       # keyring attribute namespace
+RECIPE_NAME_RE='^[a-z0-9-]+$'                  # recipe catalog name shape (see recipe_file())
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/w-ai" # auth stamps (see host_logged_in)
+AUTH_TTL=43200                                 # 12h — how long a successful AUTH_CHECK is trusted
+
+HOST_OVERRIDE=""                               # set by leading --host
+
+err() { echo "w-ai: $*" >&2; }
+
+usage() {
+  cat <<EOF
+Usage: w-ai [--host <name>] [command]
+
+Info: Launch and manage the W AI assistant — hosts, keys, memory, ask.
+
+Launch (default when no command):
+  w-ai                  Start the assistant with the configured host
+  w-ai --host <name>    Override host for this run (goose|local|claude|codex)
+
+Commands:
+  ask <text…>           Start a session seeded with a question, then stay
+                        interactive (the Quickshell "Ask W" palette calls this;
+                        empty text is the same as a bare launch)
+  ready                 Exit 0 if the active config is launch-ready (host binary
+                        present, its login live or its API key in the keyring,
+                        model set where the host needs one); exit 1 + a reason
+                        word otherwise. Used by the Quickshell "Ask W" entry
+                        point before it opens.
+  status                Show host/provider/model, key presence, w-mcp self-test
+  config                Edit the per-user override (~/.config/w/ai.conf)
+  host list [--porcelain]   List hosts (goose|local|claude|codex) and their state
+  host status [<n>]     Show one host's contract (hosts/<n>/host.conf)
+  host install <n>      Install a host's CLI with the vendor's own installer
+  host login [<n>]      Sign in to a host that owns its auth (Claude Code, Codex)
+  features [--porcelain]           Advanced-feature status (ai-extra pack):
+                        ddgs/trafilatura/ollama/embed model/numpy, semantic
+                        memory config, vector-corpus size
+  features set <KEY> <value>       Set one advanced-feature key (W_AI_EMBED|
+                        W_AI_EMBED_MODEL|W_AI_EMBED_URL|W_AI_EMBED_KEEPALIVE|
+                        W_AI_SEARCH_PROVIDER) in ~/.config/w/ai-features.conf
+  profile list          List provider profiles, marking the active one
+  profile new <n> [--from <base>]   Create a profile (blank, or copied from <base>)
+  profile edit <n>      Edit a profile in \$EDITOR
+  profile show <n>      Print a profile's contents
+  profile use <n>       Make <n> the active profile (copies it into ai.conf override)
+  profile rm <n>        Delete a profile
+  profile field <n> <KEY> <value>   Set one KEY=VALUE line in a profile (uncomments
+                        a commented default if present; the Hub's field editor uses
+                        this instead of \$EDITOR)
+  key set <provider>    Store a provider API key in the keyring (prompts)
+  key rm  <provider>    Remove a provider API key from the keyring
+  key list              Show which providers have a key
+  memory list           List stored assistant memories (shared across hosts)
+  memory search <q>     Recall memories matching a query
+  memory add            Write a new memory in \$EDITOR (frontmatter template)
+  memory rm <slug>      Delete a memory by slug
+  memory context        Print the session-start memory context block
+  memory review         Hygiene report: age, in-context, stale hints
+  task list [status]    List tasks (default: open; also done|all)
+  task add <text…>      Add an open task (append --due YYYY-MM-DD)
+  task done <slug>      Mark a task done
+  skills list           List system + user skills (the agent-authored overlay)
+  skills show <name>    Print one skill's SKILL.md
+  skills rm <name>      Delete a user skill (system skills are protected)
+  recipe list           List available automation recipes (system + user overlay)
+  run-recipe <name>     Run one recipe headlessly through goose, once (internal
+                        entry point for the scheduled timer; safe to run by hand)
+  schedule add <recipe> <OnCalendar>   Run a recipe on a systemd user timer
+  schedule list          List active recipe schedules
+  schedule rm <recipe>   Remove a recipe's schedule
+  help                  Show this help
+
+Config: $SYS_CONF (system) overlaid by $USER_CONF (user).
+Secrets: gnome-keyring (attribute $KEY_ATTR=<provider>); nothing in plaintext.
+
+Exit codes:
+  0  Success   1  Runtime error   2  Usage error
+
+Examples:
+  w-ai key set openrouter
+  w-ai --host local
+  w-ai host install claude
+  w-ai status
+EOF
+}
+
+# ── Config + preset resolution ────────────────────────────────────────────────
+# System defaults, then the per-user override, then the ai-extra feature toggles
+# (last wins) — the exact chain the shared reader calls system → user →
+# user-features, so this is a change of parser, not of precedence. Every key is
+# materialised as a shell variable because the rest of the script reaches some of
+# them indirectly (PROVIDER_ENV_<provider>, W_AI_*). Anything unset stays unset;
+# callers guard with \${VAR:-}.
+load_conf() {
+  local k
+  wconf_load ai
+  for k in $(wconf_keys ai); do printf -v "$k" '%s' "${WCONF["ai/$k"]}"; done
+  # Keep the host the CONFIG chose, before --host overrides it: MODEL belongs to
+  # that host, and a transient override must not carry it across. Without this,
+  # `w-ai --host claude` from a goose/openrouter profile would hand Claude Code
+  # `--model minimax/minimax-m3` — a model id that means nothing to it.
+  HOST_CONFIGURED="${HOST:-goose}"
+  HOST="${HOST_OVERRIDE:-${HOST:-goose}}"
+}
+
+# Echo the first existing path across the overlay roots (user wins). Matches
+# directories as well as files — the Claude Code preset ships a plugin *tree*,
+# not a single config file, and it resolves through the same overlay as the rest.
+ai_file() {
+  local rel="$1" root
+  for root in "$USER_ROOT" "$SYS_ROOT"; do
+    [[ -e "$root/$rel" ]] && { echo "$root/$rel"; return 0; }
+  done
+  return 1
+}
+
+# The hosts/ specialisation of the above, used by every host preset lookup.
+preset() { ai_file "hosts/$1"; }
+
+# ── Host contract (hosts/<name>/host.conf) ────────────────────────────────────
+# The declarative half of a host: BIN, AUTH_MODES/AUTH_NATIVE/AUTH_CHECK,
+# LOGIN_CMD, INSTALL_CMD/INSTALL_SCOPE, NEEDS_MODEL, CAPABILITIES. Readiness,
+# status, install/login and the Hub's AI panel all read these instead of each
+# growing their own per-host `case` — adding a host is then a directory, not a
+# patch across four call sites. What stays imperative is launch_host()'s argv:
+# goose's `run -t` and Claude Code's `--plugin-dir/--mcp-config` differ in kind,
+# and a table that pretended otherwise would hide the difference, not remove it.
+# Sourced one field at a time in an isolated subshell (w-pack's meta_field idiom)
+# so a malformed preset can't leak variables into the launcher.
+host_field() {
+  local host="$1" field="$2" conf
+  conf="$(preset "$host/host.conf")" || return 0
+  ( set +u; source "$conf" 2>/dev/null; printf '%s' "${!field:-}" )
+}
+
+known_host() { preset "$1/host.conf" >/dev/null 2>&1; }
+
+# Exit 0 when a provider-native host's own login is live. A host with no
+# AUTH_CHECK counts as logged in: "we can't tell" must never harden into "not
+# signed in", or a renamed upstream subcommand would block the Super+W palette.
+#
+# AUTH_CHECK is a whole CLI start (`claude auth status` ~0.25s on a warm laptop),
+# and `w-ai ready` runs on EVERY Super+W — so that one path, and only it, may
+# answer from a stamp instead. Two rules keep the cache honest:
+#   * positives only. A cached "not signed in" would keep the palette refusing
+#     for hours after a successful `w-ai host login`; a cached "signed in" that
+#     went stale merely opens the terminal, where the CLI asks for the login
+#     itself — one step from the fix instead of a dead end.
+#   * every human-facing command (`status`, `host list`, `run`, `ask`) still
+#     checks live. There a CLI start is noise next to the session it precedes,
+#     and a diagnostic that answers from a stamp is a diagnostic that lies.
+# $2 = "cached" opts into the stamp; `host login` drops it (auth_cache_clear).
+host_logged_in() {
+  local host="$1" mode="${2:-live}" check stamp now
+  check="$(host_field "$host" AUTH_CHECK)"
+  [[ -z "$check" ]] && return 0
+  now="$(date +%s)"
+  if [[ "$mode" == cached && -r "$CACHE_DIR/auth-$host" ]]; then
+    stamp="$(<"$CACHE_DIR/auth-$host")"
+    [[ "$stamp" =~ ^[0-9]+$ ]] && (( now - stamp < AUTH_TTL )) && return 0
+  fi
+  # shellcheck disable=SC2086  # a command line from a W-owned preset, split on purpose
+  $check >/dev/null 2>&1 || return 1
+  install -d -m700 "$CACHE_DIR" 2>/dev/null && printf '%s' "$now" > "$CACHE_DIR/auth-$host" 2>/dev/null
+  return 0
+}
+
+# Forget a host's stamp, so the next `w-ai ready` asks the CLI again. Called
+# where the login state is known to have just moved (`w-ai host login`).
+auth_cache_clear() { rm -f "$CACHE_DIR/auth-${1:?}"; }
+
+# The provider a host actually authenticates with. A host with a closed
+# AUTH_MODES list (local: ollama; claude: subscription|anthropic) keeps PROVIDER
+# only when it names one of them, otherwise falls back to the first — so a
+# profile carried over from goose (PROVIDER=openrouter) can't make a claude
+# profile look like it needs an OpenRouter key. An open list (goose) takes
+# PROVIDER as-is. Mirrored by effectiveProvider() in the Hub's AI panel.
+effective_provider() {
+  local host="$1" provider="${2:-}" modes m
+  modes="$(host_field "$host" AUTH_MODES)"
+  [[ -z "$modes" ]] && { echo "$provider"; return 0; }
+  # shellcheck disable=SC2086  # AUTH_MODES is a space-separated list from a W-owned preset
+  for m in $modes; do [[ "$m" == "$provider" ]] && { echo "$m"; return 0; }; done
+  echo "${modes%% *}"
+}
+
+# ── Profiles (named provider presets, e.g. "local", "openrouter") ────────────
+# A profile is just a KEY=value file with the same shape as ai.conf (HOST/PROVIDER/
+# MODEL/MODE/OLLAMA_HOST/MCP_PROFILE). "Active" is not a separate pointer: `profile
+# use` copies the profile's content into USER_CONF (the existing per-user override,
+# already sourced last by load_conf) behind a marker comment carrying the profile
+# name + a sha256 of what was copied — so `profile list` can tell active / active-
+# but-hand-edited-since apart, purely by re-reading USER_CONF. Zero changes to
+# load_conf/launch_host: this rides the override layer that already exists.
+seed_profiles() {
+  install -d -m700 "$PROFILE_DIR"
+  local f base
+  for f in "$SYS_ROOT"/profiles/*.conf; do
+    [[ -f "$f" ]] || continue
+    base="$(basename "$f")"
+    [[ -f "$PROFILE_DIR/$base" ]] || install -m600 "$f" "$PROFILE_DIR/$base"
+  done
+}
+
+# Resolve a profile name to a file, user copy winning over an un-seeded system one.
+profile_file() {
+  local name="$1"
+  [[ -f "$PROFILE_DIR/$name.conf" ]] && { echo "$PROFILE_DIR/$name.conf"; return 0; }
+  [[ -f "$SYS_ROOT/profiles/$name.conf" ]] && { echo "$SYS_ROOT/profiles/$name.conf"; return 0; }
+  return 1
+}
+
+# Name + sha256 of the profile USER_CONF currently claims to be generated from, if any.
+active_profile_marker() {
+  [[ -r "$USER_CONF" ]] || return 0
+  local line; line="$(head -n1 "$USER_CONF" 2>/dev/null || true)"
+  [[ "$line" == "$PROFILE_MARKER"* ]] || return 0
+  line="${line#"$PROFILE_MARKER"}"
+  echo "${line%% *}" "${line#* sha256=}"
+}
+
+sha256_of() { sha256sum "$1" | cut -d' ' -f1; }
+# Hash of everything but the marker line itself — this is what `use` snapshots and
+# what `list` re-checks, so a hand-edit of USER_CONF (not a later change to the
+# profile file) is what flips a profile from "active" to "active, modified since".
+sha256_of_tail() { tail -n +2 "$1" | sha256sum | cut -d' ' -f1; }
+
+# Snapshot profile <name>'s file into USER_CONF behind the marker comment — what
+# `profile use` does, and what `profile field` re-runs when the edited profile is
+# already active, so a field edit reaches the live config without re-`use`-ing.
+write_active_conf() {
+  local name="$1" f; f="$(profile_file "$name")" || return 1
+  install -d -m700 "$(dirname "$USER_CONF")"
+  local body; body="$(
+    echo "# Generated by \`w-ai profile use $name\`. To change values, edit the profile"
+    echo "# (\`w-ai profile edit $name\`) and run \`use\` again — editing this file directly"
+    echo "# still works, but it will then show as \"modified\" in \`w-ai profile list\`."
+    cat "$f"
+  )"
+  { printf '%s%s sha256=%s\n' "$PROFILE_MARKER" "$name" "$(sha256sum <<<"$body" | cut -d' ' -f1)"
+    printf '%s\n' "$body"; } > "$USER_CONF"
+  chmod 600 "$USER_CONF"
+}
+
+cmd_profile() {
+  seed_profiles
+  local sub="${1:-list}"; shift || true
+  case "$sub" in
+    list)
+      local active_name active_sha f name marker=""
+      read -r active_name active_sha < <(active_profile_marker) || true
+      shopt -s nullglob
+      for f in "$PROFILE_DIR"/*.conf; do
+        name="$(basename "$f" .conf)"
+        marker=""
+        if [[ "$name" == "$active_name" ]]; then
+          marker=$([[ "$(sha256_of_tail "$USER_CONF")" == "$active_sha" ]] && echo " (active)" || echo " (active, modified since)")
+        fi
+        printf '%s%s\n' "$name" "$marker"
+      done
+      shopt -u nullglob
+      ;;
+    new)
+      local name="${1:-}" from=""
+      [[ -n "$name" ]] || { err "profile new requires a name"; exit 2; }
+      [[ "${2:-}" == --from ]] && from="${3:-}"
+      [[ -e "$PROFILE_DIR/$name.conf" ]] && { err "profile '$name' already exists — use 'profile edit $name'"; exit 1; }
+      install -d -m700 "$PROFILE_DIR"
+      if [[ -n "$from" ]]; then
+        local src; src="$(profile_file "$from")" || { err "no such profile to copy from: $from"; exit 1; }
+        install -m600 "$src" "$PROFILE_DIR/$name.conf"
+      else
+        cat > "$PROFILE_DIR/$name.conf" <<EOF
+# W AI profile: $name — edit and select with \`w-ai profile use $name\`.
+#HOST=goose
+#PROVIDER=openrouter
+#MODEL=
+#MODE=auto
+#OLLAMA_HOST=
+#MCP_PROFILE=
+EOF
+        chmod 600 "$PROFILE_DIR/$name.conf"
+      fi
+      echo "w-ai: created profile '$name' ($PROFILE_DIR/$name.conf)"
+      ;;
+    edit)
+      local name="${1:-}"
+      [[ -n "$name" ]] || { err "profile edit requires a name"; exit 2; }
+      local f; f="$(profile_file "$name")" || { err "no such profile: $name"; exit 1; }
+      [[ "$f" == "$PROFILE_DIR"/* ]] || { install -d -m700 "$PROFILE_DIR"; install -m600 "$f" "$PROFILE_DIR/$name.conf"; f="$PROFILE_DIR/$name.conf"; }
+      exec "${EDITOR:-${VISUAL:-micro}}" "$f"
+      ;;
+    show)
+      local name="${1:-}"
+      [[ -n "$name" ]] || { err "profile show requires a name"; exit 2; }
+      local f; f="$(profile_file "$name")" || { err "no such profile: $name"; exit 1; }
+      cat "$f"
+      ;;
+    use)
+      local name="${1:-}"
+      [[ -n "$name" ]] || { err "profile use requires a name"; exit 2; }
+      profile_file "$name" >/dev/null || { err "no such profile: $name"; exit 1; }
+      write_active_conf "$name"
+      echo "w-ai: active profile is now '$name'"
+      HOST_OVERRIDE=""
+      load_conf
+      echo "  host=$HOST provider=${PROVIDER:-?} model=${MODEL:-default}"
+      ;;
+    rm)
+      local name="${1:-}"
+      [[ -n "$name" ]] || { err "profile rm requires a name"; exit 2; }
+      [[ -f "$PROFILE_DIR/$name.conf" ]] || { err "no such user profile: $name"; exit 1; }
+      local active_name; read -r active_name _ < <(active_profile_marker) || true
+      rm -f "$PROFILE_DIR/$name.conf"
+      echo "w-ai: removed profile '$name'"
+      [[ "$name" == "$active_name" ]] && err "note: '$name' was the active profile — $USER_CONF is unchanged (still has its last copied values)"
+      ;;
+    field)
+      local name="${1:-}" key="${2:-}" val="${3-}"
+      [[ -n "$name" && -n "$key" ]] || { err "profile field requires <name> <KEY> <value>"; exit 2; }
+      [[ "$key" =~ ^[A-Z_]+$ ]] || { err "invalid key: $key"; exit 2; }
+      local f; f="$(profile_file "$name")" || { err "no such profile: $name"; exit 1; }
+      [[ "$f" == "$PROFILE_DIR"/* ]] || { install -d -m700 "$PROFILE_DIR"; install -m600 "$f" "$PROFILE_DIR/$name.conf"; f="$PROFILE_DIR/$name.conf"; }
+      # '|' delimiter (values may hold '/', e.g. model ids); escape '\', '|', '&' for sed.
+      local esc="${val//\\/\\\\}"; esc="${esc//|/\\|}"; esc="${esc//&/\\&}"
+      if grep -q "^#\?${key}=" "$f"; then
+        sed -i "s|^#\?${key}=.*|${key}=${esc}|" "$f"
+      else
+        printf '%s=%s\n' "$key" "$val" >> "$f"
+      fi
+      local active_name; read -r active_name _ < <(active_profile_marker) || true
+      [[ "$name" == "$active_name" ]] && write_active_conf "$name"
+      ;;
+    *) err "unknown profile subcommand: $sub (list|new|edit|show|use|rm|field)"; exit 2 ;;
+  esac
+}
+
+# ── Secrets (gnome-keyring via libsecret) ─────────────────────────────────────
+# The provider's env var name, from the ai.conf catalog (PROVIDER_ENV_<name>).
+provider_envname() {
+  local key="PROVIDER_ENV_${1}"
+  echo "${!key:-}"
+}
+
+# Is the provider in the catalog at all? An entry declared EMPTY is still
+# declared — that is the catalog's way of saying "needs no key from W" (ollama,
+# subscription). Only a name with no entry whatsoever is a configuration error,
+# so this has to test for the variable's existence, not its value.
+provider_declared() {
+  local key="PROVIDER_ENV_${1}"
+  [[ -n "${!key+set}" ]]
+}
+
+# Does W have to pass this provider a key? Declared-but-empty means no — the
+# single rule behind both the local server (ollama) and provider-native CLI
+# logins (subscription). Nothing else in the script may hardcode a provider name.
+provider_needs_key() {
+  [[ -n "$1" ]] && provider_declared "$1" && [[ -n "$(provider_envname "$1")" ]]
+}
+
+# Look up the active provider's key and export it under the expected env var.
+# Never clobbers a value the user already exported; providers whose catalog entry
+# is empty (ollama, subscription) get nothing — silently, because that is the
+# correct outcome, not a degraded one. Exporting ANTHROPIC_API_KEY for a Claude
+# Code Pro user would silently move them off the subscription and onto API
+# billing, which is exactly what the empty entry prevents.
+export_provider_key() {
+  local provider="$1"
+  [[ -z "$provider" ]] && return 0
+  if ! provider_declared "$provider"; then
+    err "no PROVIDER_ENV_${provider} mapping in $SYS_CONF — cannot pass a key"
+    return 0
+  fi
+  local envname; envname="$(provider_envname "$provider")"
+  [[ -z "$envname" ]] && return 0   # declared empty: this provider needs no key
+  [[ -n "${!envname:-}" ]] && return 0   # already in the environment
+  local secret
+  if secret="$(secret-tool lookup "$KEY_ATTR" "$provider" 2>/dev/null)" && [[ -n "$secret" ]]; then
+    export "$envname=$secret"
+  else
+    err "no API key for '$provider' in the keyring — run: w-ai key set $provider"
+    err "(the keyring must be unlocked; a fingerprint-only login does not unlock it)"
+  fi
+}
+
+# ── Goose seeding ─────────────────────────────────────────────────────────────
+# Top-level keys (2-space indent) under the `extensions:` block of a goose
+# config.yaml — i.e. extension names, ignoring their nested fields. Plain-text
+# scan, no YAML parser in the base system (none is needed for this flat shape).
+_goose_ext_keys() {
+  awk '
+    /^extensions:/ { inext=1; next }
+    inext && /^[^ ]/ { inext=0 }
+    inext && /^  [A-Za-z0-9_-]+:/ { sub(/^  /,""); sub(/:.*/,""); print }
+  ' "$1"
+}
+
+# Seed the goose config + hints from the W preset on first run. copy-if-absent so
+# user edits are never overwritten. Done at runtime (per-user) — apply.sh runs as
+# root and cannot seed every user's home.
+seed_goose() {
+  local dst="$HOME/.config/goose" src_cfg src_hints
+  install -d -m700 "$dst"
+  src_cfg="$(preset goose/config.yaml)" || true
+  if [[ ! -f "$dst/config.yaml" && -n "$src_cfg" ]]; then
+    install -m600 "$src_cfg" "$dst/config.yaml"
+  fi
+  if [[ ! -f "$dst/.goosehints" ]] && src_hints="$(preset goose/.goosehints)"; then
+    install -m600 "$src_hints" "$dst/.goosehints"
+  fi
+  # Warn (never auto-fix) if the user's config carries an extension key this
+  # preset doesn't pin — e.g. upstream goose reseeded something new on its own,
+  # or the file predates a preset update. See ai-integration.md §4 (Этап 2).
+  if [[ -f "$dst/config.yaml" && -n "$src_cfg" ]]; then
+    local key known
+    known="$(_goose_ext_keys "$src_cfg")"
+    while IFS= read -r key; do
+      [[ -z "$key" ]] && continue
+      # shellcheck disable=SC2088  # literal ~ in a human-readable message, not a path expansion
+      grep -qxF "$key" <<<"$known" || err "~/.config/goose/config.yaml has extension '$key' not in the W preset (ai-integration.md §4) — not auto-fixed"
+    done < <(_goose_ext_keys "$dst/config.yaml")
+  fi
+}
+
+# ── Readiness ─────────────────────────────────────────────────────────────────
+# W's own gate in front of the host launch: a host started with an incomplete
+# config dies with its own opaque error, and from the Super+W palette that error
+# lands in a terminal that just popped open. So every precondition the host is
+# about to need gets checked HERE, and reported as one machine-readable reason
+# word. Entirely contract-driven (host.conf): which binary, whether the login is
+# W's business or the CLI's own, whether a model is mandatory. Called by `w-ai
+# ready` (Quickshell's gate) and cmd_run/cmd_ask — one source of truth.
+# Echoes a reason word and returns 1 when NOT ready; silent + 0 when ready.
+# $2 is passed straight through to host_logged_in: only `w-ai ready`, the gate
+# that fires on every Super+W, asks for "cached".
+ai_ready() {
+  local host="$1" auth="${2:-live}" bin provider native
+  known_host "$host" || { echo "bad-host"; return 1; }
+
+  # ~/.local/bin is on PATH session-wide (see /etc/xdg/uwsm/env-hyprland), so a
+  # per-user host binary resolves the same from a terminal and from Quickshell.
+  bin="$(host_field "$host" BIN)"
+  if [[ -n "$bin" ]] && ! command -v "$bin" >/dev/null 2>&1; then
+    echo "no-host-bin"; return 1
+  fi
+
+  provider="$(effective_provider "$host" "${PROVIDER:-}")"
+  if [[ -z "$provider" ]]; then echo "no-provider"; return 1; fi
+
+  native="$(host_field "$host" AUTH_NATIVE)"
+  if [[ -n "$native" && "$provider" == "$native" ]]; then
+    # The CLI owns its own login (claude auth login / codex login) — W holds no
+    # secret to check, so ask the CLI itself.
+    if ! host_logged_in "$host" "$auth"; then echo "not-logged-in"; return 1; fi
+  elif provider_needs_key "$provider" &&
+       ! secret-tool lookup "$KEY_ATTR" "$provider" >/dev/null 2>&1; then
+    echo "no-key"; return 1
+  fi
+
+  # Mandatory only where the host has no model of its own to fall back on: W
+  # never runs `goose configure`, so GOOSE_MODEL is goose's only source and an
+  # empty MODEL fails at launch for every provider. Claude Code and Codex pick
+  # their model interactively, so there MODEL is an optional pin, not a gate.
+  if [[ "$(host_field "$host" NEEDS_MODEL)" == yes && -z "${MODEL:-}" ]]; then
+    echo "no-model"; return 1
+  fi
+  return 0
+}
+
+# Print a friendly explanation + concrete fix commands for a `ai_ready` reason word.
+explain_not_ready() {
+  local reason="$1" host="$2" provider
+  provider="$(effective_provider "$host" "${PROVIDER:-}")"
+  err "the AI assistant isn't fully configured yet (host=$host)."
+  echo >&2
+  case "$reason" in
+    no-provider)  echo "Reason: no provider selected." >&2 ;;
+    no-model)     echo "Reason: no MODEL is set for provider '$provider' — goose needs an explicit model id (W does not run 'goose configure')." >&2 ;;
+    no-key)       echo "Reason: no API key stored for provider '$provider'." >&2 ;;
+    no-host-bin)  echo "Reason: '$(host_field "$host" BIN)' is not installed — run: w-ai host install $host" >&2 ;;
+    not-logged-in) echo "Reason: '$(host_field "$host" BIN)' is installed but not signed in — run: $(host_field "$host" LOGIN_CMD)" >&2 ;;
+    bad-host)     echo "Reason: unknown host '$host' (see: w-ai host list)." >&2 ;;
+  esac
+  cat >&2 <<EOF
+
+Fix it with one of:
+  w-ai host list                               # see hosts and whether each is ready
+  w-ai profile list                            # see available provider profiles
+  w-ai profile use <name>                      # activate one
+  w-ai key set <provider>                      # store the provider's API key
+  w-ai profile field <name> MODEL <model-id>   # set a model (needed for local/ollama)
+  w-ai config                                  # edit the active config directly
+
+Or open Hub -> AI on the desktop to do the same from a GUI.
+EOF
+}
+
+# Exit 1 with the friendly explanation if the active config isn't launch-ready.
+require_ready_or_die() {
+  local host="$1" reason
+  reason="$(ai_ready "$host")" && return 0
+  explain_not_ready "$reason" "$host"
+  exit 1
+}
+
+# The palette's gate, and the one caller allowed to answer a native login from
+# the cached stamp — it runs on every Super+W (see host_logged_in).
+cmd_ready() {
+  load_conf
+  local reason
+  if reason="$(ai_ready "$HOST" cached)"; then exit 0; fi
+  echo "$reason"
+  exit 1
+}
+
+# ── Advanced features status (ai-extra pack, Stage 3) ─────────────────────────
+# Detects the same things w-mcp's web.py/memory.py check at runtime (ddgs/
+# trafilatura via the same which-then-~/.local/bin fallback as _which() in
+# web.py, ollama reachability, the embed model, numpy) so this report and actual
+# tool behavior can never disagree. `--porcelain` is the stable machine format
+# the Hub (Этап 4) will parse.
+_feat_which() {
+  command -v "$1" 2>/dev/null && return 0
+  local candidate="$HOME/.local/bin/$1"
+  [[ -x "$candidate" ]] && { echo "$candidate"; return 0; }
+  return 1
+}
+
+_feat_ollama_reachable() {
+  curl -fsS -m 3 "${W_AI_EMBED_URL:-http://127.0.0.1:11434}/api/tags" >/dev/null 2>&1
+}
+
+_feat_model_present() {
+  [[ -n "$1" ]] || return 1
+  command -v ollama >/dev/null 2>&1 || return 1
+  ollama list 2>/dev/null | awk 'NR>1{print $1}' | grep -qxF "$1"
+}
+
+# Vector-corpus size, read straight from w-mcp's memory.db via its own MEMORY_DB
+# constant (core.py needs no `mcp` package import — see its own header comment).
+_feat_vec_count() {
+  PYTHONPATH="$MCP_LIB" python3 -c '
+import sqlite3
+from core import MEMORY_DB
+if MEMORY_DB.is_file():
+    conn = sqlite3.connect(MEMORY_DB)
+    try:
+        print(conn.execute("SELECT COUNT(*) FROM vec WHERE kind=\x27memory\x27").fetchone()[0])
+    except sqlite3.OperationalError:
+        print(0)
+else:
+    print(0)
+' 2>/dev/null || echo 0
+}
+
+cmd_features() {
+  if [[ "${1:-}" == set ]]; then shift; feature_set "$@"; return; fi
+  load_conf
+  local porcelain=false
+  [[ "${1:-}" == --porcelain ]] && porcelain=true
+
+  local ddgs_bin trafilatura_bin ddgs_state trafilatura_state
+  ddgs_bin="$(_feat_which ddgs)" && ddgs_state=on || ddgs_state=off
+  trafilatura_bin="$(_feat_which trafilatura)" && trafilatura_state=on || trafilatura_state=off
+
+  local ollama_active ollama_state
+  if command -v ollama >/dev/null 2>&1; then
+    ollama_active="$(systemctl is-active ollama.service 2>/dev/null || echo inactive)"
+    [[ "$ollama_active" == active ]] && _feat_ollama_reachable && ollama_state=on || ollama_state=off
+  else
+    ollama_active="not-installed"; ollama_state=off
+  fi
+
+  local model="${W_AI_EMBED_MODEL:-qllama/bge-m3:q8_0}" model_state
+  _feat_model_present "$model" && model_state=on || model_state=off
+
+  local numpy_state=off
+  python3 -c "import numpy" >/dev/null 2>&1 && numpy_state=on
+
+  local vec_n; vec_n="$(_feat_vec_count)"
+  local vec_warn=""
+  [[ "$vec_n" =~ ^[0-9]+$ ]] && [[ "$vec_n" -gt 50000 ]] && \
+    vec_warn=" (approaching brute-force limit, see sqlite-vec note in ai-integration.md §8)"
+
+  local embed="${W_AI_EMBED:-off}" search="${W_AI_SEARCH_PROVIDER:-auto}"
+
+  if $porcelain; then
+    printf 'ddgs\t%s\t%s\n'                 "$ddgs_state"   "${ddgs_bin:-not found}"
+    printf 'trafilatura\t%s\t%s\n'          "$trafilatura_state" "${trafilatura_bin:-not found}"
+    printf 'ollama\t%s\t%s\n'               "$ollama_state" "service=$ollama_active"
+    printf 'embed_model\t%s\t%s\n'          "$model_state"  "$model"
+    printf 'numpy\t%s\t%s\n'                "$numpy_state"  "-"
+    printf 'W_AI_EMBED\t%s\t%s\n'           "$embed" "-"
+    printf 'W_AI_SEARCH_PROVIDER\t%s\t%s\n' "$search" "-"
+    printf 'vec_corpus\t%s\t%s\n'           "$vec_n" "facts$vec_warn"
+    return 0
+  fi
+
+  echo "Advanced AI features (ai-extra pack):"
+  printf '  %-14s%-5s%s\n' "ddgs"        "$ddgs_state"   "${ddgs_bin:-not found — install: sudo w-pack install ai-extra}"
+  printf '  %-14s%-5s%s\n' "trafilatura" "$trafilatura_state" "${trafilatura_bin:-not found — install: sudo w-pack install ai-extra}"
+  printf '  %-14s%-5s%s\n' "ollama"      "$ollama_state" "service=$ollama_active"
+  printf '  %-14s%-5s%s\n' "embed model" "$model_state"  "$model$([[ "$model_state" == off ]] && echo " — run: ollama pull $model")"
+  printf '  %-14s%-5s%s\n' "numpy"       "$numpy_state"  "$([[ "$numpy_state" == off ]] && echo "install: sudo w-pack install ai-extra")"
+  echo
+  echo "Config ($FEATURES_CONF overlays $USER_CONF overlays $SYS_CONF):"
+  printf '  %-22s%s\n' "W_AI_EMBED"           "$embed"
+  printf '  %-22s%s\n' "W_AI_EMBED_MODEL"     "$model"
+  printf '  %-22s%s\n' "W_AI_EMBED_KEEPALIVE" "${W_AI_EMBED_KEEPALIVE:-5m}"
+  printf '  %-22s%s\n' "W_AI_SEARCH_PROVIDER" "$search"
+  echo
+  echo "Semantic memory corpus: $vec_n facts embedded$vec_warn"
+}
+
+feature_set() {
+  local key="${1:-}" val="${2-}"
+  [[ -n "$key" ]] || { err "features set requires <KEY> <value>"; exit 2; }
+  [[ " $FEATURE_KEYS " == *" $key "* ]] || { err "unknown feature key: $key ($FEATURE_KEYS)"; exit 2; }
+  if [[ "$key" == W_AI_EMBED && -n "$val" && "$val" != off && "$val" != ollama ]]; then
+    err "invalid value for W_AI_EMBED: $val (off|ollama)"; exit 2
+  fi
+  # Through the shared writer, like every other W setter: atomic, right mode
+  # (0600 — these are the user's own toggles), no sed-escaping of the value, and
+  # it refuses a key locked by fleet policy instead of writing something the next
+  # read would shadow. `user-features` is a real layer of the `ai` subsystem, so
+  # the library knows the file — this function no longer needs to.
+  wconf_set ai "$key" "$val" user-features
+  echo "w-ai: set $key=$val in $(wconf_path ai "$key")"
+}
+
+# ── Launch ────────────────────────────────────────────────────────────────────
+need_bin() { command -v "$1" >/dev/null 2>&1 || { err "$2"; exit 1; }; }
+
+# The second knowledge layer for Claude Code: the skills the agent wrote for
+# itself (`w_skill_add` -> $USER_ROOT/skills, ai-authoring.md). The shipped
+# plugin covers only the system tree, so without this they stay reachable through
+# w_search_knowledge but never load as native skills.
+#
+# `--plugin-dir` takes a plugin ROOT, and $USER_ROOT/skills is the skills
+# directory itself — so W builds a thin wrapper around it. Handing CC $USER_ROOT
+# instead would work, but a manifest-less directory takes its plugin name from
+# its basename: the overlay skills would show up as `ai:<name>` next to the
+# system tree's `w:<name>`, and any component directory a later CC learns to read
+# (agents/, commands/, hooks/) would get picked up out of W's config dir by
+# accident. The wrapper is rebuilt on every launch under $XDG_RUNTIME_DIR, so it
+# cannot go stale and leaves nothing behind in the user's config.
+# Echoes the wrapper path; returns 1 when the overlay holds no skill at all.
+claude_user_plugin() {
+  local dir manifest
+  compgen -G "$USER_ROOT/skills/*/SKILL.md" >/dev/null || return 1
+  dir="${XDG_RUNTIME_DIR:-$CACHE_DIR}/w-ai/user-plugin"
+  manifest="$dir/.claude-plugin/plugin.json"
+  install -d -m700 "$dir" "$dir/.claude-plugin" || return 1
+  cat > "$manifest" <<'EOF' || return 1
+{
+  "name": "w-user",
+  "version": "1.0.0",
+  "description": "Skills this machine's assistant wrote for itself (w_skill_add). The system knowledge tree is the separate `w` plugin.",
+  "author": { "name": "W Linux" }
+}
+EOF
+  # A symlink, exactly as the shipped plugin does it: a session follows it (the
+  # manifest's `skills` field takes no absolute path), so the overlay loads in
+  # place and a skill added later needs no rebuild of anything but this wrapper.
+  ln -sfn "$USER_ROOT/skills" "$dir/skills" || return 1
+  echo "$dir"
+}
+
+# Launch the host. $2 (optional) is a seed prompt: when non-empty the host answers
+# it first, then drops into an interactive session (goose `run -t … -s`; the provider
+# CLIs take an initial prompt as a positional arg). Empty seed = a bare session. Each
+# host maps the same "seed + continue" idea to its own flags — see ai-integration.md §6.
+launch_host() {
+  local host="$1" seed="${2:-}" provider
+  # Closed AUTH_MODES lists do the work the old per-host special cases did: local
+  # resolves to ollama, claude/codex to their native login unless the profile
+  # explicitly names an API provider. See effective_provider().
+  provider="$(effective_provider "$host" "${PROVIDER:-}")"
+  case "$host" in
+    goose|local)
+      need_bin goose "goose is not installed — run 'sudo apply.sh --ai' (installs the upstream goose CLI)"
+      seed_goose
+      export GOOSE_PROVIDER="$provider"
+      [[ -n "${MODEL:-}" ]] && export GOOSE_MODEL="$MODEL"
+      [[ -n "${MODE:-}" ]]  && export GOOSE_MODE="$MODE"
+      export_provider_key "$provider"
+      [[ "$provider" == ollama && -n "${OLLAMA_HOST:-}" ]] && export OLLAMA_HOST
+      echo "w-ai: host=$host provider=$provider model=${MODEL:-default} mode=${MODE:-default}"
+      [[ -n "$seed" ]] && exec goose run -t "$seed" --interactive
+      exec goose session
+      ;;
+    claude)
+      need_bin claude "claude is not installed — run: w-ai host install claude"
+      # No-op for PROVIDER=subscription (empty catalog entry); exports
+      # ANTHROPIC_API_KEY only when the profile deliberately picked the API path.
+      export_provider_key "$provider"
+      # W's three layers arrive as launch FLAGS, so nothing is ever written into
+      # the user's ~/.claude — which is precisely what keeps a bare `claude` in
+      # some third-party repo a plain Claude Code with no W attached:
+      #   --plugin-dir              knowledge: W's skills, loaded in place from
+      #                             /usr/share for this session only (a marketplace
+      #                             install would instead COPY them into
+      #                             ~/.claude/plugins/cache and go stale on update).
+      #                             Passed twice when the user overlay holds skills
+      #                             of its own — see claude_user_plugin()
+      #   --mcp-config              actions: w-mcp. Kept out of the plugin on
+      #                             purpose — a plugin-bundled server registers as
+      #                             plugin:w:w-mcp and its tools as
+      #                             mcp__w:w-mcp__*, which no permission rule or
+      #                             skill written against mcp__w-mcp__* would match
+      #   --append-system-prompt-file  identity: AGENTS.md, stable and first in
+      #                             context, which is what makes it cache-anchored
+      #                             (ai-integration.md §7)
+      # Non-strict --mcp-config on purpose: the user's own MCP servers still load.
+      local -a args=()
+      local plugin_dir user_plugin mcp_cfg agents_md
+      if plugin_dir="$(preset claude/plugin)"; then args+=(--plugin-dir "$plugin_dir"); fi
+      # Repeatable flag: the agent-authored overlay rides a second plugin root, so
+      # its skills load as `w-user:<name>` beside the system tree's `w:<name>`.
+      if user_plugin="$(claude_user_plugin)"; then args+=(--plugin-dir "$user_plugin"); fi
+      if mcp_cfg="$(preset claude/mcp.json)";  then args+=(--mcp-config "$mcp_cfg"); fi
+      if agents_md="$(ai_file AGENTS.md)";     then args+=(--append-system-prompt-file "$agents_md"); fi
+      # NEEDS_MODEL=no: Claude Code chooses interactively (/model). A MODEL in the
+      # profile is an explicit pin, so honour it — but only when the profile is
+      # actually about this host (see HOST_CONFIGURED in load_conf).
+      [[ -n "${MODEL:-}" && "$host" == "${HOST_CONFIGURED:-$host}" ]] && args+=(--model "$MODEL")
+      echo "w-ai: host=claude provider=$provider model=${MODEL:-host default}"
+      [[ -n "$seed" ]] && exec claude "${args[@]}" "$seed"
+      exec claude "${args[@]}"
+      ;;
+    codex)
+      need_bin codex "codex is not installed — see $SYS_ROOT/hosts/codex/config.toml"
+      # Codex needs no launch flags: it reads AGENTS.md natively and finds w-mcp
+      # through the [mcp_servers.w-mcp] block its preset documents for
+      # ~/.codex/config.toml. Same no-op-for-subscription key handling as claude.
+      export_provider_key "$provider"
+      echo "w-ai: host=codex provider=$provider"
+      [[ -n "$seed" ]] && exec codex "$seed"
+      exec codex
+      ;;
+    *)
+      err "unknown host '$host' — see: w-ai host list"; exit 2 ;;
+  esac
+}
+
+# ── Recipes & scheduling ───────────────────────────────────────────────────────
+# A recipe is a goose YAML task file (ai-integration.md, Этап 4): by convention
+# restricted to read-only tools plus w_notify, so it is safe to run unattended
+# under GOOSE_MODE=auto. Catalog resolution mirrors preset()/profile_file() (user
+# overlay wins) — and since this doubles as the allowlist for what run-recipe/
+# schedule will ever load, only these two directories are ever consulted, never an
+# arbitrary path.
+recipe_file() {
+  local name="$1" root
+  [[ "$name" =~ $RECIPE_NAME_RE ]] || return 1
+  for root in "$USER_ROOT" "$SYS_ROOT"; do
+    [[ -f "$root/recipes/$name.yaml" ]] && { echo "$root/recipes/$name.yaml"; return 0; }
+  done
+  return 1
+}
+
+cmd_recipe() {
+  local sub="${1:-list}"
+  case "$sub" in
+    list)
+      local f name title
+      local -A seen=()
+      for f in "$USER_ROOT"/recipes/*.yaml "$SYS_ROOT"/recipes/*.yaml; do
+        [[ -f "$f" ]] || continue
+        name="$(basename "$f" .yaml)"
+        [[ -n "${seen[$name]:-}" ]] && continue
+        seen[$name]=1
+        title="$(sed -n 's/^title: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' "$f" | head -n1)"
+        printf '%-20s %s\n' "$name" "$title"
+      done
+      ;;
+    *) err "unknown recipe subcommand: $sub (list)"; exit 2 ;;
+  esac
+}
+
+# Run one recipe headlessly through goose — the internal entry point
+# w-ai-recipe@.service calls (see `schedule`, below). Always goose, regardless of
+# the configured HOST: recipes are a goose-specific feature (`--recipe`),
+# independent of whichever interactive host the user prefers for chat. GOOSE_MODE
+# is forced to 'auto' — there is no human here to answer a tool-approval prompt.
+# This is not a separate technical gate: a Tier-2 tool is exactly as reachable
+# from a recipe as from a normal session, guarded by the same pkexec+polkit
+# barrier as always (fails outright with no live session, or raises the usual
+# interactive prompt with one). Safety here is the recipe's own convention
+# (Tier-0/1 + w_notify only), not something this function enforces.
+cmd_run_recipe() {
+  local name="${1:-}" f
+  [[ -n "$name" ]] || { err "run-recipe requires a recipe name"; exit 2; }
+  f="$(recipe_file "$name")" || { err "no such recipe: $name (looked in $USER_ROOT/recipes, $SYS_ROOT/recipes)"; exit 1; }
+  load_conf
+  need_bin goose "goose is not installed — recipes require the goose host (run 'apply.sh --ai')"
+  seed_goose
+  local provider="${PROVIDER:-}"
+  if [[ -z "$provider" || -z "${MODEL:-}" ]]; then
+    err "recipe '$name' needs a configured provider+model — run 'w-ai profile use <name>' first"
+    exit 1
+  fi
+  export GOOSE_PROVIDER="$provider" GOOSE_MODEL="$MODEL" GOOSE_MODE=auto
+  export_provider_key "$provider"
+  echo "w-ai: running recipe '$name' ($f)"
+  exec goose run --recipe "$f" --no-session
+}
+
+# Trigger: a per-user systemd timer instantiating w-ai-recipe@.service (ships via
+# --rootfs). One schedule per recipe name by design — re-`add`ing the same recipe
+# replaces its OnCalendar instead of stacking a second timer. NOT the built-in
+# goose scheduler on purpose (ai-integration.md, Этап 4): that one is host-local
+# and outside W's own journald-audited, cross-host automation story.
+cmd_schedule() {
+  local sub="${1:-list}"; shift || true
+  local unitdir="$HOME/.config/systemd/user"
+  case "$sub" in
+    add)
+      local name="${1:-}" cal="${2:-}"
+      [[ -n "$name" && -n "$cal" ]] || { err "schedule add requires <recipe> <OnCalendar>"; exit 2; }
+      recipe_file "$name" >/dev/null || { err "no such recipe: $name ('w-ai recipe list' to see the catalog)"; exit 1; }
+      # Recipes always run through goose (`goose run --recipe`), whatever host the
+      # interactive chat uses — see the CAPABILITIES field in hosts/*/host.conf and
+      # ai-integration.md §9. On a machine whose active profile is a provider CLI,
+      # goose can legitimately be absent; warn rather than refuse, because the
+      # timer is still valid and installing goose later makes it work.
+      command -v goose >/dev/null 2>&1 || \
+        err "warning: goose is not installed — recipes run through it, so this timer will fail until 'sudo apply.sh --ai' installs it"
+      if command -v systemd-analyze >/dev/null 2>&1; then
+        systemd-analyze calendar "$cal" >/dev/null || { err "invalid OnCalendar expression: $cal"; exit 2; }
+      fi
+      install -d -m700 "$unitdir"
+      cat > "$unitdir/w-ai-recipe@$name.timer" <<EOF
+# Generated by \`w-ai schedule add $name $cal\` — edit via \`w-ai schedule\`, not by hand.
+[Unit]
+Description=W AI recipe: $name
+
+[Timer]
+OnCalendar=$cal
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+      systemctl --user daemon-reload
+      systemctl --user enable --now "w-ai-recipe@$name.timer"
+      echo "w-ai: scheduled '$name' ($cal)"
+      ;;
+    list)
+      systemctl --user list-timers --all --no-pager 'w-ai-recipe@*' 2>/dev/null \
+        || echo "(no systemd user session reachable)"
+      ;;
+    rm)
+      local name="${1:-}"
+      [[ -n "$name" ]] || { err "schedule rm requires a recipe name"; exit 2; }
+      systemctl --user disable --now "w-ai-recipe@$name.timer" 2>/dev/null || true
+      rm -f "$unitdir/w-ai-recipe@$name.timer"
+      systemctl --user daemon-reload
+      echo "w-ai: removed schedule '$name'"
+      ;;
+    *) err "unknown schedule subcommand: $sub (add|list|rm)"; exit 2 ;;
+  esac
+}
+
+# ── Commands ──────────────────────────────────────────────────────────────────
+cmd_run() { load_conf; require_ready_or_die "$HOST"; launch_host "$HOST"; }
+
+# Launch seeded with a question (the "Ask W" palette's handoff). All args form the
+# prompt; no args = a plain session. The host keeps the conversation interactive.
+cmd_ask() { load_conf; require_ready_or_die "$HOST"; launch_host "$HOST" "$*"; }
+
+cmd_status() {
+  load_conf
+  # Same resolution the launcher will use, so status can never describe a
+  # provider the launch would not actually authenticate with.
+  local provider; provider="$(effective_provider "$HOST" "${PROVIDER:-}")"
+  # An empty MODEL means two different things depending on the host: a missing
+  # setting where the host needs one (goose), or "the CLI picks" where it does not.
+  # And where it is optional, a pin left by a profile for a DIFFERENT host is not
+  # passed on at all (the --host override case) — report the launch, not the file.
+  local model="${MODEL:-}" needs; needs="$(host_field "$HOST" NEEDS_MODEL)"
+  [[ "$needs" != yes && "$HOST" != "${HOST_CONFIGURED:-$HOST}" ]] && model=""
+  if [[ -z "$model" ]]; then
+    [[ "$needs" == yes ]] && model="default" || model="chosen in the CLI"
+  fi
+  echo "Host     : $HOST$([[ -n "$HOST_OVERRIDE" ]] && echo '  (overridden)')"
+  echo "Provider : ${provider:-?}"
+  echo "Model    : $model"
+  echo "Mode     : ${MODE:-default}"
+  echo "Config   : $SYS_CONF$([[ -r "$USER_CONF" ]] && echo "  +  $USER_CONF")"
+
+  local bin; bin="$(host_field "$HOST" BIN)"
+  if [[ -z "$bin" ]]; then
+    echo "Host bin : unknown host '$HOST' — see: w-ai host list"
+  elif command -v "$bin" >/dev/null 2>&1; then
+    echo "Host bin : $bin  ($(command -v "$bin"))"
+  else
+    echo "Host bin : $bin  NOT installed — run: w-ai host install $HOST"
+  fi
+
+  local native; native="$(host_field "$HOST" AUTH_NATIVE)"
+  if [[ -n "$native" && "$provider" == "$native" ]]; then
+    # No W-held secret on this path: the CLI's own login is the whole story.
+    if host_logged_in "$HOST"; then
+      echo "Auth     : signed in ($bin's own login, no API key used)"
+    else
+      echo "Auth     : NOT signed in — run: $(host_field "$HOST" LOGIN_CMD)"
+    fi
+  elif provider_needs_key "$provider"; then
+    if secret-tool lookup "$KEY_ATTR" "$provider" >/dev/null 2>&1; then
+      echo "API key  : present in keyring for '$provider'"
+    else
+      echo "API key  : MISSING for '$provider' — run: w-ai key set $provider"
+    fi
+  else
+    echo "API key  : not required ($provider)"
+  fi
+
+  if command -v w-mcp >/dev/null 2>&1; then
+    local st; st="$(w-mcp --selftest 2>/dev/null)"
+    echo "w-mcp    : $(printf '%s\n' "$st" | head -n1 || echo "self-test failed")"
+    local prof; prof="$(printf '%s\n' "$st" | sed -n 's/^profile: //p')"
+    [[ -n "$prof" ]] && echo "MCP tools: $prof"
+  else
+    echo "w-mcp    : NOT installed (run 'sudo apply.sh --ai')"
+  fi
+}
+
+cmd_config() {
+  install -d "$(dirname "$USER_CONF")"
+  if [[ ! -f "$USER_CONF" ]]; then
+    cat > "$USER_CONF" <<'EOF'
+# ~/.config/w/ai.conf — per-user override for W AI (see /etc/w/ai.conf).
+# Set only what you want to change; unset keys fall back to the system file.
+# Secrets are NOT stored here — use `w-ai key set <provider>`.
+# Note: `w-ai profile use <name>` overwrites this whole file with the named
+# profile's content (see `w-ai profile list`). Editing here directly still works,
+# it just then shows as "modified" against whichever profile was last applied.
+#HOST=goose
+#PROVIDER=openrouter
+#MODEL=
+#MODE=smart_approve
+EOF
+  fi
+  exec "${EDITOR:-${VISUAL:-micro}}" "$USER_CONF"
+}
+
+cmd_key() {
+  command -v secret-tool >/dev/null 2>&1 || { err "secret-tool not found (install libsecret)"; exit 1; }
+  local action="${1:-list}"; shift || true
+  case "$action" in
+    set)
+      local p="${1:-}"; [[ -n "$p" ]] || { err "key set requires a provider name"; exit 2; }
+      secret-tool store --label="W AI: $p API key" "$KEY_ATTR" "$p"
+      echo "w-ai: stored key for '$p' in the keyring."
+      ;;
+    rm|clear|delete)
+      local p="${1:-}"; [[ -n "$p" ]] || { err "key rm requires a provider name"; exit 2; }
+      secret-tool clear "$KEY_ATTR" "$p" && echo "w-ai: removed key for '$p'."
+      ;;
+    list|status)
+      load_conf
+      echo "Provider keys (keyring must be unlocked to read):"
+      local v p
+      for v in $(compgen -v | grep '^PROVIDER_ENV_' || true); do
+        p="${v#PROVIDER_ENV_}"
+        # Skip catalog entries declared empty — ollama and the provider-native
+        # `subscription` pseudo-provider hold no key, so listing them as "-"
+        # would read as "you forgot one" instead of "nothing to store here".
+        provider_needs_key "$p" || continue
+        if secret-tool lookup "$KEY_ATTR" "$p" >/dev/null 2>&1; then
+          printf '  %-12s present\n' "$p"
+        else
+          printf '  %-12s -\n' "$p"
+        fi
+      done
+      ;;
+    *)
+      err "unknown key action: $action (set|rm|list)"; exit 2 ;;
+  esac
+}
+
+# ── Hosts (the runtime CLIs the assistant can run on) ─────────────────────────
+# Provider CLIs are deliberately NOT shipped with W (modules/ai.sh installs only
+# the default host, goose): they carry their own subscription login and their own
+# updater, so they belong to the account, not to the image. What W owns is making
+# them a one-liner instead of a README exercise — `w-ai host install claude` runs
+# the vendor's own recommended installer, per-user, guarded and idempotent. The
+# Hub's AI panel drives exactly these subcommands.
+host_names() {
+  local root d n
+  local -A seen=()
+  for root in "$USER_ROOT" "$SYS_ROOT"; do
+    for d in "$root"/hosts/*/; do
+      [[ -f "$d/host.conf" ]] || continue
+      n="$(basename "$d")"
+      [[ -n "${seen[$n]:-}" ]] && continue
+      seen[$n]=1
+      echo "$n"
+    done
+  done
+}
+
+cmd_host() {
+  local sub="${1:-list}"; shift || true
+  case "$sub" in
+    list)
+      load_conf
+      local h bin state reason porcelain=false
+      [[ "${1:-}" == --porcelain ]] && porcelain=true
+      # Porcelain is the Hub's single probe for the whole host layer: one line per
+      # host, tab-separated, so the panel can build its HOST dropdown, its
+      # per-host PROVIDER options and its install/login row without a process per
+      # question — and a host added as a new hosts/<n>/ directory shows up in the
+      # GUI with no QML change at all.
+      $porcelain || printf '%-8s %-8s %-14s %s\n' HOST BIN STATE CAPABILITIES
+      while IFS= read -r h; do
+        bin="$(host_field "$h" BIN)"
+        # Readiness beyond "is it installed" depends on PROVIDER/MODEL, which are
+        # the ACTIVE profile's — so the full ai_ready verdict is only honest for
+        # the active host. For the others report what is knowable without a
+        # profile: the binary, and (for provider-native hosts) their own login.
+        if ! command -v "$bin" >/dev/null 2>&1; then
+          state="absent"
+        elif [[ "$h" == "$HOST" ]]; then
+          if reason="$(ai_ready "$h")"; then state="ready"; else state="$reason"; fi
+        elif [[ -n "$(host_field "$h" AUTH_NATIVE)" ]]; then
+          host_logged_in "$h" && state="signed-in" || state="not-logged-in"
+        else
+          state="installed"
+        fi
+        if $porcelain; then
+          printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$h" "$bin" "$state" \
+            "$(host_field "$h" AUTH_MODES)" "$(host_field "$h" NEEDS_MODEL)" \
+            "$(host_field "$h" CAPABILITIES)" "$([[ "$h" == "$HOST" ]] && echo active || echo '-')"
+        else
+          printf '%-8s %-8s %-14s %s%s\n' "$h" "$bin" "$state" \
+            "$(host_field "$h" CAPABILITIES)" \
+            "$([[ "$h" == "$HOST" ]] && echo '   (active)')"
+        fi
+      done < <(host_names)
+      ;;
+    status)
+      local h="${1:-}"; [[ -n "$h" ]] || { load_conf; h="$HOST"; }
+      known_host "$h" || { err "unknown host '$h' — see: w-ai host list"; exit 2; }
+      local f
+      for f in BIN AUTH_MODES AUTH_NATIVE AUTH_CHECK LOGIN_CMD INSTALL_CMD INSTALL_SCOPE NEEDS_MODEL CAPABILITIES; do
+        printf '%-14s %s\n' "$f" "$(host_field "$h" "$f")"
+      done
+      ;;
+    install)
+      local h="${1:-}"; [[ -n "$h" ]] || { err "host install requires a host name"; exit 2; }
+      known_host "$h" || { err "unknown host '$h' — see: w-ai host list"; exit 2; }
+      local bin cmd; bin="$(host_field "$h" BIN)"; cmd="$(host_field "$h" INSTALL_CMD)"
+      if command -v "$bin" >/dev/null 2>&1; then
+        echo "w-ai: $bin is already installed ($(command -v "$bin")) — nothing to do."
+        return 0
+      fi
+      if [[ -z "$cmd" ]]; then
+        # No vendor one-liner W is willing to pick for the user (goose comes from
+        # apply.sh --ai; codex ships through several package managers).
+        err "no installer declared for host '$h' — see $SYS_ROOT/hosts/$h/ for how to install it"
+        exit 1
+      fi
+      echo "w-ai: installing host '$h' ($(host_field "$h" INSTALL_SCOPE) scope)"
+      echo "      $cmd"
+      # `bash -c`, not exec+split: INSTALL_CMD is a vendor one-liner with a pipe
+      # (curl … | bash), which only a shell can run — and we need control back
+      # afterwards to verify the binary landed and point at the login step.
+      if ! bash -c "$cmd"; then err "installer failed for host '$h'"; exit 1; fi
+      command -v "$bin" >/dev/null 2>&1 || \
+        err "installer finished but '$bin' is still not on PATH — open a new terminal, or check ~/.local/bin"
+      local login; login="$(host_field "$h" LOGIN_CMD)"
+      [[ -n "$login" ]] && echo "w-ai: next, sign in:  w-ai host login $h   (runs: $login)"
+      return 0
+      ;;
+    login)
+      local h="${1:-}"; [[ -n "$h" ]] || { load_conf; h="$HOST"; }
+      known_host "$h" || { err "unknown host '$h' — see: w-ai host list"; exit 2; }
+      local cmd; cmd="$(host_field "$h" LOGIN_CMD)"
+      [[ -n "$cmd" ]] || { err "host '$h' has no native login — W holds its key instead: w-ai key set <provider>"; exit 2; }
+      need_bin "$(host_field "$h" BIN)" "host '$h' is not installed — run: w-ai host install $h"
+      # Whatever the flow ends in, the stamp that said "signed in" is now stale —
+      # and this exec never comes back to drop it afterwards.
+      auth_cache_clear "$h"
+      # exec: the login is an interactive browser/device flow that owns the terminal.
+      # shellcheck disable=SC2086  # a command line from a W-owned preset, split on purpose
+      exec $cmd
+      ;;
+    *)
+      err "unknown host subcommand: $sub (list|status|install|login)"; exit 2 ;;
+  esac
+}
+
+# ── Memory (thin front over `w-mcp memory`; one store, shared across hosts) ───
+# The store itself (SQLite + markdown facts) lives in w-mcp so every host and this
+# CLI share one source of truth. See ai-integration.md §8.
+cmd_memory() {
+  command -v w-mcp >/dev/null 2>&1 || { err "w-mcp not found — run 'sudo apply.sh --ai'"; exit 1; }
+  local sub="${1:-list}"; shift || true
+  case "$sub" in
+    list|search|rm|context|review) exec w-mcp memory "$sub" "$@" ;;
+    add)                           mem_add ;;
+    *) err "unknown memory subcommand: $sub (list|search|add|rm|context|review)"; exit 2 ;;
+  esac
+}
+
+# ── Tasks (thin front over `w-mcp task`; same store as memory) ────────────────
+cmd_task() {
+  command -v w-mcp >/dev/null 2>&1 || { err "w-mcp not found — run 'sudo apply.sh --ai'"; exit 1; }
+  local sub="${1:-list}"; shift || true
+  case "$sub" in
+    list|add|done) exec w-mcp task "$sub" "$@" ;;
+    *) err "unknown task subcommand: $sub (list|add|done)"; exit 2 ;;
+  esac
+}
+
+# ── Skills (thin front over `w-mcp skills`; the agent-authored user overlay) ──
+# Authoring is agent-driven (w_skill_add, with its own dedup gate) — this CLI is
+# just the human-facing overview/cleanup, same split as memory/tasks.
+cmd_skills() {
+  command -v w-mcp >/dev/null 2>&1 || { err "w-mcp not found — run 'sudo apply.sh --ai'"; exit 1; }
+  local sub="${1:-list}"; shift || true
+  case "$sub" in
+    list|show|rm) exec w-mcp skills "$sub" "$@" ;;
+    *) err "unknown skills subcommand: $sub (list|show|rm)"; exit 2 ;;
+  esac
+}
+
+# Open a frontmatter template in $EDITOR, then hand the whole fact to w-mcp, which
+# owns parsing/writing/indexing. An untouched (empty-body) template is rejected there.
+mem_add() {
+  # Script-scope (not local): the EXIT trap fires in global scope after the
+  # function returns, so a local would be unbound there under `set -u`.
+  MEM_TMP="$(mktemp --suffix=.md)"
+  trap 'rm -f "${MEM_TMP:-}"' EXIT
+  cat > "$MEM_TMP" <<'EOF'
+---
+name:
+description:
+type: reference
+---
+
+EOF
+  "${EDITOR:-${VISUAL:-micro}}" "$MEM_TMP"
+  w-mcp memory add < "$MEM_TMP"
+}
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────
+# Source-guard: the unit tests source this file for the pure resolvers above
+# (host_field/effective_provider/provider_needs_key) — only a direct invocation
+# reaches the dispatch. Without it, `source w-ai` would launch the assistant.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then return 0; fi
+
+# Pull an optional leading --host/-H before the command.
+while [[ "${1:-}" == --host || "${1:-}" == -H ]]; do
+  HOST_OVERRIDE="${2:-}"
+  [[ -n "$HOST_OVERRIDE" ]] || { err "--host requires a value"; exit 2; }
+  shift 2
+done
+
+case "${1:-}" in
+  ""|run|start)   cmd_run                          ;;
+  ask)            shift; cmd_ask "$@"              ;;
+  ready)          cmd_ready                        ;;
+  status)         cmd_status                       ;;
+  config)         cmd_config                       ;;
+  host)           shift; cmd_host "$@"             ;;
+  features)       shift; cmd_features "$@"          ;;
+  profile)        shift; cmd_profile "$@"          ;;
+  key)            shift; cmd_key "$@"              ;;
+  memory)         shift; cmd_memory "$@"           ;;
+  task)           shift; cmd_task "$@"             ;;
+  skills)         shift; cmd_skills "$@"           ;;
+  recipe)         shift; cmd_recipe "$@"           ;;
+  run-recipe)     shift; cmd_run_recipe "$@"       ;;
+  schedule)       shift; cmd_schedule "$@"         ;;
+  help|-h|--help) usage                            ;;
+  *)              err "unknown command: $1"; usage >&2; exit 2 ;;
+esac

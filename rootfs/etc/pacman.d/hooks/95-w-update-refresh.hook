@@ -1,0 +1,15 @@
+# W Linux — refresh the bar's `updates` indicator after any package transaction, so
+# upgrading outside the bar (plain pacman / yay) no longer leaves a stale count.
+# The helper re-runs `w-update check` detached, per logged-in graphical user — pacman
+# is not blocked (see /usr/lib/w/w-update-refresh).
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Type = Package
+Target = *
+
+[Action]
+Description = Refreshing W update indicator...
+When = PostTransaction
+Exec = /usr/lib/w/w-update-refresh

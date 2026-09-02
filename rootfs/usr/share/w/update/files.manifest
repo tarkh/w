@@ -1,0 +1,12 @@
+# files.manifest — user-owned config seeded by mod_files (seed-if-absent).
+# Single source of truth: deploy iterates this; w-reset/drift reuse it.
+# Format: <home-relative-path>\t<class>   class: user | managed | override
+# Managed content is rendered by w-style, not seeded here, hence absent:
+# yazi theme (theme.toml), mpv w-theme.conf, micro colorschemes/w.micro,
+# helix themes/w.toml — all live under these same dirs but owned by w-style.
+.config/yazi/yazi.toml	user
+.config/mpv/mpv.conf	user
+.config/mimeapps.list	user
+.config/udiskie/config.yml	user
+.config/micro/settings.json	user
+.config/helix/config.toml	user

@@ -1,0 +1,247 @@
+# W Linux — user packages (installed via apply.sh --packages)
+# One package per line. Lines starting with # are ignored.
+
+# Display manager
+greetd
+
+# Window manager
+hyprland
+uwsm               # systemd-managed Wayland session (graphical-session.target, app slices)
+hyprpaper
+xdg-desktop-portal-hyprland
+xdg-desktop-portal
+# xdg-desktop-portal-gtk: serves the appearance portal (light/dark) so browsers
+# and Electron honour prefers-color-scheme. gsettings-desktop-schemas: provides
+# the org.gnome.desktop.interface color-scheme schema w-style writes.
+xdg-desktop-portal-gtk
+gsettings-desktop-schemas
+# adw-gtk-theme: libadwaita stylesheet ported to GTK3 (ships adw-gtk3 /
+# adw-gtk3-dark, set as gtk-theme-name) so GTK3 apps honour the W_GTK_* named-color
+# overrides — stock Adwaita-GTK3 bakes colors and ignores them. GTK4 needs nothing
+# (libadwaita is native).
+adw-gtk-theme
+qt5-wayland
+qt6-wayland
+# qt6-imageformats: Qt image plugins for webp (and more). The greeter and
+# Quickshell draw wallpapers via Qt Image; theme wallpapers ship as webp, which
+# Qt cannot decode without this. hyprpaper handles webp natively.
+qt6-imageformats
+# qt5ct/qt6ct: platform themes routing Qt apps through the W theme. One global
+# var QT_QPA_PLATFORMTHEME=qt5ct:qt6ct serves both (Qt loads the entry built for
+# its version). w-style apply qt renders {qt5ct,qt6ct}.conf + palette from the
+# same W_QT_*/W_FONT_* tokens. See config-qt.md.
+qt5ct
+qt6ct
+# kvantum (Qt6 engine + Manager) / kvantum-qt5 (Qt5 engine): SVG widget style,
+# alternative to Fusion. Selected per theme via W_QT_STYLE; w-style apply qt
+# renders ~/.config/Kvantum/w/w.kvconfig from the same W_QT_* tokens. See config-qt.md.
+kvantum
+kvantum-qt5
+hyprpolkitagent
+
+# Secrets / keyring (apply.sh --keyring)
+gnome-keyring      # Secret Service daemon (org.freedesktop.secrets); secrets component only
+gcr-4              # provides gcr-ssh-agent (W's default SSH agent) + gcr-prompter (GTK passphrase dialog)
+libsecret          # Secret Service client lib + `secret-tool` CLI
+seahorse           # GUI manager for keyring secrets + SSH-key passphrases (zero config)
+
+# Firmware updates (apply.sh --fwupd)
+fwupd              # UEFI/SSD/peripheral firmware updates via LVFS; `fwupdmgr` CLI + refresh timer
+
+# Lock screen (apply.sh --hyprlock)
+hyprlock           # GPU lock screen: screenshot+blur background, themed input
+hypridle           # idle daemon: auto-lock + lock-before-sleep + DPMS
+fprintd            # fingerprint D-Bus service; hyprlock auths against it in parallel
+
+# Night light (apply.sh --nightlight)
+hyprsunset         # blue-light filter via hyprland-ctm-control-v1; config rendered by w-nightlight
+
+# UI shell (bar, launcher, notifications, ... — single Quickshell process)
+quickshell         # QtQuick/QML Wayland shell (official Arch repo); binary `quickshell`/`qs`
+# Audio stack — PipeWire + WirePlumber session manager. Without WirePlumber the
+# graph has no sink/source nodes and the Volume Control popup stays empty.
+pipewire           # audio/video server
+wireplumber        # PipeWire session manager — creates the ALSA sink/source nodes
+pipewire-pulse     # PulseAudio replacement (pavucontrol / pactl talk to this)
+pipewire-alsa      # ALSA → PipeWire bridge for legacy ALSA clients
+# playerctl: MPRIS media control for the XF86Audio Play/Next/Prev keys (the fixed
+# media binds in hotkeys-catalog.lua). No-op if nothing is playing.
+playerctl
+# brightnessctl: backlight control for the media keys; the brightness OSD reads
+# the resulting /sys/class/backlight value (opt-in via notifications.json).
+brightnessctl
+# upower: power/battery daemon; the Quickshell bar battery block reads it natively
+# (Quickshell.Services.UPower). Auto-hides on machines without a laptop battery.
+upower
+# power-profiles-daemon (apply.sh --power): the freedesktop power-profile backend
+# (performance/balanced/power-saver over D-Bus). w-power drives it via powerprofilesctl;
+# it owns the kernel-side knobs (platform_profile / EPP). Exclusive — no TLP alongside it.
+power-profiles-daemon
+# lm_sensors: owned by apply.sh --sensors (sensors.sh) — it installs the package
+# AND runs `sensors-detect --auto` on the target hardware so `sensors -j` actually
+# reports values (bare install returns "{}"). Not listed here on purpose.
+# Advanced mixer = wiremix (extra, prebuilt) — a PipeWire-native TUI opened from
+# the Quickshell Volume Control popup ("Open Mixer" → ghostty -e wiremix). Themed
+# by the w-style `wiremix` axis (its TOML theme takes #RRGGBB, like btop/atuin).
+# Replaced pwvucontrol (AUR, slow Rust build) — no AUR dependency, no local build.
+# See quickshell-volumecontrol.md.
+wiremix
+
+# Terminal
+ghostty
+foot
+
+# Fonts
+inter-font
+ttf-jetbrains-mono-nerd
+# gucharmap (GNOME Character Map, GTK3 — auto-themed by the W gtk axis): browse a
+# chosen font's glyphs incl. the Nerd Font Private Use Area and copy them, e.g. to
+# pick icon/folded glyphs for the Quickshell bar config (config/bar.json).
+gucharmap
+
+# Theming (w-style renders GRUB/Plymouth assets; w-theme crossfade via grim)
+imagemagick
+grim
+# Source-palette extraction for `w-theme new` (Material HCT). Official repo, one
+# static-ish Rust binary — the alternatives (pywal16, colorice) are AUR/PyPI and
+# would pull a Python science stack into the base system for a colour conversion.
+# The mapping from its palette to a W theme is ours: lib/w/w-theme/palette.py.
+matugen
+gtk4-layer-shell   # w-windowblind overlay layer-surface (build + runtime)
+
+# System info
+fastfetch          # neofetch successor (neofetch removed from Arch repos)
+
+# Log retention (apply.sh --logs). logrotate is the universal failsafe against
+# /var/log overflow for any daemon the user installs later that forgets to rotate
+# its own flat logs; driven by logrotate.timer (systemd, not cron). W renders its
+# config from /etc/w/logs.conf via w-logs. journald + /var/log/w are handled
+# natively (journald retention + systemd-tmpfiles) — no extra packages. See w-logs.md.
+logrotate
+
+# Mirror upkeep (apply.sh --mirrors). pacstrap bakes the installer's ranked
+# mirrorlist into the machine and W had nothing to rebuild it with afterwards, so
+# every install lived on a snapshot of its installation day (installer.md §5).
+# reflector is the ranker the installer already uses on the ISO — the same tool
+# with the same calibrated numbers, driven from /etc/w/mirrors.conf by w-mirrors.
+# The cost of adding it is genuinely small: 158 KiB installed and its only
+# dependency is `python`, which base.txt already installs explicitly. Writing our
+# own ranker instead was rejected — --score/--age come from the Arch mirror status
+# API, so a home-grown one would have to reimplement that client and re-measure
+# numbers Ф.1 already measured. See w-mirrors.md.
+reflector
+
+# ── Firewall (apply.sh --firewall) ────────────────────────────────────────────
+# firewalld: host firewall with native nftables backend; integrates with
+# NetworkManager over D-Bus (per-connection zones, default-deny inbound). W
+# baseline default zone = `home` (allows inbound ssh + mdns for .local discovery);
+# `w-firewall public` switches it for untrusted networks. firewall-config: GTK3
+# GUI (inherits the W gtk theme axis) for rich per-connection/service/rule mgmt.
+# See security.md (point В).
+firewalld
+firewall-config
+
+# ── File management (apply.sh --files) ────────────────────────────────────────
+# CLI manager — yazi + its optional preview/extract helpers. yazi works configless;
+# these enrich previews (images/video/pdf/archives) and the fuzzy/jump tooling.
+yazi               # CLI file manager (Rust); themed via w-style `yazi` axis
+ffmpegthumbnailer  # video thumbnails (also feeds the GUI thumbnailer)
+7zip               # archive extraction/preview (p7zip was dropped from Arch repos)
+poppler            # PDF page previews (pdftoppm/pdfinfo)
+fd                 # file-name search backend
+ripgrep            # content search backend
+fzf                # fuzzy picker integration
+zoxide             # frecency dir-jumping (z)
+jq                 # JSON helper used by yazi plugins/previews
+
+# Web browser — Firefox, the W default browser (apply.sh --firefox). Independent
+# Gecko engine; GTK app, so the W gtk axis recolors it live. Chrome translucency
+# (concept ③) renders into a pinned profile's userChrome.css via w-style. Privacy
+# defaults + profile pin: see package-firefox.md.
+firefox
+
+# Screen capture (apply.sh --screencapture) — native wlr-screencopy stack, driven
+# by the w-screenshot script. grim (above, shared with w-theme) captures; slurp
+# selects a region/window; satty is the GTK4 annotation UI (chrome themed by the
+# gtk axis, palette/font by the w-style `satty` axis). wl-clipboard = wl-copy for
+# quick grabs; libnotify = notify-send confirmations. See w-screenshot.md.
+slurp
+satty
+wl-clipboard
+libnotify
+
+# Clipboard manager (rides apply.sh --quickshell) — cliphist stores clipboard
+# history (text + images, byte-for-byte) in a persistent db, fed by two
+# `wl-paste --watch cliphist store` daemons (autostarted in hyprland.lua). History
+# is browsed by the native Quickshell Clipboard component ($mod+V). Depends on
+# wl-clipboard (above). See quickshell-clipboard.md.
+cliphist
+# wl-clip-persist — keeps the LIVE Wayland clipboard alive after the source app
+# closes. Wayland serves the selection from the owner client, so closing it kills
+# the selection (cliphist only records history, it does not take ownership). This
+# daemon grabs ownership on owner-loss. Autostarted in hyprland.lua. See
+# quickshell-clipboard.md.
+wl-clip-persist
+
+# GUI manager — Nemo (GTK3): functional + modern, auto-themed live by the W gtk
+# axis (twin w-gtk themes). nemo-fileroller adds archive actions to the context
+# menu; file-roller is the archive UI; tumbler renders thumbnails for the view.
+nemo
+nemo-fileroller
+file-roller
+tumbler
+
+# Network discovery — avahi+nss-mdns resolve *.local; gvfs (+backends) browses and
+# mounts shares. Its bundled gvfsd-fuse bridges mounts to /run/user/$UID/gvfs so
+# yazi/CLI see them too (mount from a shell with `gio mount`). Discovery backends:
+# gvfs-dnssd (Bonjour/DNS-SD → macOS/TimeCapsule), gvfs-wsdd (WS-Discovery → modern
+# Windows, which no longer browses over SMB). Protocols: gvfs-smb (SMB/CIFS),
+# gvfs-nfs. Phones: gvfs-afc (iOS, pulls usbmuxd+libimobiledevice) + gvfs-mtp.
+avahi
+nss-mdns
+gvfs
+gvfs-dnssd
+gvfs-wsdd
+gvfs-smb
+gvfs-nfs
+gvfs-afc
+gvfs-mtp
+gvfs-gphoto2
+
+# Removable/block devices — udisks2 mounts them, udiskie auto-mounts on insert
+# (its SNI tray item is picked up by any tray; no bar config needed).
+udisks2
+udiskie
+
+# Foreign filesystems — Windows NTFS, cross-platform exFAT, Apple APFS. APFS is a
+# kernel module (read-write, official extra) rebuilt by DKMS on kernel updates →
+# needs dkms + headers for the active kernel. W default is linux-zen, so the
+# zen headers are what apfs-rw builds against (w-kernel keeps them paired on
+# switch). HFS+ needs no package (in-kernel hfsplus module).
+ntfs-3g
+exfatprogs
+linux-apfs-rw-dkms
+dkms          # linux-zen-headers for DKMS builds already come with base.txt
+
+# ── Printing + scanning (apply.sh --printing) ─────────────────────────────────
+# Driverless-first (IPP Everywhere / AirPrint), zero vendor PPD databases. Network
+# printers are found via mDNS (avahi+nss-mdns, already installed above). cups is
+# the server (lp/lpr/lpadmin CLI + web UI on localhost:631); cups-pk-helper lets
+# system-config-printer do admin through polkit (→ hyprpolkitagent/fingerprint,
+# no sudoers). cups-filters+ghostscript rasterize PDF for printers that only take
+# PWG-Raster/URF. ipp-usb is the modern driverless USB bridge: it exposes an
+# IPP-over-USB (AirPrint) printer/MFP as a local IPP service, so both printing and
+# eSCL scanning work over USB with no vendor driver. cups-browsed is deliberately
+# NOT relied on and gets masked by the module (source of the 2024 CUPS RCE CVEs).
+# Scanning: sane + sane-airscan (driverless eSCL/WSD over network & ipp-usb) with
+# simple-scan (GTK) as the GUI. GUI printer tool: system-config-printer (GTK3,
+# auto-themed live by the w-style gtk axis).
+cups
+cups-pk-helper
+cups-filters
+ghostscript
+ipp-usb
+system-config-printer
+sane
+sane-airscan
+simple-scan

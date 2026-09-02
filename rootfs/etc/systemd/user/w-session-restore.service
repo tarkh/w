@@ -1,0 +1,40 @@
+# W Linux — reopen the saved session at login.
+#
+# A oneshot pulled in by graphical-session.target, which is what `uwsm finalize`
+# raises once the compositor is up. It runs `w-session autologin-restore`, whose
+# first act is to read the mode: `off` and `save` return 0 immediately, only
+# `restore` actually relaunches anything. The gate lives there, in the layered
+# config, so the Hub and the CLI both change it without touching a unit.
+#
+# Why a unit rather than a line in hyprland.lua, where the rest of the session's
+# autostart lives: that file is ownership class `user` (seed-if-absent), so an
+# added line reaches accounts created LATER and no existing machine — the feature
+# would appear to work on a fresh install and be silently absent everywhere else.
+# A global-enabled unit is also per-account by construction, which is what a
+# per-user setting needs. Same reasoning, and the same arrangement, as hypridle
+# (mod_power) and the night light tick (mod_nightlight).
+#
+# HYPRLAND_INSTANCE_SIGNATURE is in the unit environment because `uwsm finalize`
+# exports it there (UWSM_FINALIZE_VARNAMES) — verified on the VM; without it
+# hyprctl would have no session to talk to.
+#
+# See w-session.md.
+[Unit]
+Description=W session memory — reopen the last session's windows
+PartOf=graphical-session.target
+After=graphical-session.target
+# No Wayland session, nothing to reopen into.
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/w-session autologin-restore
+# Restoring is best-effort by nature — a program that has since been uninstalled
+# must not leave a failed unit sitting in the session's status.
+SuccessExitStatus=0 1
+# The launch loop spaces windows out and then waits for stragglers; the ceiling
+# is the settle window plus the per-window gap, with room to spare.
+TimeoutStartSec=120
+
+[Install]
+WantedBy=graphical-session.target

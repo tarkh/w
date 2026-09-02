@@ -1,0 +1,7 @@
+# W Linux — udiskie automount configuration.
+# Ignore legacy floppy devices (/dev/fd*): VMs (and boards with a phantom floppy
+# controller) expose /dev/fd0, and udisks fails to probe/mount it noisily
+# ("Can't open blockdev"). Floppies are never something we want to automount.
+device_config:
+  - device_file: /dev/fd*
+    ignore: true

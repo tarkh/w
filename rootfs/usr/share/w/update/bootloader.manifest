@@ -1,0 +1,7 @@
+# bootloader.manifest — system config owned by mod_grub (GRUB theme + silence hook).
+# Managed system paths (root to reset), restored from the W source. theme.txt is
+# w-style output (900-grub), refreshed by `w-style render_system`. The encrypted
+# Limine path (package-limine.md) ships its own bits and is not covered here.
+# Format: <path>\t<class>   (trailing '/' = directory)
+/boot/grub/themes/w/	managed
+/etc/pacman.d/hooks/grub-silence.hook	managed

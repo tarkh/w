@@ -1,0 +1,32 @@
+# W Linux — mise settings seeded by the `dev` W-Pack.
+#
+# OWNERSHIP: this file is yours (manifest class `user`, seed-if-absent). W writes it
+# once and never again — and it has to be yours, because `mise use -g <tool>@<ver>`
+# writes your global tool list into this very file.
+#
+# ── Where mise fits on W ──────────────────────────────────────────────────────
+# mise owns PER-PROJECT TOOLCHAINS. It does not own the system: packages come from
+# pacman and are updated by `w-update` (mise's own docs draw the same line — it is
+# "not a replacement for system package managers"). Two consequences worth knowing:
+#
+#   * Do not `mise self-update`. Arch builds mise with that command disabled, which
+#     is correct — the package manager owns the binary.
+#   * Do not install system libraries with mise. If a tool needs libssl or zlib,
+#     that is pacman's job.
+#
+# ── Python is uv's, not mise's ────────────────────────────────────────────────
+# W already settled Python (package-python.md): one rolling system interpreter, and
+# `uv` as the single sanctioned tool for venvs, pinned interpreters and global CLIs.
+# That decision stands — mise handles node/go/rust/java/… and stays out of Python's
+# way. The one setting below is what makes the two cooperate instead of collide.
+#
+# Note what is NOT set here: `idiomatic_version_file_enable_tools`. It defaults to
+# empty, so mise ignores .python-version (uv's file) and .nvmrc alike. Opt in per
+# tool if you want it — but leaving python out is the point:
+#     mise settings add idiomatic_version_file_enable_tools node
+
+[settings]
+# In a uv project (one with a uv.lock), activate the .venv uv already manages
+# instead of building a second, parallel environment. "create|source" would also
+# create it when missing; "source" keeps venv creation an explicit `uv sync`.
+python.uv_venv_auto = "source"
