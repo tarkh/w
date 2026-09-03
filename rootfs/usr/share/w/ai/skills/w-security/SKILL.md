@@ -69,7 +69,8 @@ fallback, with **Limine** as the bootloader and snapshot-boot support. Two tools
   enrollment and a printable recovery key.
 - `w-secureboot status[--porcelain] | enable | disable | setup | sign | reenroll` — Secure
   Boot via sbctl. **`enable`/`disable` are the entry points** (also what the Hub's Security
-  tile runs). TPM2 auto-unlock is sealed to PCR7, which measures the Secure Boot policy, so
+  control runs — the System panel's **Security** tab, which is present only on the
+  encrypted+Limine install path, since a plain GRUB system ships no sbctl at all). TPM2 auto-unlock is sealed to PCR7, which measures the Secure Boot policy, so
   toggling SB always breaks it — but PCR7 is only measured by the firmware/bootloader at
   boot time, not live, so `enable` **cannot** enroll the sbctl keys and re-seal TPM2 in one
   shot: doing both in the same session seals against the still-old PCR7 and the disk would

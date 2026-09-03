@@ -8,6 +8,94 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.4.0
+
+- **W now refuses an update it cannot verify.** Until this release, trusting an update
+  meant trusting the transport: HTTPS, plus the assumption that the address in
+  `/var/lib/w/src/.git/config` still pointed at the real W. Everything `w-sync` does
+  after a pull runs as root, so that assumption was worth root on your machine. Every
+  release is now published as an annotated tag signed with the W release key, and
+  `w-sync update` verifies that signature against the key shipped on the machine
+  (`/usr/share/w/update/w-release.allowed_signers`) **before** it takes a snapshot and
+  before it pulls. A tip that carries no release tag, or one not signed by a trusted
+  key, stops the update dead and leaves the machine bit-for-bit as it was. `w-sync
+  status` gained a `Signed:` line saying which way this is set.
+
+  Verification is on by default, including on machines installed before this release.
+  If your checkout tracks something other than the official repository — a fork, or a
+  branch of your own — there are no signed release tags to find, so this update
+  records `VERIFY_SIGNATURE=no` in `/etc/w/update.conf` for you. A value already in
+  that file is never overwritten.
+
+- **If `w-sync update` has been dying on what looked like a credentials problem, this
+  release is the fix — and the fix has to arrive by hand once.** The install image is
+  tagged `edge`, and the nightly build moves that tag. `git fetch --tags` refuses to
+  move a tag it already has and fails the entire fetch, so on a machine that had once
+  seen that tag the *next* `w-sync update` died before it could do anything, and
+  reported it as though the repository could not be reached. The fetch now passes
+  `--force --prune-tags`. Since the broken code is the code that would have to run to
+  deliver its own fix, a machine already in this state needs one command first, run as
+  the user who owns the checkout:
+
+  ```
+  git -C /var/lib/w/src fetch --tags --force --prune-tags origin
+  w-sync update
+  ```
+
+- **The status bar is now composed by you, screen by screen.** W Hub -> Appearance ->
+  Bar is a new tab listing every block the bar can show, once per connected monitor,
+  with the whole bar switchable off per screen as well. The same thing from a terminal
+  — or through the assistant, which knows these commands:
+
+  ```
+  w-bar status
+  w-bar block HDMI-A-1 tray off
+  w-bar monitor eDP-1 off
+  ```
+
+  Choices live alongside the rest of your bar settings in
+  `~/.config/quickshell/w/config/bar.json`. Switching a bar off keeps them, so
+  switching it back on restores the same composition. Bar position moved out of
+  Appearance -> Settings into this new tab; `w-appearance bar-position` is unchanged.
+
+  Two things follow for a machine that already exists. A new install now ships four
+  blocks switched off — system monitors (CPU/RAM/temperature/disk), network,
+  brightness and keyboard backlight: they are readouts rather than everyday controls,
+  and each is two clicks away in the Hub. **Your own bar is left exactly as it is** —
+  that file is yours and updates do not touch it. But blocks are addressed by an `id`
+  that your `bar.json` predates, so the new tab and `w-bar` will list nothing on your
+  machine until the file has them. Taking the new default — which replaces your bar
+  customizations, after backing the current file up — is:
+
+  ```
+  w-reset quickshell config/bar.json
+  ```
+
+  Adding `"id": "<name>"` by hand to the blocks you want addressable works just as
+  well; the bar reloads as you save.
+
+- **The Hub menu was reorganised.** It had grown into a list in the order things were
+  added: twenty tiles in which a settings section and a one-shot command looked alike.
+  It is now an even 4x4 — ten sections (appearance -> devices -> connectivity -> power
+  -> system -> extensions) followed by six quick actions. Security and Date & time
+  were each a section holding two or three controls; both are now tabs of System,
+  where the boot-options tab appears only on a machine that has them. Calendar and
+  Screenshot are no longer tiles: they are launcher entries now, the calendar still
+  opens from the clock, and the screenshot entry takes a region (the other modes
+  capture instantly and would photograph the launcher closing). The Power tile is
+  called Power menu, so it no longer reads as a synonym of the Power section next to
+  it. Separately: a highlighted row is no longer clipped at the edge of a scrolling
+  list, and a dropdown in a bottom row now opens upwards instead of drawing past the
+  card — which also fixes the NumLock dropdown under Input, wrong since it shipped.
+
+- **Three launcher entries never worked, and a fourth is new.** Power menu, Volume
+  control and Assistant have been in the launcher since they shipped and did nothing
+  when clicked: their `Exec=` line was quoted in a way the desktop-entry specification
+  does not recognise, so what reached the shell was a syntax error. Each had another
+  door — a hotkey, the logo's right-click menu, a bar block — which is why it went
+  unnoticed until Calendar, which now has an entry of its own and no other door. All
+  four work.
+
 ## v0.3.0
 
 - **W has moved to its permanent home — https://github.com/tarkh/w.** Every release

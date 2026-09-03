@@ -16,7 +16,7 @@ sources:
   - path: .claude/library/w-wallpaper.md
     sha256: 45b1a08562402a6645afeeff8e2bc26b93cd4a4560cb376eea175694831509f7
   - path: .claude/library/w-appearance.md
-    sha256: cd0d11ab987336bc4bd2fd3dc153409363993098f707d0fce8e914c8b9e999ab
+    sha256: ed3e2ae1e0ad035ec8100dc379d0fae7fe99a0a4751cb29060f856d77fa3a62c
 tools:
   - w_theme_status
   - w_theme_set
@@ -206,6 +206,11 @@ Appearance → Settings tab:
 - `w-appearance blur <theme|off>` — force Hyprland blur off.
 - `w-appearance motion <theme|off>` — force Hyprland animations off (global toggle).
 - `w-appearance status [--porcelain]` — show the three overrides.
+
+The GUI for `bar-position` lives in Hub → Appearance → **Bar** (not the Settings tab),
+together with the bar's per-monitor composition — which is a different axis and a
+different tool: `w_bar_set` / the `w-bar` CLI, see the **w-desktop** skill. Position and
+translucency here, WHICH BLOCKS EXIST there.
 
 `theme` clears the override and reverts to whatever the active theme says. Every
 override **survives a later `w-theme set`** — it is not baked into one theme's render,

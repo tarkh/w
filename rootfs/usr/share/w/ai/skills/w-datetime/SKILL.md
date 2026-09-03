@@ -2,13 +2,13 @@
 name: w-datetime
 description: >-
   Date, time, timezone and NTP on W Linux: the w-time CLI (set the timezone, the
-  system clock and network time sync), the Hub "Date & Time" section, and the
+  system clock and network time sync), the Hub's System panel "Date & Time" tab, and the
   systemd-timesyncd server catalog (layered config, see w-conf). Load this for anything about
   the timezone, the system clock being wrong, enabling/disabling NTP, or which time
   servers are used.
 sources:
   - path: .claude/library/w-time.md
-    sha256: bc0836bd9c4164b4a3f4e692d93a2115b1fdc715db7d0a8c0eb1cece601eb373
+    sha256: 049778103cd3fa4509ba4d5fd11713d6963627af1e56dcf1700c73d1c16125f0
 tools:
   - w_time_status
   - w_timezone_set
@@ -19,7 +19,8 @@ tools:
 
 Timezone, the system clock and NTP are fronted by the first-party **`w-time`** CLI (a
 thin front over `timedatectl` + `systemd-timesyncd`), with matching UI in the W Hub's
-top-level **Date & Time** section. `timedatectl` holds the live state (zone, clock, NTP
+System panel, tab **Date & Time** (it was a root-level Hub tile of its own until the
+menu reorganisation; the timezone picker it drills into is the `system.timezone` route). `timedatectl` holds the live state (zone, clock, NTP
 flag). Whether NTP is on is the user's/admin's call and W never flips it behind
 their back — an apply re-renders which servers to use but leaves the on/off state
 alone. Only the NTP *server set* is persisted, in W's layered config — the vendor

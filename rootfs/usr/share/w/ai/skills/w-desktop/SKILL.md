@@ -11,7 +11,9 @@ sources:
   - path: .claude/library/quickshell.md
     sha256: b6b033f37c6605ab5ec12ecbad15bef136f7334337d88aafaed06e0561b97376
   - path: .claude/library/quickshell-bar.md
-    sha256: a43fcc7dbb6b8a5c71aa70afecd09ff09b2b78c43c712685f65d92fa62086e84
+    sha256: 172fcf47c0789b0b684968235fb741ff9c0de3cd09887d2a0648c5ba66c335ed
+  - path: .claude/library/w-bar.md
+    sha256: 6888e3edff28e8ee62198014579587888eccf481c218320a9993afd759238591
   - path: .claude/library/quickshell-assistant.md
     sha256: 4d3098dde3047c6d5b7057911ca6393be05627792968b4f46a3542b69f18bb33
   - path: .claude/library/w-monitor.md
@@ -32,6 +34,8 @@ tools:
   - w_hypr_windows
   - w_hypr_dispatch
   - w_monitor_status
+  - w_bar_status
+  - w_bar_set
   - w_nightlight_status
   - w_nightlight_set
   - w_session_status
@@ -151,18 +155,30 @@ Everything shell-side is one Quickshell instance:
 - **Bar** — a layer-shell panel with data-driven blocks (workspaces, clock, volume,
   battery, network, updates, notifications/DND, system monitors, tray, …). Its live config
   is `~/.config/quickshell/w/config/bar.json` (user-owned) — that file holds *which blocks
-  exist, what they do, and their colors*. Its **shape is part of the theme**, not of that
-  file: position (top/bottom), height, corner radii, margins, padding, gaps and outlines
-  come from `W_GEO_BAR_*` in the active theme's `geometry.conf`, applied with `w-style
-  apply geometry` (see **w-theming**). Its **translucency is theme-owned too**: the bar's
-  background plaque and outline follow `W_FX_BAR_OPACITY`/`W_FX_BAR_BORDER_OPACITY` from
-  the theme's `effects.conf` — dropping both to `0.0` leaves the blocks floating as
-  separate islands without thinning menus or popups. So "make the bar square / put it at the
-  bottom / taller / transparent" is a theme edit; writing such a key into bar.json anyway
-  pins that element out of the theme until the key is deleted.
+  exist, what they do, and their colors*. Its **shape and translucency belong to the
+  theme**, not to that file: height, corner radii, margins, padding, gaps and outlines from
+  `W_GEO_BAR_*` in the active theme's `geometry.conf` (`w-style apply geometry`), the
+  background plaque and outline from `W_FX_BAR_OPACITY`/`W_FX_BAR_BORDER_OPACITY` in its
+  `effects.conf` — dropping both to `0.0` leaves the blocks floating as separate islands
+  without thinning menus or popups. See **w-theming**. So "make the bar square / taller /
+  transparent" is a theme edit; writing such a key into bar.json anyway pins that element
+  out of the theme until the key is deleted.
   The clock block left-click opens a calendar; right-click cycles clock
   faces. The bell block shows and toggles Do Not Disturb (`Super+Shift+D` does the same) —
   see **w-notifications**.
+- **Which blocks are shown is PER MONITOR**, and it is the one part of the bar you can
+  change directly: read **`w_bar_status`**, change **`w_bar_set`** (Tier 1, user-scope,
+  live). Blocks are addressed by `id`, and the same block can be on one output and off
+  another — so never say "the bar shows X" without naming the output. `w_bar_set` with no
+  `block` switches the whole bar on that output, the primary one included; switching a bar
+  off **keeps** its per-block choices, so switching it back on restores them (nothing is
+  lost, don't warn). Behind it: the `w-bar` CLI and a `monitors.<output>.{enabled,show}`
+  map in the same `bar.json`. GUI: Hub → Appearance → **Bar**. Four ship OFF — the
+  cpu/ram/temp/disk group, network, brightness, keyboard backlight — so "no network
+  indicator on my bar" is the default, not a fault: switch it on for that output.
+  Three different axes, three different answers: "remove the clock" → `w_bar_set`; "move
+  the bar down" → `w-appearance bar-position` (same tab in the GUI); "make the bar
+  thinner/rounder/transparent" → the theme, above.
 - **Ask W palette** (`Super+W`, or the robot button on the bar) — the shell entry point
   to *this* assistant. It is a thin one-line prompt box, not a chat: on Enter it hands the
   question to `w-ai ask` in a terminal, where the session actually runs (streaming, tool
@@ -439,6 +455,10 @@ polkit prompt is involved; the host's tool-approval covers them.
   a handful of its available modes. Use it for "what monitors do I have" / "what's
   my resolution/scale" and before running any `w-monitor` command — see **Displays**
   above for the ask-before-guessing rule on output names.
+- **`w_bar_status`** *(read)* — which outputs carry a status bar and every block's
+  on/off state there. **`w_bar_set`** — show/hide one block, or the whole bar, on ONE
+  output (no "all monitors" form: this setting is per-monitor by design). See **The
+  Quickshell UI** above for what is composition and what is theme.
 - **`w_nightlight_status`** *(read)* — the night light: mode, night temperature, the
   window, and whether the screen is being tinted **right now**. Correct even with no
   session reachable from here (it is derived from the config, not asked of the daemon).
@@ -450,45 +470,33 @@ polkit prompt is involved; the host's tool-approval covers them.
   the background-snapshot floor, and **how many windows the snapshot actually holds**.
   Check the count before confirming that reopening works — `restore` over an empty
   snapshot reopens nothing, and the mode alone does not reveal that.
-- **`w_session_set`** — change it: `mode`, `autosave_seconds`, `terminal_apps`,
-  `save_now`, `forget`. `terminal_apps: all` re-executes the last foreground command of
+- **`w_session_set`** — change it. `terminal_apps: all` re-executes the last foreground command of
   every terminal window at login — a real consequence, not a completeness upgrade; say
   so before setting it.
   `forget` throws the saved layout away and makes the next login clean — ask first
   unless that is exactly what was requested. `save_now` does nothing while the mode is
   `off`. Turning `restore` on takes effect at the **next** login, so say that instead of
   leaving the user waiting for windows to appear.
-- **`w_layouts_list`** *(read)* — the named layouts, newest first: slug, scope, window
-  count, when. The slug is what `w_layout_apply` takes. These are separate from the
-  automatic snapshot in `w_session_status` and survive `forget`.
+- **`w_layouts_list`** *(read)* — the named layouts, newest first; its slug is what
+  `w_layout_apply` takes. Separate from `w_session_status`'s automatic snapshot, and
+  they survive `forget`.
 - **`w_layout_save`** — record the current windows under a name; `workspace_only` saves
   just the focused workspace, number-free. Additive and destroys nothing, but reusing a
   name REPLACES that layout — check `w_layouts_list` when the user did not say to
   overwrite.
 - **`w_layout_apply`** — **the most destructive tool in this domain: it closes the
-  user's windows.** `dry_run` defaults to true and answers how many would close without
-  touching anything; lead with that, name the number, and only call it with
-  `dry_run=false` once the user has agreed (or asked for exactly this layout by name).
-  Unsaved-work dialogs cover files and nothing else — say that rather than calling it
-  safe. It returns as soon as it has started, so do not report success from its output.
-- **`w_notify`** — surface a notification in W's stack (`summary`, optional `body`,
-  `urgency` low|normal|critical), through `w-notify send`. Use it for a heads-up or a
-  result you want visible on the desktop — it does not replace your chat reply.
-  **Pick the urgency by what the user must DO:** `critical` only when missing it has a
-  real cost and action is owed (a reboot is required to finish an upgrade, the disk is
-  nearly full, a backup failed) — it is red, never auto-dismisses, and is the only
-  level that passes Do Not Disturb; `normal` for "worth knowing, nothing owed";
-  `low` for background chatter. Every needless `critical` teaches the user to ignore
-  the next one. Managing the notification system itself (DND, history, per-app mute)
-  is the **w-notifications** skill.
+  user's windows.** `dry_run` defaults to true; lead with its number and get agreement
+  before `dry_run=false`. Its description carries the rest (what the save dialogs do and
+  do not cover, why its output never means "finished") — read it before calling.
+- **`w_notify`** — surface a notification on the desktop; it does not replace your chat
+  reply. Pick `urgency` by what the user must DO, not by how the result pleased you —
+  every needless `critical` teaches them to ignore the next one; the tool's description
+  has the per-level rule. Managing the notification system itself (DND, history, per-app
+  mute) is the **w-notifications** skill.
 - **`w_screenshot`** — capture to `~/Pictures/Screenshots` and get the file path.
-  `mode` is `full` (all outputs), `output` (focused monitor), or `window` (focused
-  window). Interactive region select (`Super+Ctrl+S`) is intentionally not exposed
-  to the assistant. **Capturing is not analyzing:** by default just take the shot
-  and report the path — do *not* open, read, or describe the image unless the user
-  explicitly asks you to look at / analyze it. Reading it back spends vision tokens
-  and sends the screen's contents to the provider, which "take a screenshot" did
-  not ask for.
+  Interactive region select (`Super+Ctrl+S`) is deliberately not exposed here.
+  **Capturing is not analyzing:** take the shot, report the path, and do not read the
+  image back unless asked to look at it.
 - **`w_launch_app`** — open an application into the session via `uwsm app` (e.g.
   `firefox`, `ghostty`). Program name + simple args only, no shell syntax. Prefer
   this over a raw privileged command for launching apps.
@@ -500,16 +508,8 @@ polkit prompt is involved; the host's tool-approval covers them.
 - **`w_hypr_dispatch`** — control windows and workspaces (the same power the user's
   keybindings have). Pick an `action` from a curated allowlist, some with an `arg`,
   and most accept an optional `target` to aim at a specific window instead of the
-  focused one:
-  - `close`/`kill`/`center`/`pin`/`cycle`/`fullscreen`/`maximize`/`float` — act on
-    `target`, or the focused window if `target` is omitted.
-  - `focus-window` — focus the window in `target` (`target` is required here).
-  - `focus`/`move`/`swap <left|right|up|down>` — focused window only, no `target`.
-  - `workspace <1-99|e+1|e-1>` — switch the active workspace (no `target`).
-  - `move-to-workspace <1-99|e+1|e-1>` — move `target` (or the focused window) to
-    a workspace.
-  - `focus-monitor`/`move-to-monitor <+1|-1>` — move focus / `target` to another
-    monitor.
+  focused one. The exact allowlist is in the tool's own description — read it there
+  rather than from a second copy that can go stale.
 
   **Multi-window requests need one call per window** — there is no bulk/swap
   action. Workflow: call `w_hypr_windows`, match each window the user mentioned to

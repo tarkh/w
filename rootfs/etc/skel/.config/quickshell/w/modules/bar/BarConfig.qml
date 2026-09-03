@@ -84,31 +84,100 @@ Singleton {
     property var    borderOpacityCfg: "barBorder"
     readonly property real borderOpacity: Effects.op(borderOpacityCfg, Effects.barBorderOpacity)
 
-    // ── Blocks per zone (array of { type, settings }) ─────────────────────────
-    property var startBlocks:  []
-    property var centerBlocks: []
-    property var endBlocks:     []
+    // ── Blocks per zone (array of { type, id, settings }) ─────────────────────
+    // Stored RAW (disabled blocks included): the composition is also what the W Hub
+    // lists, and it can only offer to switch a block back on if it can still see it.
+    // Filtering happens at read time, per monitor — blocksFor().
+    property var rawBlocks: ({ start: [], center: [], end: [] })
 
     // ── Multi-monitor (optional `bar.json → monitors`) ────────────────────────
-    // Maps output name -> { enabled, blocks: { start, center, end } }. Absent entry =
-    // no bar on that monitor (the primary monitor always gets one from the root blocks).
+    // Maps output name -> { enabled, show, blocks } — see _comment_multimonitor in
+    // bar.json. `enabled` answers "is there a bar here", `show` is the sparse per-block
+    // visibility override the Hub writes, `blocks` the rarely-used full composition
+    // replacement.
     property var monitorCfg: ({})
 
-    // Whether the bar should render on monitor `name`: always on the primary monitor
-    // (Displays.isPrimary, itself falling back when primary is unset/stale), or on any
-    // monitor with a `monitors` entry that isn't explicitly disabled.
+    // Whether the bar should render on monitor `name`. An explicit `enabled` in the
+    // monitor's entry always wins — including on the primary monitor, whose bar the Hub
+    // must be able to switch off like any other. With no explicit key the primary
+    // monitor (Displays.isPrimary, itself falling back when primary is unset/stale) gets
+    // a bar, and any other output gets one iff it has an entry here at all.
     function barOn(name) {
-        if (Displays.isPrimary(name)) return true;
         const m = root.monitorCfg[name];
-        return !!m && m.enabled !== false;
+        if (m && m.enabled !== undefined) return m.enabled !== false;
+        if (Displays.isPrimary(name)) return true;
+        return !!m;
     }
 
-    // Blocks for a given monitor + zone: that monitor's own composition if the
-    // `monitors` entry defines one, else the global zone blocks (root[zone+"Blocks"]).
+    // Whether block `b` is shown on monitor `name`. The monitor's `show` map is a sparse
+    // OVERRIDE keyed by block id: present -> it decides (so a globally disabled block can
+    // be revived on one output); absent -> the block's own global `enabled`.
+    function shownOn(name, b) {
+        const def = !b || b.enabled !== false;
+        if (!b || b.id === undefined) return def;
+        const m = root.monitorCfg[name];
+        const show = m && m.show;
+        if (show && show[b.id] !== undefined) return !!show[b.id];
+        return def;
+    }
+
+    // Blocks for a given monitor + zone: that monitor's own composition if the `monitors`
+    // entry defines one, else the global zone blocks. Filtering is DEEP — a zone's nested
+    // `items` are per-monitor too, and Zone.qml has no way to know which screen it is on
+    // (its Loader only hands it settings), so they are resolved here and handed down
+    // already filtered.
     function blocksFor(name, zone) {
         const m = root.monitorCfg[name];
-        const blocks = (m && m.blocks && m.blocks[zone] !== undefined) ? m.blocks[zone] : root[zone + "Blocks"];
-        return root.enabledOnly(blocks);
+        const blocks = (m && m.blocks && m.blocks[zone] !== undefined) ? m.blocks[zone] : root.rawBlocks[zone];
+        return (blocks || []).filter(b => b && root.shownOn(name, b)).map(b => {
+            if (!b.items) return b;             // leaf block: same object, no churn
+            const copy = {};
+            for (const k in b) copy[k] = b[k];
+            copy.items = b.items.filter(it => it && root.shownOn(name, it));
+            return copy;
+        });
+    }
+
+    // ── Catalog: the flat, ordered block list the W Hub renders (Appearance -> Bar) ──
+    // Document order (start -> center -> end, each zone's blocks with their nested items
+    // right after their parent), disabled blocks included, blocks WITHOUT an id skipped:
+    // with no id there is nothing for `monitors[...].show` to key on, so the Hub cannot
+    // offer a switch for them (they still render on the bar normally).
+    readonly property var catalog: {
+        const out = [];
+        for (const z of ["start", "center", "end"]) {
+            for (const b of (root.rawBlocks[z] || [])) {
+                if (!b || b.id === undefined) continue;
+                out.push({ id: b.id, type: b.type, zone: z, parentId: "", block: b });
+                for (const it of (b.items || [])) {
+                    if (!it || it.id === undefined) continue;
+                    out.push({ id: it.id, type: it.type, zone: z, parentId: b.id, block: it });
+                }
+            }
+        }
+        return out;
+    }
+
+    // The catalog entry for an id, or null — lets a nested row ask about its parent
+    // without walking the list itself.
+    function catalogEntry(id) {
+        for (const c of root.catalog) if (c.id === id) return c;
+        return null;
+    }
+
+    // Human name of a block for the Hub. Shipped blocks are named by id; a hand-added
+    // block of a known type still gets a name for free through the type dictionary; a
+    // custom `button` falls back to its own label, then to the bare type. Strings.t()
+    // echoes the key back when it is missing, so presence is checked in the table first.
+    function blockTitle(b) {
+        if (!b) return "";
+        if (b.id !== undefined && Strings.table["bar.block." + b.id] !== undefined)
+            return Strings.t("bar.block." + b.id);
+        if (b.type !== undefined && Strings.table["bar.type." + b.type] !== undefined)
+            return Strings.t("bar.type." + b.type);
+        const lbl = b.settings ? b.settings.label : undefined;
+        if (typeof lbl === "string" && lbl.length > 0) return lbl;
+        return b.type || "";
     }
 
     // Resolve a "<token-or-#hex>" + opacity into a color. A token name maps to the
@@ -166,10 +235,20 @@ Singleton {
         }
     }
 
+    // Whether the primary monitor actually carries a bar. The shell's popups (OSD,
+    // notifications, calendar, volume, brightness, the tray menu) set no `screen:` and
+    // are baselined off the reserved zone below — with the bar switched off they would
+    // otherwise float down by the height of a bar that isn't there.
+    readonly property bool onPrimary: {
+        const s = Displays.primaryScreen();
+        return !!s && root.barOn(s.name);
+    }
+
     // Screen space the bar occupies from its anchored edge (outer margin + height).
-    // 0 on the opposite edge. Reacts live to height/margin/position.
-    readonly property int reservedTop:    position === "top"    ? marginTop    + height : 0
-    readonly property int reservedBottom: position === "bottom" ? marginBottom + height : 0
+    // 0 on the opposite edge, and 0 everywhere when there is no bar on the primary
+    // screen. Reacts live to height/margin/position.
+    readonly property int reservedTop:    (onPrimary && position === "top")    ? marginTop    + height : 0
+    readonly property int reservedBottom: (onPrimary && position === "bottom") ? marginBottom + height : 0
 
     // The gap Hyprland leaves between the reserved bar zone and tiled windows. Same
     // theme source as hyprland.lua's `gaps_out` (W_GEO_GAPS_OUT), so the two cannot
@@ -280,9 +359,7 @@ Singleton {
             if (c.borderOpacity !== undefined) root.borderOpacityCfg = c.borderOpacity;  // raw, as above
 
             const b = c.blocks || {};
-            root.startBlocks  = enabledOnly(b.start);
-            root.centerBlocks = enabledOnly(b.center);
-            root.endBlocks    = enabledOnly(b.end);
+            root.rawBlocks = { start: b.start || [], center: b.center || [], end: b.end || [] };
 
             root.monitorCfg = c.monitors || {};
         } catch (e) {

@@ -7,7 +7,7 @@ description: >-
   before answering questions about how W is organized or which command to use.
 sources:
   - path: .claude/library/essentials.md
-    sha256: 0f5c7f463bbeea9090e4caa880de564ecc2dd1457b922921256fa6d76d516745
+    sha256: c250e702e4528e41885f19a1cac2e33597cf41069fd3e29e44d8fc0f31f3fd5d
 ---
 
 # W Overview
@@ -124,7 +124,8 @@ commands — they encode W's conventions and keep the system consistent. Most su
   Details: the **w-desktop** skill.
 - The Quickshell bar has data-driven blocks (workspaces, clock, volume, battery,
   network, updates, notifications/DND, system monitors, tray); its live config is
-  `~/.config/quickshell/w/config/bar.json`.
+  `~/.config/quickshell/w/config/bar.json`. Which of them are shown is chosen **per
+  monitor** — `w-bar` (GUI: Hub → Appearance → Bar). Details: the **w-desktop** skill.
 - `w-notify` — notifications: Do Not Disturb, the history of what arrived, per-app
   mute, popup timeouts (`w-notify status`). Also the way to send one:
   `w-notify send -u critical "…" "…"`. Details: the **w-notifications** skill.

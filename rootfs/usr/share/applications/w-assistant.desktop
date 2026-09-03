@@ -1,7 +1,9 @@
 [Desktop Entry]
 Name=W Assistant
 Comment=Ask W — the OS assistant (Super+W)
-Exec=sh -c "hyprctl dispatch 'hl.dsp.global(\"quickshell:assistant\")'"
+# NB: no `sh -c` — a .desktop Exec does not treat ' as a quote character, so single
+# quotes are stripped and the shell then chokes on the bare `(`. See quickshell-hub.md.
+Exec=hyprctl dispatch "hl.dsp.global(\"quickshell:assistant\")"
 Icon=assistant
 Type=Application
 Categories=System;Utility;

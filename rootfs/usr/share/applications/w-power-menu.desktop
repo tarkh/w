@@ -1,7 +1,9 @@
 [Desktop Entry]
 Name=Power Menu
 Comment=Lock, log out, suspend, restart or shut down
-Exec=sh -c "hyprctl dispatch 'hl.dsp.global(\"quickshell:powermenu\")'"
+# NB: no `sh -c` — a .desktop Exec does not treat ' as a quote character, so single
+# quotes are stripped and the shell then chokes on the bare `(`. See quickshell-hub.md.
+Exec=hyprctl dispatch "hl.dsp.global(\"quickshell:powermenu\")"
 Icon=system-shutdown
 Type=Application
 Categories=System;

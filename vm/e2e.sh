@@ -451,6 +451,48 @@ if (( ENCRYPTED )); then
   # non-owner's journal four times a day.
   assert "a non-owner check is a no-op that touches neither the state nor the journal" \
     'cd /; S=/var/lib/w/state/sync.json; b=$(stat -c %y "$S"); out=$(runuser -u plain -- env HOME=/home/plain w-sync check 2>&1) || exit 1; [[ -z "$out" && "$b" == "$(stat -c %y "$S")" ]]'
+
+  # ── Release signatures ───────────────────────────────────────────────────────
+  # The edge channel runs apply.sh as root on whatever it pulls, so the signature
+  # check is its entire security boundary. The unit suite proves the logic; these
+  # prove it is actually armed on an installed machine — the anchor arrived, the
+  # strictness derived at install time matches what the checkout tracks, and a tip
+  # this machine cannot verify is refused before anything is touched.
+  assert "the release trust anchor is deployed and holds a usable key" \
+    'k=$(awk "!/^[[:space:]]*#/ && NF >= 3 { print \$2\" \"\$3; exit }" /usr/share/w/update/w-release.allowed_signers) &&
+     test -n "$k" && printf "%s\n" "$k" | ssh-keygen -lf - >/dev/null'
+  # Derived once by mod_updatesys from the remote the checkout actually tracks:
+  # strict on the official repository, open on anything else (a fork, or the dev
+  # repo, where there are no release tags to find). Asserted as that relationship
+  # rather than as a fixed value, because both kinds of preset exist.
+  assert "signature checking is armed to match the tracked remote" \
+    'o=$(git -C /var/lib/w/src remote get-url origin 2>/dev/null); s=$(w-sync status | sed -n "s/^Signed : //p");
+     case "${o%.git}" in
+       https://github.com/tarkh/w) [[ "$s" == required* ]] ;;
+       *)                          [[ "$s" == "NOT required"* ]] ;;
+     esac || { echo "origin=$o signed=$s"; exit 1; }'
+  # The refusal itself, driven end to end. The checkout is rewound one commit so an
+  # update is genuinely attempted, the anchor is swapped for a key nothing was signed
+  # with, and the run must stop with the machine untouched — same HEAD, nothing
+  # pulled. Both the anchor and the original HEAD are restored either way, so this
+  # leaves the system exactly as it found it whether it passes or fails.
+  assert "an update whose tag it cannot verify is refused, changing nothing" \
+    'set -u; A=/usr/share/w/update/w-release.allowed_signers; o=$(stat -c %U /var/lib/w/src)
+     [[ "$(w-sync status | sed -n "s/^Signed : //p")" == required* ]] || { echo "not armed here — nothing to prove"; exit 0; }
+     h=$(getent passwd "$o" | cut -d: -f6)
+     g() { cd /; runuser -u "$o" -- env HOME="$h" git -C /var/lib/w/src "$@"; }
+     H=$(g rev-parse HEAD); g rev-parse --verify -q HEAD~1 >/dev/null || { echo "history too short to test"; exit 0; }
+     cp -a "$A" "$A.e2e-bak"
+     restore() { mv -f "$A.e2e-bak" "$A"; g reset --hard "$H" >/dev/null 2>&1; rm -f /tmp/e2e-notrust /tmp/e2e-notrust.pub; }
+     trap restore EXIT
+     rm -f /tmp/e2e-notrust /tmp/e2e-notrust.pub
+     ssh-keygen -q -t ed25519 -N "" -C e2e -f /tmp/e2e-notrust
+     printf "w-release@w.tarkh.com %s\n" "$(awk "{print \$1\" \"\$2}" /tmp/e2e-notrust.pub)" > "$A"
+     g reset --hard HEAD~1 >/dev/null
+     R=$(g rev-parse HEAD)
+     out=$(w-sync update --yes 2>&1) && { echo "$out"; echo "the update was NOT refused"; exit 1; }
+     grep -qE "REFUSING TO UPDATE|no release tag" <<< "$out" || { echo "$out"; exit 1; }
+     [[ "$(g rev-parse HEAD)" == "$R" ]] || { echo "the checkout moved despite the refusal"; exit 1; }'
 fi
 
 # Drop the fixture before the diagnostics bundle, so the archived system state is

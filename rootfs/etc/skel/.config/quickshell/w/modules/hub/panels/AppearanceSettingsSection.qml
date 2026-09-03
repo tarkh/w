@@ -1,8 +1,11 @@
 // W Linux — Hub Appearance: the "Settings" tab.
 //
-// Three per-user overrides that beat the active theme without editing it — a pure
+// Per-user overrides that beat the active theme without editing it — a pure
 // front-end over `w-appearance` (see w-style.md / config-effects.md / w-style
 // modules 100-effects/100-motion for what each override actually does downstream).
+// The third override this file used to carry, the bar's position, moved to the Bar
+// tab (BarSection.qml) so that every bar control has exactly one door; the CLI verb
+// behind it is still `w-appearance bar-position`.
 // Every key here is user-scope and unprivileged: no polkit anywhere in this file.
 //
 // Kept in its own file (not inline in AppearancePanel.qml) for the same reason
@@ -26,19 +29,17 @@ Column {
     // The panel drives `focusedField` in through a Binding (its `item` is
     // recreated on every Settings-tab re-activation); this file only reads it
     // back and exposes activateField() for the panel's confirm-dispatcher. No
-    // Flickable/scrollIntoView here — three rows are always well under the
+    // Flickable/scrollIntoView here — two rows are always well under the
     // maxCardH−chrome floor (see Security/DateTime precedent).
     property string focusedField: ""
     function activateField(field) {
-        if (field === "bar") barRow.activated();
-        else if (field === "blur") blurRow.activated();
+        if (field === "blur") blurRow.activated();
         else if (field === "motion") motionRow.activated();
     }
 
     spacing: 12
 
     // ── State (one porcelain read) ──────────────────────────────────────────────
-    property string barPosition: "theme"
     property string blur: "theme"
     property string motion: "theme"
 
@@ -55,7 +56,6 @@ Column {
                     const m = line.match(/^([A-Z_]+)=(.*)$/);
                     if (m) kv[m[1]] = m[2];
                 }
-                root.barPosition = kv.BAR_POSITION || "theme";
                 root.blur = kv.BLUR || "theme";
                 root.motion = kv.MOTION || "theme";
             }
@@ -65,16 +65,10 @@ Column {
     Process { id: setProc; onExited: root.reload() }
     function run(cmd) { setProc.running = false; setProc.command = cmd; setProc.running = true; }
 
-    readonly property var barOptions: [
-        { id: "theme",  label: Strings.t("appear.fromTheme") },
-        { id: "top",    label: Strings.t("appear.barPosition.top") },
-        { id: "bottom", label: Strings.t("appear.barPosition.bottom") },
-    ]
     readonly property var offOptions: [
         { id: "theme", label: Strings.t("appear.fromTheme") },
         { id: "off",   label: Strings.t("appear.off") },
     ]
-    function barLabel(id) { for (const o of root.barOptions) if (o.id === id) return o.label; return id; }
     function offLabel(id) { for (const o of root.offOptions) if (o.id === id) return o.label; return id; }
 
     Text {
@@ -83,20 +77,6 @@ Column {
         color: Colors.muted
         font.family: Fonts.family; font.pixelSize: 11
         wrapMode: Text.WordWrap
-    }
-
-    SelectRow {
-        id: barRow
-        width: parent.width
-        glyph: String.fromCodePoint(0xf0a4a)   // nf-md-dock-top
-        label: Strings.t("appear.barPosition")
-        currentId: root.barPosition
-        value: root.barLabel(root.barPosition)
-        options: root.barOptions
-        focused: root.focusedField === "bar"
-        onActivated: if (root.menuLayer)
-            root.menuLayer.openMenu(barRow, options, root.barPosition,
-                                    (id) => root.run(["w-appearance", "bar-position", id]))
     }
 
     SelectRow {

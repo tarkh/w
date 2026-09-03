@@ -9,7 +9,7 @@ sources:
   - path: .claude/library/security.md
     sha256: 364888438b946122813a6e365cb060270b25f25b7b0fbc9f8e01e08d86c24b6e
   - path: .claude/library/quickshell-bar.md
-    sha256: a43fcc7dbb6b8a5c71aa70afecd09ff09b2b78c43c712685f65d92fa62086e84
+    sha256: 172fcf47c0789b0b684968235fb741ff9c0de3cd09887d2a0648c5ba66c335ed
 tools:
   - w_network_status
   - w_firewall_status

@@ -1,5 +1,5 @@
-// W Linux — Hub Appearance panel (Ф2 theme picker + Settings tab).
-// A Pill-switch (as DisplaysPanel's scope switch) picks between two tabs:
+// W Linux — Hub Appearance panel (Ф2 theme picker + Bar tab + Settings tab).
+// A Pill-switch (as DisplaysPanel's scope switch) picks between three tabs:
 //   Themes   — grids of large preview tiles, split into the system collection and
 //              the user's own (see below).
 //   Settings — per-user overrides that beat the active theme (bar position, blur,
@@ -45,10 +45,19 @@ Item {
     // Fixed header (tab switch) + whichever tab's content drives the card morph
     // together — same contract as DisplaysPanel's topCol/col/menuLayer.menuBottom.
     readonly property real contentH: root.tab === "themes" ? themesCol.implicitHeight
-                                     : (settingsLoader.item ? settingsLoader.item.implicitHeight : 0)
+                                     : root.tab === "bar"
+                                       // +8 mirrors barView's own contentHeight slack (2x4
+                                       // focus-wash bleed) — without it the tab is 8px
+                                       // shorter than its content and scrolls forever
+                                       // (quickshell-hub.md Ф-Keyboard gotcha 6).
+                                       ? (barLoader.item ? barLoader.item.implicitHeight + 8 : 0)
+                                       : (settingsLoader.item ? settingsLoader.item.implicitHeight : 0)
     implicitHeight: Math.max(header.height + 12 + contentH, menuLayer.menuBottom)
 
-    property string tab: "themes"   // "themes" | "settings"
+    // Order here IS the pill order and the "tab" region's index space — moveH maps
+    // the roving index straight through it, so the two cannot drift apart.
+    readonly property var tabs: ["themes", "bar", "settings"]
+    property string tab: "themes"   // one of `tabs`
 
     readonly property int cols: 4
     readonly property int gap: 10
@@ -72,13 +81,34 @@ Item {
     // button — `focusRegion` names which one currently owns the cursor, `focusIdx`
     // is the position within it ("tab"/"add" only ever use index 0/1). Coverage now
     // includes the Settings tab (AppearanceSettingsSection.qml, a Loader-child):
-    // "settings" is a flat 3-row region (bar/blur/motion), owned here per
+    // "settings" is a flat 2-row region (blur/motion), owned here per
     // quickshell-hub.md's Ф-Keyboard gotcha #8 — the section only reads
     // `focusedField` back (see the Binding near settingsLoader below) and exposes
-    // activateField().
-    property string focusRegion: "tab"   // "tab" | "system" | "user" | "add" | "settings"
+    // activateField(). The Bar tab (BarSection.qml) is the same contract with one
+    // difference: its field list is DYNAMIC (outputs × bar blocks), so the section
+    // computes it and this panel reads it back — the index still lives only here.
+    property string focusRegion: "tab"   // "tab" | "system" | "user" | "add" | "bar" | "settings"
     property int focusIdx: 0
-    readonly property var settingsFields: ["bar", "blur", "motion"]
+    readonly property var settingsFields: ["blur", "motion"]
+    readonly property var barFields: barLoader.item ? barLoader.item.fields : []
+
+    // Same true-edge-first reasoning as DisplaysPanel.scrollContentIntoView — the
+    // hint text and a section header sit above the first row, so "row 0 is visible"
+    // and "we are scrolled to the top" are different conditions.
+    function scrollBarIntoView() {
+        if (!barLoader.item) return;
+        const item = barLoader.item.rowItem(root.barFields[root.focusIdx]);
+        if (!item) return;
+        if (root.focusIdx === 0) { barView.contentY = 0; return; }
+        if (root.focusIdx === root.barFields.length - 1) {
+            barView.contentY = Math.max(0, barView.contentHeight - barView.height);
+            return;
+        }
+        const pt = item.mapToItem(barView.contentItem, 0, 0);
+        if (pt.y - 4 < barView.contentY) barView.contentY = pt.y - 4;
+        else if (pt.y + item.height + 4 > barView.contentY + barView.height)
+            barView.contentY = pt.y + item.height + 4 - barView.height;
+    }
 
     function regionCount(r) { return r === "system" ? systemThemes.count : (r === "user" ? userThemes.count : 0); }
     function firstNonEmptyRegion() {
@@ -103,21 +133,30 @@ Item {
     }
     function moveH(delta) {
         if (root.focusRegion === "tab") {
-            root.focusIdx = Math.max(0, Math.min(1, root.focusIdx + delta));
-            root.tab = root.focusIdx === 0 ? "themes" : "settings";
+            root.focusIdx = Math.max(0, Math.min(root.tabs.length - 1, root.focusIdx + delta));
+            root.tab = root.tabs[root.focusIdx];
             return;
         }
-        if (root.focusRegion === "add" || root.focusRegion === "settings") return;
+        if (root.focusRegion === "add" || root.focusRegion === "settings"
+            || root.focusRegion === "bar") return;
         root.focusIdx = Math.max(0, Math.min(root.regionCount(root.focusRegion) - 1, root.focusIdx + delta));
     }
     function moveDown() {
         if (root.focusRegion === "tab") {
             if (root.tab === "settings") { root.focusRegion = "settings"; root.focusIdx = 0; return; }
+            if (root.tab === "bar") {
+                root.focusRegion = "bar"; root.focusIdx = 0; root.scrollBarIntoView(); return;
+            }
             root.enterRegion(root.firstNonEmptyRegion(), false);
             return;
         }
         if (root.focusRegion === "settings") {
             root.focusIdx = Math.min(root.focusIdx + 1, root.settingsFields.length - 1);
+            return;
+        }
+        if (root.focusRegion === "bar") {
+            root.focusIdx = Math.min(root.focusIdx + 1, root.barFields.length - 1);
+            root.scrollBarIntoView();
             return;
         }
         if (root.focusRegion === "add") return;
@@ -129,7 +168,12 @@ Item {
         if (root.focusRegion === "tab") return;
         if (root.focusRegion === "settings") {
             if (root.focusIdx > 0) { root.focusIdx--; return; }
-            root.focusRegion = "tab"; root.focusIdx = 1;   // land back on the Settings pill
+            root.focusRegion = "tab"; root.focusIdx = root.tabs.indexOf("settings");
+            return;
+        }
+        if (root.focusRegion === "bar") {
+            if (root.focusIdx > 0) { root.focusIdx--; root.scrollBarIntoView(); return; }
+            root.focusRegion = "tab"; root.focusIdx = root.tabs.indexOf("bar");
             return;
         }
         if (root.focusRegion !== "add") {
@@ -195,6 +239,8 @@ Item {
             if (root.focusRegion === "add") { root.navigate("appearance.new", null); e.accepted = true; return; }
             if (root.focusRegion === "settings" && settingsLoader.item)
                 settingsLoader.item.activateField(root.settingsFields[root.focusIdx]);
+            if (root.focusRegion === "bar" && barLoader.item)
+                barLoader.item.activateField(root.barFields[root.focusIdx]);
             e.accepted = true;
             return;
         }
@@ -211,9 +257,14 @@ Item {
             onClicked: { root.tab = "themes"; root.focusRegion = "tab"; root.focusIdx = 0; }
         }
         Pill {
-            label: Strings.t("appear.tab.settings"); active: root.tab === "settings"
+            label: Strings.t("appear.tab.bar"); active: root.tab === "bar"
             focused: root.focusRegion === "tab" && root.focusIdx === 1
-            onClicked: { root.tab = "settings"; root.focusRegion = "tab"; root.focusIdx = 1; }
+            onClicked: { root.tab = "bar"; root.focusRegion = "tab"; root.focusIdx = 1; }
+        }
+        Pill {
+            label: Strings.t("appear.tab.settings"); active: root.tab === "settings"
+            focused: root.focusRegion === "tab" && root.focusIdx === 2
+            onClicked: { root.tab = "settings"; root.focusRegion = "tab"; root.focusIdx = 2; }
         }
     }
 
@@ -564,6 +615,48 @@ Item {
     }
 
     // ── Settings tab (per-user overrides) ───────────────────────────────────────
+    // ── Bar tab: per-monitor bar composition (BarSection.qml) ────────────────────
+    // Its own Flickable, unlike the Settings tab: the row count is outputs × blocks,
+    // which passes the card's height ceiling on the very first monitor. Same viewport
+    // geometry as themesView (the -12 right margin puts the scrollbar pill on the
+    // card edge, the column insets back).
+    Flickable {
+        id: barView
+        visible: root.tab === "bar"
+        anchors { top: header.bottom; topMargin: 12; left: parent.left; right: parent.right; bottom: parent.bottom }
+        // Right: extend into the card padding so the scrollbar pill sits on the window
+        // edge. Left: extend the CLIP RECT by the same 8px a row's focus wash bleeds
+        // (SelectRow's -8 margin), or `clip:true` cuts the highlight off flush with the
+        // row's leading icon — the content is put back with Loader.x, so nothing visibly
+        // moves (quickshell-hub.md Ф-Keyboard gotcha 2, the recipe DisplaysPanel uses).
+        anchors.rightMargin: -12
+        anchors.leftMargin: -8
+        clip: true
+        // Vertical bleed slack the same way: +8 here (2x4) and Loader.y below, NEVER
+        // Flickable.topMargin/bottomMargin — those make Qt centre the content and the
+        // first frame renders already scrolled (gotcha 3).
+        contentHeight: barLoader.height + 8
+        boundsBehavior: Flickable.StopAtBounds
+        ScrollBar.vertical: WScrollBar {}
+
+        Loader {
+            id: barLoader
+            active: root.tab === "bar"
+            x: 8
+            y: 4
+            width: barView.width - 12 - 8
+            source: "BarSection.qml"
+            onLoaded: item.menuLayer = menuLayer
+        }
+    }
+
+    Binding {
+        target: barLoader.item
+        property: "focusedField"
+        value: root.focusRegion === "bar" ? (root.barFields[root.focusIdx] || "") : ""
+        when: barLoader.status === Loader.Ready
+    }
+
     Loader {
         id: settingsLoader
         active: root.tab === "settings"
@@ -583,5 +676,9 @@ Item {
     }
 
     // ── Dropdown overlay layer (above the content; sized to the viewport) ─────────
-    HubDropdown { id: menuLayer; anchors.fill: parent; returnFocusTo: root }
+    // flipUp: the Bar tab's content routinely exceeds the card ceiling (outputs x
+    // blocks), so the last rows' menus cannot grow the card — with no flip they were
+    // drawn past its bottom edge and clipped. The flip only fires when a menu genuinely
+    // does not fit downward, so the short Themes/Settings tabs are unaffected.
+    HubDropdown { id: menuLayer; anchors.fill: parent; flipUp: true; returnFocusTo: root }
 }

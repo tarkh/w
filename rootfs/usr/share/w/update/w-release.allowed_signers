@@ -1,0 +1,32 @@
+# w-release.allowed_signers — the trust anchor for W edge updates.
+#
+# THIS FILE IS WHY AN UPDATE IS TRUSTED. `w-sync update` refuses to pull anything
+# whose release tag is not signed by a key listed here (ssh-keygen's allowed_signers
+# format, consumed via `git -c gpg.ssh.allowedSignersFile=… verify-tag`).
+#
+# Read from the DEPLOYED copy in /usr/share/w/update/, never from the checkout in
+# /var/lib/w/src — this is the one file where w-sync's usual "prefer the freshly
+# pulled version" rule is inverted, and it has to be: verifying a repository with a
+# key taken from that same repository verifies nothing. The root of trust is the
+# installation image, which carries this file; every later change to it is itself
+# delivered by an update that had to pass verification with the previous key. Key
+# rotation is therefore a signed operation, and a compromised repo cannot bootstrap
+# its own trust.
+#
+# The principal (the first field) is a LABEL, not a check: git's ssh backend asks
+# only "is this key in the file", and prints whichever principal the file assigns.
+# It does not cross-check the tagger's identity, so the name here is chosen to read
+# well in `git verify-tag` output rather than to match any account.
+#
+# The private half lives off-machine (a password manager) and reaches the release
+# only through an ssh-agent — scripts/publish.sh signs via the agent and never sees
+# a private key file. There is no copy of it in this repository or in CI, which is
+# also why the rolling `edge` tag (moved by the nightly ISO workflow) is NOT signed
+# and is never accepted as a release: it is a pointer to an install image, not a
+# statement about trust.
+#
+# Rotation: add the new key on a line of its own, ship one release signed by the OLD
+# key (that is what installs the new anchor), then start signing with the new one and
+# drop the old line in a later release. Skipping the middle step strands every
+# machine that has not updated yet.
+w-release@w.tarkh.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDW8lSHuYNv2qrvfTXcQ6oWeNlv3RocfcidVjtEACl1F

@@ -1,11 +1,13 @@
 {
-  "_comment": "W Linux bar config. USER-OWNED — w-style/w-theme never touch it. Edit and the running bar live-reloads (FileView watch). Any color is a THEME TOKEN name (e.g. surface/inputBg/text/accent/accentFg/border) OR a literal #RRGGBB hex; the matching *Opacity (0.0–1.0) is always separate, so the bar follows theme switches while opacity is tuned per element (set 0 for a fully transparent element, e.g. no button border).",
+  "_comment": "W Linux bar config. USER-OWNED — w-style/w-theme never touch it. Edit and the running bar live-reloads (FileView watch). Any color is a THEME TOKEN name (e.g. surface/inputBg/text/accent/accentFg/border) OR a literal #RRGGBB hex; the matching *Opacity (0.0–1.0) is always separate, so the bar follows theme switches while opacity is tuned per element (set 0 for a fully transparent element, e.g. no button border). Hand-editing is expected and safe. Note that `w-bar` and `w-appearance bar-position` patch this file in place through jq, which rewrites it: keys, order and these comments all survive, but blank separator lines between them do not.",
 
   "_comment_chrome": "The bar's own plaque (bgColor/bgOpacity) and outline (borderColor/borderOpacity) — everything else here paints the blocks ON it. These two opacities are THEME-FOLLOWING by default: unlike the per-element ones they also accept an EFFECTS TOKEN name — \"bar\"/\"barBorder\" (the bar's own chrome pair) or \"surface\"/\"scrim\" (the shared shell scale) — resolved live from the active theme's effects.conf (W_FX_BAR_OPACITY / W_FX_BAR_BORDER_OPACITY), so a theme can make the bar a solid plaque or dissolve it entirely. Writing a number here pins it and the bar stops following the theme; delete the key or write the token back to hand it over. Dropping both to 0 (in the theme, or here) leaves the blocks floating as separate islands — their zone backgrounds are their own. Outline WIDTH is geometry, not this (W_GEO_BAR_BORDER, default 0).",
 
   "_comment_geometry": "GEOMETRY IS THEME-OWNED and deliberately absent below. position/height/radius/margin/padding/gap/borderWidth/minSquare for the bar, and zoneRadius/zonePadding/zoneBorderWidth/buttonRadius/buttonGap/buttonBorderWidth/itemsGap inside blocks, all come from the active theme's geometry.conf (W_GEO_BAR_*, rendered into core/geometry.json by `w-style apply geometry`) — so switching themes reshapes the bar without touching this file. Writing any of those keys back in overrides just that one element and it stops following the theme; delete the key to hand it back. An override is a number (px), or a geometry TOKEN name resolved live (\"barRadiusZone\", \"barGap\", \"radiusSm\", …). Radii additionally accept \"pill\" = half the element's height (even rounding) and 0 = sharp corners. \"minSquare\" (true/false, root-level) is the one boolean override: when true, every block's (and every folded `zone`'s) minimum width is clamped to its height with content centered, so small pill/circle buttons stay round instead of oval; content wider than the height still grows the block as before.",
 
-  "_comment_enabled": "Every block takes an optional \"enabled\": true|false at its root (default true). \"enabled\": false drops the block entirely — it is never instantiated and none of its background work (Process / FileView / UPower-Pipewire subscriptions) runs.",
+  "_comment_enabled": "Every block takes an optional \"enabled\": true|false at its root (default true). \"enabled\": false drops the block entirely — it is never instantiated and none of its background work (Process / FileView / UPower-Pipewire subscriptions) runs. This is the GLOBAL composition switch; per-monitor visibility is the \"monitors\" map below, which overrides it — so a block shipped off here is switched back on for one screen from W Hub -> Appearance -> Bar, without editing this file. Four blocks ship OFF on purpose: systemMonitors (the cpu/ram/temp/disk group), network, brightness and kbdBacklight — they are at-a-glance readouts rather than everyday controls, and each is one click away in the Hub.",
+
+  "_comment_id": "Every block also takes an \"id\": a name unique across the WHOLE file (nested zone items included). It is the handle the per-monitor \"monitors\" map and the W Hub (Appearance -> Bar) address the block by — \"type\" cannot serve as one because several blocks may share a type (this file ships two \"button\" blocks). A block with no \"id\" still renders normally; it just cannot be addressed per-monitor and is not listed in the Hub. The Hub shows an id's human name from core/i18n.json — \"bar.block.<id>\" first, then \"bar.type.<type>\", then the block's own \"label\", then the bare type — so a hand-added block of a known type is named for free.",
 
   "_comment_network": "Light read-only network indicator — connection-type glyph + primary IP. All management is delegated to nm-applet in the tray (left-click its icon); this block's left-click opens nm-connection-editor (GUI editor). Source: `ip -j route get 1.1.1.1` -> { dev, prefsrc } for the default-route interface (so 'wired AND Wi-Fi both up' shows the winning link; a VPN shows via its tun*/wg* device). Type is classified by device prefix (en/eth -> ethernet, wl -> wifi, tun/tap/wg/ppp -> vpn). No connectivity -> 'disconnected' state (does NOT auto-hide). Liveness: a Timer poll every `interval` ms plus `nmcli monitor` for an instant re-poll on any NM event. Built-in glyphs: ethernet \\uf0200, wifi \\uf1eb, vpn \\uf0582, disconnected \\uf0c9d. Settings: showIcon, icon (state object), showText, display ip|ifname, offlineText (\"\" = glyph only when offline), interval, fontSize, textColor/textOpacity, iconColor/iconOpacity, zone*.",
 
@@ -23,7 +25,7 @@
 
   "_comment_zone": "Block type \"zone\" is a decorative wrapper that groups other blocks behind one shared background, and can fold. Its nested blocks live in a top-level \"items\": [ ... ] (sibling of \"settings\", each item a normal block honoring \"enabled\"). settings: zoneColor/zoneOpacity (shape comes from the theme) + optional \"folded\": { enabled, trigger: \"hover\"|\"click\", chevron: bool, icon (Nerd Font glyph OR theme-icon name OR /path/to.png — image icons get iconMode tint|solid|original + iconStrength/iconShade/iconLift), iconSize, iconColor, iconOpacity, iconGap, label, fontSize, textColor, textOpacity }. Folded shows just icon+label; hover reveals the blocks (icon+label crossfade out, items slide+fade in), click keeps icon+label as a persistent toggle handle. folded.enabled=false ⇒ always-expanded decorative meta-block.",
 
-  "_comment_multimonitor": "Optional multi-monitor map: output name -> { enabled, blocks: { start, center, end } }. The PRIMARY monitor (set by `w-monitor primary`, W Hub Displays panel — where the main bar lives) always gets a bar from the root \"blocks\" above; no entry here is needed for it. Any OTHER monitor gets no bar unless it has an entry: \"enabled\": false (or omitted) means no bar there, \"enabled\": true (with an optional \"blocks\") shows one. A monitor entry's \"blocks\" overrides only which blocks appear (same { type, settings } shape as the root \"blocks\") — geometry/colors always come from the theme and this file's global settings, never per-monitor (avoids desynced popup baselines). Example: { \"HDMI-A-1\": { \"enabled\": true, \"blocks\": { \"start\": [...], \"end\": [ { \"type\": \"clock\", ... } ] } } }.",
+  "_comment_multimonitor": "Optional per-monitor map: output name -> { enabled, show, blocks }. ALL THREE ARE OPTIONAL and each answers a different question. \"enabled\" — is there a bar on this output at all: an explicit true/false always wins (so the PRIMARY monitor's bar can be switched off here too); with the key absent the primary monitor (set by `w-monitor primary`, W Hub -> Displays) gets a bar and any other output gets one only if it has an entry here at all. \"show\" — a sparse { \"<block id>\": true|false } map overriding, for THIS output only, whether each block is shown; an id missing from it falls back to that block's global \"enabled\". This is what W Hub -> Appearance -> Bar writes, and it is kept when the bar is switched off, so switching it back on restores the same composition. \"blocks\" — the heavy hammer: a full { start, center, end } replacement of the block composition for this output (same { type, id, settings } shape as the root \"blocks\"), for a deliberately different bar on a second screen; settings are then a separate copy that no longer follows the root. Geometry/colors are never per-monitor (that would desync popup baselines). Example: { \"HDMI-A-1\": { \"enabled\": true, \"show\": { \"tray\": false, \"systemMonitors\": false } } }.",
 
   "bgColor": "surface",
   "bgOpacity": "bar",
@@ -33,7 +35,7 @@
 
   "blocks": {
     "start": [
-      { "type": "button", "enabled": true, "settings": {
+      { "type": "button", "id": "hub", "enabled": true, "settings": {
         "icon": "w-logo",
         "label": "",
         "gap": 6,
@@ -50,7 +52,7 @@
         "clickDuration": 200,
         "cursor": "pointer"
       } },
-      { "type": "button", "enabled": true, "settings": {
+      { "type": "button", "id": "assistant", "enabled": true, "settings": {
         "icon": "󰚩",
         "label": "",
         "gap": 6,
@@ -67,7 +69,7 @@
         "clickDuration": 200,
         "cursor": "pointer"
       } },
-      { "type": "workspaces", "enabled": true, "settings": {
+      { "type": "workspaces", "id": "workspaces", "enabled": true, "settings": {
         "zoneColor": "inputBg", "zoneOpacity": 0.85,
         "buttonSize": 0,
         "buttonColor": "inputBg", "buttonOpacity": 0.85,
@@ -77,7 +79,7 @@
         "fontColor": "text", "fontOpacity": 1.0,
         "fontActiveColor": "accentFg", "fontActiveOpacity": 1.0
       } },
-      { "type": "apps", "enabled": true, "settings": {
+      { "type": "apps", "id": "apps", "enabled": true, "settings": {
         "zoneColor": "inputBg", "zoneOpacity": 0.85,
         "buttonSize": 0,
         "buttonColor": "inputBg", "buttonOpacity": 0.0,
@@ -89,7 +91,7 @@
       } }
     ],
     "center": [
-      { "type": "clock", "enabled": true, "settings": {
+      { "type": "clock", "id": "clock", "enabled": true, "settings": {
         "format": [
           "HH:mm",
           "HH:mm:ss"
@@ -105,7 +107,7 @@
         "clickDuration": 200,
         "cursor": "pointer"
       } },
-      { "type": "zone", "enabled": true, "settings": {
+      { "type": "zone", "id": "systemMonitors", "enabled": false, "settings": {
         "zoneColor": "inputBg", "zoneOpacity": 0.85,
         "folded": {
           "enabled": true,
@@ -123,7 +125,7 @@
         "clickDuration": 200,
         "cursor": "pointer"
       }, "items": [
-          { "type": "cpu", "enabled": true, "settings": {
+          { "type": "cpu", "id": "cpu", "enabled": true, "settings": {
             "showIcon": false,
             "icon": "",
             "showPercent": true,
@@ -137,7 +139,7 @@
             "zoneBorderWidth": 0,
             "zonePadding": { "left": 3, "right": 3 }
           } },
-          { "type": "ram", "enabled": true, "settings": {
+          { "type": "ram", "id": "ram", "enabled": true, "settings": {
             "showIcon": true,
             "icon": "",
             "display": "percent",
@@ -151,7 +153,7 @@
             "zoneBorderWidth": 0,
             "zonePadding": { "left": 3, "right": 3 }
           } },
-          { "type": "temp", "enabled": true, "settings": {
+          { "type": "temp", "id": "temp", "enabled": true, "settings": {
             "showIcon": true,
             "icon": "",
             "unit": "C",
@@ -167,7 +169,7 @@
             "zoneBorderWidth": 0,
             "zonePadding": { "left": 3, "right": 3 }
           } },
-          { "type": "disk", "enabled": true, "settings": {
+          { "type": "disk", "id": "disk", "enabled": true, "settings": {
             "showIcon": true,
             "icon": "",
             "path": "/",
@@ -186,7 +188,7 @@
       }
     ],
     "end": [
-      { "type": "updates", "enabled": true, "settings": {
+      { "type": "updates", "id": "updates", "enabled": true, "settings": {
         "showIcon": true,
         "icon": { "available": "", "reboot": "" },
         "showCount": true,
@@ -203,7 +205,7 @@
         "clickDuration": 200,
         "cursor": "pointer"
       } },
-      { "type": "network", "enabled": true, "settings": {
+      { "type": "network", "id": "network", "enabled": false, "settings": {
         "showIcon": true,
         "icon": { "ethernet": "", "wifi": "", "vpn": "", "disconnected": "" },
         "showText": true,
@@ -219,7 +221,7 @@
         "clickDuration": 200,
         "cursor": "pointer"
       } },
-      { "type": "keyboardLayout", "enabled": true, "settings": {
+      { "type": "keyboardLayout", "id": "keyboardLayout", "enabled": true, "settings": {
         "showIcon": true,
         "icon": "",
         "display": "code",
@@ -234,7 +236,7 @@
         "clickDuration": 200,
         "cursor": "pointer"
       } },
-      { "type": "battery", "enabled": true, "settings": {
+      { "type": "battery", "id": "battery", "enabled": true, "settings": {
         "showIcon": true,
         "icon": { "levels": ["", "", "", "", ""], "charging": "" },
         "showPercent": true,
@@ -246,7 +248,7 @@
         "zoneColor": "inputBg", "zoneOpacity": 0.85,
         "cursor": "default"
       } },
-      { "type": "brightness", "enabled": true, "settings": {
+      { "type": "brightness", "id": "brightness", "enabled": false, "settings": {
         "showIcon": true,
         "icon": "",
         "showPercent": true,
@@ -256,7 +258,7 @@
         "zoneColor": "inputBg", "zoneOpacity": 0.85,
         "cursor": "pointer"
       } },
-      { "type": "kbdBacklight", "enabled": true, "settings": {
+      { "type": "kbdBacklight", "id": "kbdBacklight", "enabled": false, "settings": {
         "showIcon": true,
         "icon": "",
         "showPercent": true,
@@ -266,7 +268,7 @@
         "zoneColor": "inputBg", "zoneOpacity": 0.85,
         "cursor": "pointer"
       } },
-      { "type": "volume", "enabled": true, "settings": {
+      { "type": "volume", "id": "volume", "enabled": true, "settings": {
         "showIcon": true,
         "icon": { "normal": "", "muted": "" },
         "fontSize": 12,
@@ -279,7 +281,7 @@
         "clickDuration": 200,
         "cursor": "pointer"
       } },
-      { "type": "notifications", "enabled": true, "settings": {
+      { "type": "notifications", "id": "notifications", "enabled": true, "settings": {
         "showIcon": true,
         "icon": { "idle": "", "dnd": "" },
         "showText": false,
@@ -294,7 +296,7 @@
         "clickDuration": 200,
         "cursor": "pointer"
       } },
-      { "type": "tray", "enabled": true, "settings": {
+      { "type": "tray", "id": "tray", "enabled": true, "settings": {
         "zoneColor": "inputBg", "zoneOpacity": 0.85,
         "buttonGap": 0,
         "buttonSize": 0,

@@ -1,7 +1,9 @@
 [Desktop Entry]
 Name=Volume Control
 Comment=W Linux audio control
-Exec=sh -c "hyprctl dispatch 'hl.dsp.global(\"quickshell:volumecontrol\")'"
+# NB: no `sh -c` — a .desktop Exec does not treat ' as a quote character, so single
+# quotes are stripped and the shell then chokes on the bare `(`. See quickshell-hub.md.
+Exec=hyprctl dispatch "hl.dsp.global(\"quickshell:volumecontrol\")"
 Icon=audio-volume-high
 Type=Application
 Categories=AudioVideo;Audio;

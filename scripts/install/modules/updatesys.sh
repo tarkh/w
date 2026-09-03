@@ -1,8 +1,8 @@
 # modules/updatesys.sh — W Linux edge update client (apply.sh --updatesys)
 # apply.sh context: runs on the live system as root, post-boot. Deploys the w-sync
-# script + sync-map + check timer (they ride --rootfs too, but this module installs
-# them itself so `--updatesys` alone is sufficient — sync-map routes changes to them
-# here) and wires up the update
+# script + sync-map + release trust anchor + check timer (they ride --rootfs too, but
+# this module installs them itself so `--updatesys` alone is sufficient — sync-map
+# routes changes to them here) and wires up the update
 # channel. update-system.md axis 1+2 (edge / git). The stable channel needs none of
 # this — it gets W as the w-system pacman package (phase 6); on stable this module
 # just records CHANNEL=stable and leaves the timer off.
@@ -26,6 +26,8 @@ mod_updatesys() {
   info "Deploying w-sync + sync-map + check timer..."
   install -Dm755 "$SRC/rootfs/usr/bin/w-sync" /usr/bin/w-sync
   install -Dm644 "$SRC/rootfs/usr/share/w/update/sync-map" /usr/share/w/update/sync-map
+  install -Dm644 "$SRC/rootfs/usr/share/w/update/w-release.allowed_signers" \
+    /usr/share/w/update/w-release.allowed_signers
   install -Dm644 "$SRC/rootfs/etc/systemd/user/w-sync-check.service" /etc/systemd/user/w-sync-check.service
   install -Dm644 "$SRC/rootfs/etc/systemd/user/w-sync-check.timer" /etc/systemd/user/w-sync-check.timer
 
@@ -41,9 +43,35 @@ mod_updatesys() {
     a="$(sed -nE 's/^site_ref=(.*)$/\1/p' /var/lib/w/install.conf | tail -1)";     [[ -n "$a" ]] && site_ref="${a//\"/}"
     a="$(sed -nE 's/^site_profile=(.*)$/\1/p' /var/lib/w/install.conf | tail -1)"; [[ -n "$a" ]] && site_profile="${a//\"/}"
   fi
+  # Whether this machine demands a signed release tag before it pulls. Derived ONCE,
+  # here, from what the checkout actually tracks, and then written into update.conf as
+  # a plain readable line — not re-inferred on every run, so an admin can see it and
+  # change it. The official repository publishes signed release snapshots and nothing
+  # else, so anything tracking it is strict. Anything else — a fork, or the dev VM
+  # tracking the private repo, whose branch is an ordinary history with no tags at all
+  # — would have every update refused, so it starts open. w-sync's own default when
+  # the key is absent is `yes`: an update.conf predating this becomes strict, which is
+  # the right way round for the machines that are on the real repo.
+  # It starts at yes and is only ever relaxed, never tightened: a stable install that
+  # someone later flips to edge by hand must land on the strict setting, not inherit
+  # an "off" that was written when there was no checkout to reason about.
+  local verify="yes" origin_url=""
   if [[ -d "$repo/.git" ]]; then
     channel="edge"
-    ref="$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
+    # Both facts are read out of the checkout's FILES, not by running git in it.
+    # This module runs as root, the checkout belongs to the primary user (below), and
+    # git's ownership guard refuses a root shell there — every `git -C "$repo"` here
+    # dies silently and falls back to its default. That was invisible while the only
+    # fallback was `main`, which is what the answer usually is anyway; it stopped
+    # being invisible when the signature setting started depending on the remote, and
+    # a machine on the official repository was seeded as if it were a fork.
+    # `git config --file` reads a file, not a repository, so no guard applies.
+    ref="$(sed -n 's|^ref: refs/heads/||p' "$repo/.git/HEAD" 2>/dev/null)"; ref="${ref:-main}"
+    origin_url="$(git config --file "$repo/.git/config" --get remote.origin.url 2>/dev/null || true)"
+    case "${origin_url%.git}" in
+      https://github.com/tarkh/w|*@github.com:tarkh/w|ssh://git@github.com/tarkh/w) ;;
+      *) verify="no" ;;
+    esac
     # Edge = a dev checkout: hand it to the primary user so `w-sync check`/`pull`
     # run without root (apply still escalates via sudo). Creds embedded in the
     # clone URL live in .git/config — lock it down.
@@ -69,6 +97,7 @@ mod_updatesys() {
 # /etc/w/update.conf — W Linux update channel (read by w-sync). Vendor default.
 CHANNEL=stable
 REF=main
+VERIFY_SIGNATURE=yes
 SITE_REPO=
 SITE_REF=main
 SITE=default
@@ -76,12 +105,19 @@ EOF
 
   # Seed the live config once (seed-if-absent), reflecting the detected channel.
   if [[ ! -e /etc/w/update.conf ]]; then
-    info "Seeding /etc/w/update.conf (channel: $channel, ref: $ref)..."
+    info "Seeding /etc/w/update.conf (channel: $channel, ref: $ref, verify: $verify)..."
     install -Dm644 /dev/stdin /etc/w/update.conf <<EOF
 # /etc/w/update.conf — W Linux update channel selection (read by w-sync).
 #   CHANNEL  edge  → track the git repo in /var/lib/w/src via w-sync.
 #            stable→ receive W as the w-system pacman package (default).
 #   REF      the branch or tag the edge channel follows.
+#   VERIFY_SIGNATURE  yes → w-sync pulls only a tip carrying a release tag signed by
+#            a key in /usr/share/w/update/w-release.allowed_signers, and refuses
+#            outright otherwise. Set to 'no' only for a checkout that tracks
+#            something other than the official W repository (a fork, or a
+#            development branch), where there are no signed release tags to find.
+#            Turning it off on a machine that tracks the real repo means an update
+#            is trusted because it arrived, which is not a reason.
 #   SITE_REPO  optional git URL of a FLEET overlay repo: per-profile
 #            /etc/w/site-defaults.d (fleet defaults, below the local admin) and
 #            /etc/w/policy.d (fleet mandate, locks the key). Empty = no fleet,
@@ -89,12 +125,34 @@ EOF
 #   SITE_REF / SITE  the overlay's branch and which profile directory applies.
 CHANNEL=$channel
 REF=$ref
+VERIFY_SIGNATURE=$verify
 SITE_REPO=$site_repo
 SITE_REF=$site_ref
 SITE=$site_profile
 EOF
   else
     info "/etc/w/update.conf exists — leaving channel selection untouched."
+    # …with one exception, and only for a key that is ABSENT: a value already in the
+    # file is admin state and is never touched. Machines installed before signing
+    # existed have no VERIFY_SIGNATURE line, so they inherit w-sync's default (yes).
+    # That is the right answer on the official repository and the wrong one on a
+    # checkout that tracks anything else — a fork, or the dev repo, whose branch is an
+    # ordinary history with no release tags at all: every update there would be
+    # refused, and the update delivering the new w-sync is the last one that could
+    # still have fixed it. So the same derivation the seed uses is written once here.
+    # It cannot weaken a machine: what it writes is exactly what a fresh install of
+    # the same checkout would have been given, and on the official repo it equals the
+    # default it replaces.
+    if ! grep -qE '^[[:space:]]*VERIFY_SIGNATURE=' /etc/w/update.conf; then
+      info "Recording VERIFY_SIGNATURE=$verify (absent — this install predates release signing)."
+      cat >> /etc/w/update.conf <<EOF
+
+# Added by mod_updatesys: this install predates release signing. 'yes' = w-sync
+# pulls only a tip whose vX.Y.Z tag is signed by a key in
+# /usr/share/w/update/w-release.allowed_signers. Derived from the tracked remote.
+VERIFY_SIGNATURE=$verify
+EOF
+    fi
   fi
 
   # Periodic edge check (per-user timer, like w-update-check). Only meaningful on

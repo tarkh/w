@@ -4,8 +4,15 @@
 # The `edge` channel (update-system.md, axis 1+2) tracks the W dev repo directly:
 # /var/lib/w/src is a real git checkout (cloned at install time when the user picks
 # Edge in the TUI, see modules/firstboot.sh). w-sync compares the local checkout to
-# its upstream ref, shows what would arrive, and on apply does a home pre-snapshot →
-# `git pull --ff-only` → a SELECTIVE `apply.sh` driven by the changed files.
+# its upstream ref, shows what would arrive, and on apply does a signature check →
+# home pre-snapshot → `git pull --ff-only` → a SELECTIVE `apply.sh` driven by the
+# changed files.
+#
+# The signature check comes first because everything after it runs as root: the tip
+# being pulled must carry a `v*` tag signed by a key in the deployed trust anchor
+# (/usr/share/w/update/w-release.allowed_signers), or nothing happens at all. See
+# verify_tip() for why checking the tip alone is enough and why the anchor is the one
+# file NOT read from the checkout.
 #
 # Orthogonal to w-update (that upgrades Arch/AUR *packages*; this updates W *itself*)
 # and to w-reset (that force-restores a module to the W default). The `stable`
@@ -35,6 +42,12 @@ UPDATE_CONF="/etc/w/update.conf"
 # Prefer the just-pulled map in the checkout; fall back to the deployed copy.
 SYNC_MAP_REPO="$REPO/rootfs/usr/share/w/update/sync-map"
 SYNC_MAP_SYS="/usr/share/w/update/sync-map"
+# The trust anchor for release signatures — and the ONE file where the rule above is
+# inverted. The map is read from the checkout because a fresh map is a better map; the
+# anchor is read ONLY from the deployed copy, because a key taken from the repository
+# being verified verifies nothing. Root of trust is the installation image; a new
+# anchor can only arrive through an update that verified under the previous one.
+SIGNERS_SYS="/usr/share/w/update/w-release.allowed_signers"
 
 # Sync state is MACHINE-WIDE, not per-user: the checkout is a single shared object,
 # so "how far behind is this machine" is one answer for everyone on it. The directory
@@ -107,6 +120,13 @@ UPSTREAM="origin/$REF"
 # ever having run. Empty SITE_REPO (every single-machine install) = the flag is
 # never passed and nothing about the site layer is reachable.
 SITE_REPO="$(get_conf "$UPDATE_CONF" SITE_REPO "")"
+# Whether an update must carry a signature this machine trusts. Defaults to yes, so a
+# machine whose update.conf predates the key (it is seeded once and never rewritten)
+# becomes strict on the update that delivers this code rather than staying open by
+# omission. mod_updatesys writes it explicitly at install time — `no` only for a
+# checkout that tracks something other than the official repo, where nothing is tagged
+# to begin with (a fork, or the dev VM tracking the private repo).
+VERIFY_SIGNATURE="$(get_conf "$UPDATE_CONF" VERIFY_SIGNATURE yes)"
 
 # ── git always runs as the checkout's owner ──────────────────────────────────
 # /var/lib/w/src is a USER-owned git checkout by design (mod_updatesys hands it to
@@ -234,6 +254,54 @@ require_edge() {
   die "not an edge system (CHANNEL=$CHANNEL, git checkout: $([[ -d $REPO/.git ]] && echo yes || echo no)). The stable channel updates via the w-system package."
 }
 ensure_git() { command -v git >/dev/null || die "git is not installed."; }
+
+# ── Release signature ────────────────────────────────────────────────────────
+# What stands between a compromised repository and root on this machine. Everything
+# w-sync does after a pull runs apply.sh as root, so the signature has to be checked
+# BEFORE the pull — before the pre-snapshot, even, so that a rejected update leaves
+# the machine bit-for-bit as it was.
+#
+# Only the TIP is verified, and that is sufficient rather than lax: the public history
+# is one commit per release, each tagged, and `pull --ff-only` lands exactly on the
+# commit checked here. No intermediate revision is ever checked out, so no intermediate
+# revision needs a signature — the tree that gets applied is the tree that was verified.
+#
+# Only annotated `v*` tags count. The rolling `edge` tag is moved by the nightly ISO
+# workflow, which has no key and must never have one: it points at an install image,
+# it is not a statement about trust, and accepting it would hand the CI token the
+# power the signature exists to withhold.
+verify_tip() {
+  [[ "$VERIFY_SIGNATURE" == yes ]] || {
+    warn "Signature checking is off (VERIFY_SIGNATURE in $UPDATE_CONF) — pulling unverified."
+    return 0
+  }
+  [[ -r "$SIGNERS_SYS" ]] \
+    || die "no release trust anchor at $SIGNERS_SYS — refusing to pull code this machine cannot verify.
+Restore it with: sudo w-reset updatesys   (or set VERIFY_SIGNATURE=no in $UPDATE_CONF to accept that risk)."
+
+  local tags tag
+  tags="$(git_c tag --points-at "$UPSTREAM" --list 'v[0-9]*' 2>/dev/null || true)"
+  [[ -n "$tags" ]] \
+    || die "$UPSTREAM carries no release tag — refusing to pull.
+Every W release is a tagged, signed commit; an untagged tip is not something this
+machine knows how to trust."
+
+  # More than one tag on a commit is not a state releases produce, but if it happens,
+  # any one that verifies is enough — they all name the same commit.
+  while IFS= read -r tag; do
+    [[ -n "$tag" ]] || continue
+    if git_c -c "gpg.ssh.allowedSignersFile=$SIGNERS_SYS" verify-tag "$tag" >/dev/null 2>&1; then
+      info "Signature OK — $tag is signed by a key this machine trusts."
+      return 0
+    fi
+  done <<<"$tags"
+
+  err "$(git_c -c "gpg.ssh.allowedSignersFile=$SIGNERS_SYS" verify-tag "$(head -1 <<<"$tags")" 2>&1 || true)"
+  die "the release tag on $UPSTREAM is not signed by a key in $SIGNERS_SYS — REFUSING TO UPDATE.
+Nothing has been pulled and nothing on this machine has changed. Either the update is
+not genuine, or the release was published without a signature; do not work around this
+without knowing which."
+}
 
 # ── Usage ────────────────────────────────────────────────────────────────────
 usage() {
@@ -415,6 +483,18 @@ cmd_status() {
     else
       echo "Local  : (checkout owned by $OWNER — run as that user to inspect it)"
     fi
+    # Said here because it is the one property of the update path a user cannot see
+    # anywhere else, and "off" is a state someone should be able to discover without
+    # reading a config file.
+    if [[ "$VERIFY_SIGNATURE" == yes ]]; then
+      if [[ -r "$SIGNERS_SYS" ]]; then
+        echo "Signed : required — updates are verified against $SIGNERS_SYS"
+      else
+        echo "Signed : required, but the trust anchor is MISSING — updates will refuse"
+      fi
+    else
+      echo "Signed : NOT required (VERIFY_SIGNATURE=no in $UPDATE_CONF)"
+    fi
   fi
   if [[ -n "$SITE_REPO" ]]; then
     echo "Site   : $SITE_REPO (profile $(get_conf "$UPDATE_CONF" SITE default), $(git -C /var/lib/w/site rev-parse --short HEAD 2>/dev/null || echo 'not cloned yet'))"
@@ -591,7 +671,17 @@ cmd_update() {
   require_edge; ensure_git; require_git_access; warn_if_degraded
   info "Fetching $UPSTREAM..."
   local ferr
-  if ! ferr=$(git_c fetch --tags --prune origin 2>&1); then
+  # --force --prune-tags, and both are load-bearing. A plain `fetch --tags` REFUSES to
+  # move a tag it already has ("would clobber existing tag") and fails the whole fetch
+  # — and W has a tag that moves by design: `edge`, repointed by the nightly ISO build
+  # every night. Without these flags the second update on any machine that ever saw
+  # that tag dies, and dies misdiagnosed as a credentials problem. Found on the dev VM
+  # while testing signature verification, 2026-09-03.
+  #
+  # Letting upstream move tags is not a hole this opens: nothing here trusts a tag for
+  # existing, only for carrying a signature verify_tip() accepts. A moved tag without
+  # one is refused a few lines below, exactly as an invented one would be.
+  if ! ferr=$(git_c fetch --tags --prune --prune-tags --force origin 2>&1); then
     if [[ -n "$ferr" ]]; then err "$ferr"; fi
     die "$(fetch_die_msg "$ferr")"
   fi
@@ -609,6 +699,10 @@ cmd_update() {
     cmd_check
     return 0
   fi
+
+  # Before the log, the prompt and the snapshot: a refusal must cost the machine
+  # nothing, and must not be preceded by a page of text an attacker wrote.
+  verify_tip
 
   info "$behind new commit(s):"
   git_c log --oneline "HEAD..$UPSTREAM"

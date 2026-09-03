@@ -998,5 +998,9 @@ Item {
     }
 
     // ── Dropdown overlay layer (above the content) ───────────────────────────────
-    HubDropdown { id: menuLayer; anchors.fill: parent; returnFocusTo: root }
+    // flipUp: the Keyboard segment's last row ("NumLock at login") sits at the very
+    // bottom of a panel that already fills the card, so its menu had nowhere to grow
+    // into and was drawn past the card's edge. The flip only fires when a menu really
+    // does not fit downward, so every other row here is unaffected.
+    HubDropdown { id: menuLayer; anchors.fill: parent; flipUp: true; returnFocusTo: root }
 }

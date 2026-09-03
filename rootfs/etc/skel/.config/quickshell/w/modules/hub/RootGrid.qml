@@ -1,12 +1,28 @@
 // W Linux — Hub root grid (Control Center glance).
-// The Hub's landing screen: a grid of tiles. Section tiles (Appearance, Network) drill
-// into their panels; Sound/Brightness open their popups (no duplicated inline sliders);
-// the action/link tiles run a command or open a popup. It is a pure front-end over the W
-// tools — the only state it reads here is the update count (a FileView on updates.json)
-// for the Updates badge and the Backlight/KbdBacklight services (to hide Brightness only
-// when neither the screen nor the keyboard has one). The
-// privileged network settings (DNS, firewall) moved into the Network panel. Height is
-// content-driven so the Hub card morphs to it.
+// The Hub's landing screen: a 4×4 grid of tiles. Section tiles drill into their panels;
+// Sound/Brightness open their popups (no duplicated inline sliders); the action/link
+// tiles run a command or open a popup. It is a pure front-end over the W tools — the
+// only state it reads here is the update count (a FileView on updates.json) for the
+// Updates badge and the Backlight/KbdBacklight services (to hide Brightness only when
+// neither the screen nor the keyboard has one).
+//
+// Composition (settled by the menu reorganisation, and the reason the numbers are what
+// they are): ten section tiles in reading order — look → devices → connectivity → power
+// → system → extras — then six quick actions. No divider between the two blocks: the
+// tiles are visually uniform, so the seam mid-row does not read, and a caption pair
+// would push the grid past the card's height ceiling and make the root glance scroll.
+//
+// Brightness is deliberately the LAST tile: it is the only conditional one left (Security
+// moved into the System panel and took its /etc/default/limine gate with it), so on a
+// machine with no backlight at all — a desktop, a VM — the grid degrades to a clean
+// 4+4+4+3 with the gap at the very end instead of a hole in the middle.
+//
+// What is NOT here, and why: Calendar and Screenshot became launcher entries
+// (/usr/share/applications/w-calendar.desktop, w-screenshot.desktop) — both are
+// app-shaped one-shots rather than system state, and the bar's clock already opens the
+// calendar. Security and Date & Time became tabs of the System panel. There is no Lock
+// tile either: the power menu (Super+Backspace) already owns lock/logout/suspend/reboot/
+// shutdown as one set — a second door to one of them only makes the grid longer.
 import QtQuick
 import Quickshell
 import Quickshell.Io
@@ -17,7 +33,15 @@ Item {
     id: root
     implicitHeight: grid.implicitHeight
 
-    // Deferred close: run after the Hub is fully hidden (lock / screenshot).
+    // Deferred close: run a command only after the Hub is fully hidden.
+    //
+    // NOTHING EMITS THIS RIGHT NOW — it is kept deliberately. The mechanism (this signal
+    // → Hub.pendingCmd → executed from Hub's onVisibleChanged once the window unmaps)
+    // exists for commands that photograph or blur the screen: run bare, they capture the
+    // Hub's own fading card and the blurred backdrop behind it. The last caller was the
+    // Screenshot tile, which moved to the launcher; a lock tile would need the same
+    // treatment, as would any future capture/recording action. Kept as the one worked-out
+    // answer to that class of bug rather than rediscovered the next time it bites.
     signal deferredExec(var cmd)
     // Drill into a Hub section panel (Appearance / Network / …). Handled by the nav stack.
     signal navigate(var route)
@@ -28,15 +52,17 @@ Item {
 
     // ── Keyboard roving-focus (2D grid) ─────────────────────────────────────────────
     // The Grid positioner already skips `visible:false` children when arranging (a
-    // hidden Security/Brightness tile leaves no gap on screen), so the roving order
-    // has to be the same COMPACT list — not the fixed declaration order — or arrow
-    // nav would drift out of sync with what is actually adjacent on screen. Read
-    // through a property binding (not an imperative loop) so it recomputes for free
-    // whenever any tile's own `visible` binding changes (limineAvailable, Backlight…).
+    // hidden Brightness tile leaves no gap on screen), so the roving order has to be
+    // the same COMPACT list — not the fixed declaration order — or arrow nav would
+    // drift out of sync with what is actually adjacent on screen. Read through a
+    // property binding (not an imperative loop) so it recomputes for free whenever any
+    // tile's own `visible` binding changes. Order here MUST match the declaration order
+    // in the Grid below.
     readonly property var allTiles: [
-        tSystem, tAi, tAppearance, tNotifications, tDatetime, tNetwork, tSecurity,
-        tPower, tPacks, tInput, tDisplays, tHotkeys, tSound, tBrightness,
-        tScreenshot, tUpdates, tClipboard, tLayouts, tCalendar, tPowerMenu
+        tAppearance, tDisplays, tNotifications, tInput,
+        tHotkeys, tNetwork, tPower, tSystem,
+        tAi, tPacks, tUpdates, tClipboard,
+        tLayouts, tPowerMenu, tSound, tBrightness
     ]
     readonly property var visTiles: root.allTiles.filter((t) => t.visible)
     property int focusIndex: 0
@@ -81,20 +107,6 @@ Item {
         }
     }
 
-    // ── Security tile gate (/etc/default/limine) ────────────────────────────────────
-    // Secure Boot only exists on the encrypted+Limine install path (sbctl/tpm2-tools
-    // are installed there and nowhere else, see package-limine.md) — a plain GRUB
-    // system has no w-secureboot backend to front at all, so the tile is hidden
-    // rather than shown disabled (unlike the in-panel "unsupported firmware" case,
-    // which the SecurityPanel itself grays out — this is a structural absence, not a
-    // firmware limitation).
-    property bool limineAvailable: false
-    FileView {
-        path: "/etc/default/limine"
-        onLoaded: root.limineAvailable = true
-        onLoadFailed: root.limineAvailable = false
-    }
-
     // ── Helpers ────────────────────────────────────────────────────────────────────
     function openPopup(ns) { Hyprland.dispatch('hl.dsp.global("quickshell:' + ns + '")'); }
     function runAndClose(cmd) { Quickshell.execDetached(cmd); Overlays.close("hub"); }
@@ -111,8 +123,66 @@ Item {
         // `focused` binding on its own instance's `t*` id — self-reference inside an
         // object's own property list is valid QML (the id is in scope as soon as it's
         // declared) and keeps the roving-index math in one place (allTiles/visTiles)
-        // instead of hand-numbering 19 literal indices that would drift the moment a
-        // conditional tile (Security/Brightness) is hidden.
+        // instead of hand-numbering literal indices that would drift the moment the
+        // conditional Brightness tile is hidden.
+
+        // ── Sections (drill-in) ────────────────────────────────────────────────────
+        Tile {
+            id: tAppearance
+            width: root.tileW
+            icon: "preferences-desktop-theme"; glyph: String.fromCodePoint(0xf0035) // nf-md-palette
+            label: Strings.t("hub.appearance")
+            focused: root.focusIndex === root.visTiles.indexOf(tAppearance)
+            onActivated: root.navigate("appearance")
+        }
+        Tile {
+            id: tDisplays
+            width: root.tileW
+            icon: "video-display"; glyph: String.fromCodePoint(0xf0379) // nf-md-monitor
+            label: Strings.t("hub.displays")
+            focused: root.focusIndex === root.visTiles.indexOf(tDisplays)
+            onActivated: root.navigate("displays")
+        }
+        Tile {
+            id: tNotifications
+            width: root.tileW
+            icon: "preferences-desktop-notification"; glyph: String.fromCodePoint(0xf009e) // nf-md-bell
+            label: Strings.t("hub.notifications")
+            focused: root.focusIndex === root.visTiles.indexOf(tNotifications)
+            onActivated: root.navigate("notifications")
+        }
+        Tile {
+            id: tInput
+            width: root.tileW
+            icon: "input-keyboard"; glyph: String.fromCodePoint(0xf030c) // nf-md-keyboard
+            label: Strings.t("hub.input")
+            focused: root.focusIndex === root.visTiles.indexOf(tInput)
+            onActivated: root.navigate("input")
+        }
+        Tile {
+            id: tHotkeys
+            width: root.tileW
+            icon: "preferences-desktop-keyboard-shortcuts"; glyph: String.fromCodePoint(0xf030c) // nf-md-keyboard
+            label: Strings.t("hub.hotkeys")
+            focused: root.focusIndex === root.visTiles.indexOf(tHotkeys)
+            onActivated: root.navigate("hotkeys")
+        }
+        Tile {
+            id: tNetwork
+            width: root.tileW
+            icon: "preferences-system-network"; glyph: String.fromCodePoint(0xf0317) // nf-md-lan
+            label: Strings.t("hub.network")
+            focused: root.focusIndex === root.visTiles.indexOf(tNetwork)
+            onActivated: root.navigate("network")
+        }
+        Tile {
+            id: tPower
+            width: root.tileW
+            icon: "battery"; glyph: String.fromCodePoint(0xf0241) // nf-md-flash
+            label: Strings.t("hub.energy")
+            focused: root.focusIndex === root.visTiles.indexOf(tPower)
+            onActivated: root.navigate("power")
+        }
         Tile {
             id: tSystem
             width: root.tileW
@@ -130,55 +200,6 @@ Item {
             onActivated: root.navigate("ai")
         }
         Tile {
-            id: tAppearance
-            width: root.tileW
-            icon: "preferences-desktop-theme"; glyph: String.fromCodePoint(0xf0035) // nf-md-palette
-            label: Strings.t("hub.appearance")
-            focused: root.focusIndex === root.visTiles.indexOf(tAppearance)
-            onActivated: root.navigate("appearance")
-        }
-        Tile {
-            id: tNotifications
-            width: root.tileW
-            icon: "preferences-desktop-notification"; glyph: String.fromCodePoint(0xf009e) // nf-md-bell
-            label: Strings.t("hub.notifications")
-            focused: root.focusIndex === root.visTiles.indexOf(tNotifications)
-            onActivated: root.navigate("notifications")
-        }
-        Tile {
-            id: tDatetime
-            width: root.tileW
-            icon: "preferences-system-time"; glyph: String.fromCodePoint(0xf0954) // nf-md-clock_outline
-            label: Strings.t("hub.datetime")
-            focused: root.focusIndex === root.visTiles.indexOf(tDatetime)
-            onActivated: root.navigate("datetime")
-        }
-        Tile {
-            id: tNetwork
-            width: root.tileW
-            icon: "preferences-system-network"; glyph: String.fromCodePoint(0xf0317) // nf-md-lan
-            label: Strings.t("hub.network")
-            focused: root.focusIndex === root.visTiles.indexOf(tNetwork)
-            onActivated: root.navigate("network")
-        }
-        Tile {
-            id: tSecurity
-            width: root.tileW
-            visible: root.limineAvailable
-            icon: "security-high"; glyph: String.fromCodePoint(0xf0498) // nf-md-shield
-            label: Strings.t("hub.security")
-            focused: root.focusIndex === root.visTiles.indexOf(tSecurity)
-            onActivated: root.navigate("security")
-        }
-        Tile {
-            id: tPower
-            width: root.tileW
-            icon: "battery"; glyph: String.fromCodePoint(0xf0241) // nf-md-flash
-            label: Strings.t("hub.energy")
-            focused: root.focusIndex === root.visTiles.indexOf(tPower)
-            onActivated: root.navigate("power")
-        }
-        Tile {
             id: tPacks
             width: root.tileW
             icon: "package-x-generic"; glyph: String.fromCodePoint(0xf03d3) // nf-md-package_variant
@@ -186,55 +207,8 @@ Item {
             focused: root.focusIndex === root.visTiles.indexOf(tPacks)
             onActivated: root.navigate("packs")
         }
-        Tile {
-            id: tInput
-            width: root.tileW
-            icon: "input-keyboard"; glyph: String.fromCodePoint(0xf030c) // nf-md-keyboard
-            label: Strings.t("hub.input")
-            focused: root.focusIndex === root.visTiles.indexOf(tInput)
-            onActivated: root.navigate("input")
-        }
-        Tile {
-            id: tDisplays
-            width: root.tileW
-            icon: "video-display"; glyph: String.fromCodePoint(0xf0379) // nf-md-monitor
-            label: Strings.t("hub.displays")
-            focused: root.focusIndex === root.visTiles.indexOf(tDisplays)
-            onActivated: root.navigate("displays")
-        }
-        Tile {
-            id: tHotkeys
-            width: root.tileW
-            icon: "preferences-desktop-keyboard-shortcuts"; glyph: String.fromCodePoint(0xf030c) // nf-md-keyboard
-            label: Strings.t("hub.hotkeys")
-            focused: root.focusIndex === root.visTiles.indexOf(tHotkeys)
-            onActivated: root.navigate("hotkeys")
-        }
-        Tile {
-            id: tSound
-            width: root.tileW
-            icon: "audio-volume-high"; glyph: Glyphs.volumeHigh
-            label: Strings.t("hub.sound")
-            focused: root.focusIndex === root.visTiles.indexOf(tSound)
-            onActivated: root.openPopup("volumecontrol")
-        }
-        Tile {
-            id: tBrightness
-            width: root.tileW
-            visible: Backlight.available || KbdBacklight.available
-            icon: "display-brightness"; glyph: Glyphs.brightness
-            label: Strings.t("hub.brightness")
-            focused: root.focusIndex === root.visTiles.indexOf(tBrightness)
-            onActivated: root.openPopup("brightnesscontrol")
-        }
-        Tile {
-            id: tScreenshot
-            width: root.tileW
-            icon: "camera-photo"; glyph: String.fromCodePoint(0xf0d5c)  // nf-md-camera
-            label: Strings.t("hub.screenshot")
-            focused: root.focusIndex === root.visTiles.indexOf(tScreenshot)
-            onActivated: root.deferredExec(["w-screenshot", "region"])
-        }
+
+        // ── Quick actions (command / popup links) ──────────────────────────────────
         Tile {
             id: tUpdates
             width: root.tileW
@@ -252,7 +226,6 @@ Item {
             focused: root.focusIndex === root.visTiles.indexOf(tClipboard)
             onActivated: root.openPopup("clipboard")
         }
-
         Tile {
             id: tLayouts
             width: root.tileW
@@ -262,14 +235,6 @@ Item {
             onActivated: root.openPopup("layouts")
         }
         Tile {
-            id: tCalendar
-            width: root.tileW
-            icon: "office-calendar"; glyph: String.fromCodePoint(0xf00ed) // nf-md-calendar
-            label: Strings.t("hub.calendar")
-            focused: root.focusIndex === root.visTiles.indexOf(tCalendar)
-            onActivated: root.openPopup("calendar")
-        }
-        Tile {
             id: tPowerMenu
             width: root.tileW
             icon: "system-shutdown"; glyph: String.fromCodePoint(0xf0425) // nf-md-power
@@ -277,8 +242,23 @@ Item {
             focused: root.focusIndex === root.visTiles.indexOf(tPowerMenu)
             onActivated: root.openPopup("powermenu")
         }
-        // No Lock tile: the power menu (tile above, Super+Backspace) already owns
-        // lock/logout/suspend/reboot/shutdown as one set — a second door to one of
-        // them only makes the grid longer.
+        Tile {
+            id: tSound
+            width: root.tileW
+            icon: "audio-volume-high"; glyph: Glyphs.volumeHigh
+            label: Strings.t("hub.sound")
+            focused: root.focusIndex === root.visTiles.indexOf(tSound)
+            onActivated: root.openPopup("volumecontrol")
+        }
+        // Last on purpose — the grid's only conditional tile (see the file header).
+        Tile {
+            id: tBrightness
+            width: root.tileW
+            visible: Backlight.available || KbdBacklight.available
+            icon: "display-brightness"; glyph: Glyphs.brightness
+            label: Strings.t("hub.brightness")
+            focused: root.focusIndex === root.visTiles.indexOf(tBrightness)
+            onActivated: root.openPopup("brightnesscontrol")
+        }
     }
 }

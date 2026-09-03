@@ -14,6 +14,10 @@
 # switch too — with no change to hyprland.lua itself, which is a static skel
 # file copied once at account creation and would never reach existing users.
 #
+# BAR_POSITION's GUI moved to the Appearance -> Bar tab in 2026-09 (so every bar
+# control has one door, alongside the per-monitor composition `w-bar` writes); the
+# verb here did not change.
+#
 # BAR_POSITION does not go through the layered config at all: config/bar.json
 # already ships a documented user-override slot for this exact key
 # (BarConfig.qml: "position" present -> wins over the theme; absent -> falls
@@ -46,12 +50,14 @@ Info: Per-user overrides that beat the active theme (W Hub -> Appearance -> Sett
 Commands:
   status [--porcelain]              Show the three overrides and their effective values
   bar-position <theme|top|bottom>   Pin the status bar's edge, or hand it back to the theme
+                                    (GUI: Appearance -> Bar, with the rest of the bar)
   blur <theme|off>                  Force Hyprland blur off, or hand it back to the theme
   motion <theme|off>                Force Hyprland animations off, or hand it back to the theme
   help                              Show this help
 
 Config: ~/.config/w/appearance.conf (BLUR/MOTION) + config/bar.json (position)
-GUI: W Hub -> Appearance -> Settings
+GUI: W Hub -> Appearance -> Settings (blur, animations)
+     W Hub -> Appearance -> Bar      (bar position; the bar's composition is `w-bar`)
 
 Exit codes:
   0  Success   1  Runtime error   2  Usage error

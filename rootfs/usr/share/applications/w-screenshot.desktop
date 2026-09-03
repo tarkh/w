@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Screenshot
+Comment=Select a region, then annotate, copy or save it
+Exec=w-screenshot region
+Icon=camera-photo
+Type=Application
+Categories=Graphics;
+Keywords=screenshot;screen shot;capture;region;area;snip;grab;

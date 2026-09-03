@@ -48,12 +48,15 @@ Item {
     readonly property int padT: BarConfig.padOf(zonePad, "top",    BarConfig.padZoneV)
     readonly property int padB: BarConfig.padOf(zonePad, "bottom", BarConfig.padZoneV)
 
-    // Nested blocks. Preferred location is the block's top-level "items" (handed in by
-    // the Loader as itemsModel); falls back to settings.items for older configs. Both
-    // honor "enabled": false (dropped here, same filter as the top level).
+    // Nested blocks. Preferred location is the block's top-level "items", handed in by
+    // the Loader as itemsModel — ALREADY resolved for this monitor by BarConfig.blocksFor
+    // ("enabled" plus the per-monitor `show` override), so it must not be filtered again
+    // here: `show` may legitimately revive an item whose global "enabled" is false, and a
+    // second enabledOnly() pass would drop it right back out. The settings.items fallback
+    // (older configs, no per-monitor resolution possible) still gets the plain filter.
     property var itemsModel: []
-    readonly property var rawItems: (itemsModel && itemsModel.length) ? itemsModel : (settings.items || [])
-    readonly property var items: BarConfig.enabledOnly(rawItems)
+    readonly property bool fromLoader: !!(itemsModel && itemsModel.length)
+    readonly property var items: block.fromLoader ? itemsModel : BarConfig.enabledOnly(settings.items || [])
 
     // ── Folded config ─────────────────────────────────────────────────────────
     readonly property var  fcfg:        settings.folded || ({})

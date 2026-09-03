@@ -1,0 +1,324 @@
+#!/usr/bin/env bash
+# w-bar — W Linux status-bar composition control (per monitor)
+#
+# Which blocks the Quickshell bar shows, and on which outputs. The backend for
+# W Hub -> Appearance -> Bar and the CLI/AI door to the same thing.
+#
+# There is no new store: config/bar.json already IS the user-owned bar config, and
+# it already carries a per-output `monitors` map. This patches that file in place
+# with jq (atomic tmp+mv), the way `w-appearance bar-position` patches `position`
+# in the same file — so a hand-edited bar.json and this CLI can never disagree, and
+# the running bar picks the change up live through its own FileView{watchChanges}.
+# No reload, no restart, no daemon.
+#
+# Two keys per output, both optional:
+#   monitors.<out>.enabled        is there a bar on this output at all (an explicit
+#                                 value wins even on the primary monitor)
+#   monitors.<out>.show.<id>      sparse per-block override; an id that is absent
+#                                 falls back to that block's global "enabled"
+# Switching a bar off only writes `enabled:false` — the `show` map stays untouched,
+# so switching it back on restores the same composition. Nothing is renamed or moved.
+#
+# User-scope throughout: no root, no polkit, no --user fan-out. The Hub calls this
+# as the logged-in user, for their own session (same contract as w-appearance).
+#
+# See w-bar.md, quickshell-bar.md.
+
+set -euo pipefail
+
+# Resolved lazily-safe: a bare $HOME under `set -u` aborts on line one in a context
+# that has none (a system unit, a stripped env) — see checks.md rule 9. With HOME
+# unset this degrades to a path that simply does not exist, and the commands report
+# "bar.json not found" instead of dying on an unbound variable.
+BAR_JSON="${W_BAR_JSON:-${XDG_CONFIG_HOME:-${HOME:-}/.config}/quickshell/w/config/bar.json}"
+DISPLAYS_JSON="${W_DISPLAYS_JSON:-${XDG_STATE_HOME:-${HOME:-}/.local/state}/w/displays.json}"
+
+err() { echo "w-bar: $*" >&2; }
+die() { err "$*"; exit 1; }
+
+usage() {
+  cat <<EOF
+Usage: w-bar <command> [args]
+
+Info: Choose which status-bar blocks show on which monitor (W Hub -> Appearance -> Bar).
+
+Commands:
+  status [--porcelain]                  Bar on/off per output + every block's state
+  list [<output>] [--porcelain]         Block catalog (id, type, zone, parent); with an
+                                        output, its effective on/off for that output
+  monitor <output> <on|off>             Switch the whole bar on that output
+  block <output> <id> <on|off|default>  Show/hide one block there; "default" drops the
+                                        per-output override and follows bar.json again
+  reset [<output>]                      Drop per-output overrides (one output, or all)
+  help                                  Show this help
+
+Blocks are addressed by their "id" in bar.json (unique file-wide, nested zone items
+included). A block with no id renders normally but cannot be addressed here.
+
+Config: $BAR_JSON
+GUI: W Hub -> Appearance -> Bar
+
+Exit codes:
+  0  Success   1  Runtime error   2  Usage error
+
+Examples:
+  w-bar status
+  w-bar block eDP-1 tray off
+  w-bar monitor HDMI-A-1 on
+  w-bar block HDMI-A-1 systemMonitors default
+EOF
+}
+
+require_cfg() {
+  command -v jq >/dev/null 2>&1 || die "jq is required"
+  [[ -f "$BAR_JSON" ]] || die "bar.json not found: $BAR_JSON"
+}
+
+# Atomic in-place jq patch. mktemp gives 0600 and this file is the user's own, but
+# the mode is set explicitly anyway so a root-invoked run cannot narrow it silently.
+patch_cfg() {
+  local tmp
+  tmp="$(mktemp "${BAR_JSON}.XXXXXX")"
+  if ! jq "$@" "$BAR_JSON" >"$tmp"; then
+    rm -f "$tmp"; die "failed to patch $BAR_JSON"
+  fi
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$BAR_JSON"
+}
+
+# The live output list, once. Absent when there is no reachable compositor (a TTY,
+# the AI over ssh, a unit) — every caller has to cope with that rather than treat it
+# as "no monitors".
+_LIVE_JSON=""
+_LIVE_DONE=""
+live_json() {
+  [[ -n "$_LIVE_DONE" ]] && { printf '%s' "$_LIVE_JSON"; return 0; }
+  _LIVE_DONE=1
+  command -v hyprctl >/dev/null 2>&1 || { printf ''; return 0; }
+  _LIVE_JSON="$(hyprctl monitors all -j 2>/dev/null || true)"
+  jq -e 'type == "array"' >/dev/null 2>&1 <<< "$_LIVE_JSON" || _LIVE_JSON=""
+  printf '%s' "$_LIVE_JSON"
+}
+
+# The primary output — the one that carries a bar with no `monitors` entry at all.
+# `w-monitor primary` mirrors it into a small JSON state file (the same one the
+# Quickshell Displays singleton watches). When it was never set, fall back exactly
+# the way Displays.primaryScreen() does — the monitor at the layout origin, else the
+# first one. Without this the CLI reports "off" for a bar the user can plainly see:
+# a fresh machine has no state file, and the shell has been falling back all along.
+primary_out() {
+  local p="" j
+  if [[ -f "$DISPLAYS_JSON" ]]; then
+    p="$(jq -r '.primary // ""' "$DISPLAYS_JSON" 2>/dev/null || true)"
+  fi
+  [[ -n "$p" ]] && { echo "$p"; return 0; }
+  j="$(live_json)"
+  [[ -n "$j" ]] || { echo ""; return 0; }
+  jq -r 'if length == 0 then "" else ((map(select(.x == 0 and .y == 0))[0] // .[0]).name) end' <<< "$j"
+}
+
+# Outputs to report on: the live ones when a compositor is reachable, plus whatever
+# the config already mentions (an entry for a monitor that is currently unplugged is
+# still real configuration, and hiding it would hide why it comes back configured).
+outputs() {
+  local j; j="$(live_json)"
+  {
+    [[ -n "$j" ]] && jq -r '.[].name' <<< "$j"
+    jq -r '(.monitors // {}) | keys[]' "$BAR_JSON" 2>/dev/null || true
+    primary_out
+  } | grep -v '^$' | sort -u
+}
+
+# TSV catalog: id, type, zone, parent-id ("" for a top-level block). Document order,
+# each zone's blocks with their nested items right after their parent — the same
+# order the Hub lists them in.
+catalog_tsv() {
+  jq -r '
+    ["start","center","end"][] as $z
+    | ((.blocks[$z] // [])[] | select(.id != null)) as $b
+    | ([$b.id, ($b.type // ""), $z, ""] | @tsv),
+      (($b.items // [])[] | select(.id != null) | [.id, (.type // ""), $z, $b.id] | @tsv)
+  ' "$BAR_JSON"
+}
+
+block_exists() { catalog_tsv | cut -f1 | grep -qxF "$1"; }
+
+# Effective visibility of one block on one output: the output's `show` entry when it
+# has one (so a globally disabled block can be revived on a single output), else the
+# block's own global "enabled". `//` is unusable here — it swallows a literal false.
+block_state() {
+  local out="$1" id="$2"
+  jq -r --arg o "$out" --arg id "$id" '
+    (if ((.monitors[$o].show // {}) | has($id))
+     then (.monitors[$o].show[$id] != false)
+     else ([ ["start","center","end"][] as $z
+             | ((.blocks[$z] // [])[] | select(.id != null))
+             | ., (.items // [])[]? ]
+           | map(select(.id == $id)) | .[0].enabled != false)
+     end) | if . then "on" else "off" end
+  ' "$BAR_JSON"
+}
+
+# Every block's state on one output, in catalog order, as "<id>\t<on|off>". Same rule
+# as block_state(), resolved in a single pass.
+block_states() {
+  local out="$1"
+  jq -r --arg o "$out" '
+    . as $c
+    | ["start","center","end"][] as $z
+    | (($c.blocks[$z] // [])[] | select(.id != null)) as $b
+    | ($b, ($b.items // [])[]?)
+    | select(.id != null)
+    | . as $blk | $blk.id as $bid
+    | [ $bid,
+        (if (($c.monitors[$o].show // {}) | has($bid))
+         then (if $c.monitors[$o].show[$bid] != false then "on" else "off" end)
+         else (if $blk.enabled != false then "on" else "off" end) end) ]
+    | @tsv
+  ' "$BAR_JSON"
+}
+
+bar_state() {
+  local out="$1" primary="$2"
+  jq -r --arg o "$out" --arg p "$primary" '
+    (if ((.monitors[$o] // {}) | has("enabled")) then (.monitors[$o].enabled != false)
+     elif ($p != "" and $o == $p) then true
+     else ((.monitors // {}) | has($o)) end) | if . then "on" else "off" end
+  ' "$BAR_JSON"
+}
+
+# ── Commands ────────────────────────────────────────────────────────────────────
+cmd_status() {
+  require_cfg
+  local porcelain=""; [[ "${1:-}" == "--porcelain" ]] && porcelain=1
+  local primary position out state id parent bstate cat
+  primary="$(primary_out)"
+  cat="$(catalog_tsv)"
+  position="$(jq -r 'if (.position == "top" or .position == "bottom") then .position else "theme" end' "$BAR_JSON")"
+
+  if [[ -z "$porcelain" ]]; then
+    echo "Bar"
+    echo "  Position : $position"
+  else
+    printf 'POSITION\t%s\n' "$position"
+  fi
+
+  while IFS= read -r out; do
+    [[ -n "$out" ]] || continue
+    state="$(bar_state "$out" "$primary")"
+    if [[ -n "$porcelain" ]]; then
+      printf 'MONITOR\t%s\t%s\t%s\n' "$out" "$state" "$([[ "$out" == "$primary" ]] && echo 1 || echo 0)"
+    else
+      printf '\n  %s%s : %s\n' "$out" "$([[ "$out" == "$primary" ]] && echo ' (primary)' || echo '')" "$state"
+    fi
+    while IFS=$'\t' read -r id bstate; do
+      [[ -n "$id" ]] || continue
+      parent="$(awk -F'\t' -v w="$id" '$1 == w { print $4 }' <<< "$cat")"
+      if [[ -n "$porcelain" ]]; then
+        printf 'BLOCK\t%s\t%s\t%s\n' "$out" "$id" "$bstate"
+      else
+        printf '    %s%-24s %s\n' "$([[ -n "$parent" ]] && echo '  ' || echo '')" "$id" "$bstate"
+      fi
+    done < <(block_states "$out")
+  done < <(outputs)
+
+  # No compositor AND nothing configured: say why the list is empty rather than
+  # printing a header and stopping, which reads like "this machine has no bar".
+  if [[ -z "$(outputs)" && -z "$porcelain" ]]; then
+    echo
+    echo "  No outputs known here — start a session, or run \`w-monitor primary <output>\`."
+  fi
+}
+
+cmd_list() {
+  require_cfg
+  local out="" porcelain=""
+  while (($#)); do
+    case "$1" in
+      --porcelain) porcelain=1 ;;
+      -*) err "list: unknown option: $1"; exit 2 ;;
+      *)  out="$1" ;;
+    esac
+    shift
+  done
+  local id btype zone parent state
+  [[ -n "$porcelain" ]] || printf '  %-24s %-16s %-8s %s\n' "ID" "TYPE" "ZONE" "PARENT"
+  while IFS=$'\t' read -r id btype zone parent; do
+    [[ -n "$id" ]] || continue
+    if [[ -n "$out" ]]; then
+      state="$(block_state "$out" "$id")"
+      if [[ -n "$porcelain" ]]; then printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$btype" "$zone" "$parent" "$state"
+      else printf '  %-24s %-16s %-8s %-16s %s\n' "$id" "$btype" "$zone" "$parent" "$state"; fi
+    else
+      if [[ -n "$porcelain" ]]; then printf '%s\t%s\t%s\t%s\n' "$id" "$btype" "$zone" "$parent"
+      else printf '  %-24s %-16s %-8s %s\n' "$id" "$btype" "$zone" "$parent"; fi
+    fi
+  done < <(catalog_tsv)
+}
+
+cmd_monitor() {
+  local out="${1:-}" v="${2:-}"
+  [[ -n "$out" ]] || { err "monitor: <output> required"; exit 2; }
+  case "$v" in on|off) ;; *) err "monitor: value must be on or off"; exit 2 ;; esac
+  require_cfg
+  patch_cfg --arg o "$out" --argjson v "$([[ "$v" == on ]] && echo true || echo false)" \
+    '.monitors = (.monitors // {}) | .monitors[$o] = ((.monitors[$o] // {}) + { enabled: $v })'
+}
+
+cmd_block() {
+  local out="${1:-}" id="${2:-}" v="${3:-}"
+  [[ -n "$out" ]] || { err "block: <output> required"; exit 2; }
+  [[ -n "$id"  ]] || { err "block: <id> required"; exit 2; }
+  case "$v" in on|off|default) ;; *) err "block: value must be on, off or default"; exit 2 ;; esac
+  require_cfg
+  block_exists "$id" || die "unknown block id: $id (see \`w-bar list\`)"
+
+  if [[ "$v" == default ]]; then
+    patch_cfg --arg o "$out" --arg id "$id" \
+      'if ((.monitors[$o].show // {}) | has($id)) then del(.monitors[$o].show[$id]) else . end
+       | if (.monitors[$o].show // {}) == {} then del(.monitors[$o].show) else . end
+       | if (.monitors[$o] // {}) == {} then del(.monitors[$o]) else . end'
+    return 0
+  fi
+
+  # Writing the value that the file already yields by default would only add a line
+  # that says nothing; drop the override instead, so `monitors` stays a diff of what
+  # the user actually changed rather than a second full copy of the composition.
+  local want dflt
+  want="$([[ "$v" == on ]] && echo true || echo false)"
+  dflt="$(jq -r --arg id "$id" '
+    [ ["start","center","end"][] as $z
+      | ((.blocks[$z] // [])[] | select(.id != null))
+      | ., (.items // [])[]? ]
+    | map(select(.id == $id)) | (.[0].enabled != false) | tostring' "$BAR_JSON")"
+
+  if [[ "$want" == "$dflt" ]]; then
+    cmd_block "$out" "$id" default
+  else
+    patch_cfg --arg o "$out" --arg id "$id" --argjson v "$want" \
+      '.monitors = (.monitors // {})
+       | .monitors[$o] = (.monitors[$o] // {})
+       | .monitors[$o].show = ((.monitors[$o].show // {}) + { ($id): $v })'
+  fi
+}
+
+cmd_reset() {
+  require_cfg
+  local out="${1:-}"
+  if [[ -n "$out" ]]; then patch_cfg --arg o "$out" 'del(.monitors[$o])'
+  else patch_cfg '.monitors = {}'; fi
+}
+
+# Source-guard: scripts/check/tests source this file for its pure helpers, and must
+# not trip the dispatch below (pattern from w-wallpaper / w-monitor).
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then return 0; fi
+
+case "${1:-}" in
+  ""|status)      shift || true; cmd_status "$@" ;;
+  list)           shift; cmd_list "$@" ;;
+  monitor)        shift; cmd_monitor "$@" ;;
+  block)          shift; cmd_block "$@" ;;
+  reset)          shift; cmd_reset "$@" ;;
+  help|--help|-h) usage ;;
+  *)              err "unknown command: $1"; usage >&2; exit 2 ;;
+esac

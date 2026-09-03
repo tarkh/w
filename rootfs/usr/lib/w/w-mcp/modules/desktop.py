@@ -260,6 +260,50 @@ def register(mcp):
         return f"Primary: {primary or '(none set)'}\n{body}"
 
     @tool(mcp, domain=DOMAIN, minimal=True)
+    def w_bar_status() -> str:
+        """Status bar composition (Tier 0, read-only): which outputs carry a bar
+        and, for each one, every block's on/off state. Wraps `w-bar status`.
+        Composition is PER MONITOR — the same block can be on here and off there
+        — so always name the output when reporting, never "the bar". Blocks are
+        addressed by their id (the ids come straight out of this listing; `w-bar
+        list` also gives their type and which zone they sit in). Read this before
+        changing anything: a block that is already off looks identical to one that
+        does not exist in the config, and only this tells the two apart."""
+        return run(["w-bar", "status"])
+
+    @tool(mcp, domain=DOMAIN)
+    def w_bar_set(output: str, block: str = "", state: str = "") -> str:
+        """Show or hide a status-bar block, or the whole bar, on ONE output
+        (Tier 1: user-scope, reversible, no polkit).
+          output  the monitor's connector name, e.g. eDP-1 / HDMI-A-1 (from
+                  w_bar_status). Required — there is no "all monitors" form,
+                  because the whole point of this setting is per-monitor.
+          block   a block id from w_bar_status. Omit it to switch the WHOLE bar
+                  on that output.
+          state   on | off, or `default` (blocks only) to drop the per-monitor
+                  override and follow the config's own value again.
+        Applies live — the bar redraws immediately, no restart. Switching a bar
+        off KEEPS that output's per-block choices, so switching it back on
+        restores exactly what was there; say so rather than warning about losing
+        settings. Geometry, colours and the bar's position are NOT here: position
+        is `w-appearance bar-position`, everything else about the bar's shape
+        belongs to the active theme (see the w-theming skill)."""
+        if not output:
+            return "output is required — name the monitor (see w_bar_status)"
+        allowed = ("on", "off", "default") if block else ("on", "off")
+        if state not in allowed:
+            return f"state must be one of: {', '.join(allowed)}"
+        cmd = ["w-bar", "block", output, block, state] if block \
+            else ["w-bar", "monitor", output, state]
+        out = run(cmd)
+        # Both setters are quiet on success; a refusal (unknown id, bad value) is
+        # the only thing they print, so pass it through and otherwise show the
+        # resulting composition — what the user actually asked about.
+        if out and out != "(no output)":
+            return out
+        return run(["w-bar", "status"])
+
+    @tool(mcp, domain=DOMAIN, minimal=True)
     def w_nightlight_status() -> str:
         """Night light / blue-light filter (Tier 0, read-only): the mode
         (off | schedule | always), the night and day colour temperatures in

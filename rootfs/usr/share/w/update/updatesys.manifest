@@ -3,11 +3,13 @@
 # /etc/w/update.conf is admin-state the update PRESERVES (channel + tracked ref):
 # it is NOT shipped via rootfs (apply_rootfs would clobber the edge channel every
 # apply) — mod_updatesys seeds it once and stages a vendor copy for override-reset.
-# The w-sync binary, sync-map and check timer are managed system files.
+# The w-sync binary, sync-map, release trust anchor and check timer are managed
+# system files.
 #
 # Format: <path>\t<class>   class: managed | override
 /etc/w/update.conf	override
 /usr/bin/w-sync	managed
 /usr/share/w/update/sync-map	managed
+/usr/share/w/update/w-release.allowed_signers	managed
 /etc/systemd/user/w-sync-check.service	managed
 /etc/systemd/user/w-sync-check.timer	managed

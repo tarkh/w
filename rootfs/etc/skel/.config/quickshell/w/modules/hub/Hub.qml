@@ -41,10 +41,14 @@ Scope {
     readonly property bool shown: root.active && !Overlays.suspended
 
     // A one-shot command to run once the Hub is FULLY hidden (deferred close), so an
-    // action that screenshots the screen (lock) or needs the overlay gone (screenshot
-    // region) never captures/collides with the fading card. Set via RootGrid's
+    // action that photographs or blurs the screen (a lock, a screen capture) never
+    // catches the fading card and the blurred backdrop behind it. Set via RootGrid's
     // deferredExec; run in onVisibleChanged when the window unmaps. null = nothing owed.
-    property var pendingCmd: null
+    //
+    // Currently NO TILE USES IT: Screenshot moved to the launcher and there has never
+    // been a Lock tile. Both this and RootGrid's signal are kept on purpose — the pair
+    // is the one worked-out answer to that class of bug (see RootGrid's own note), and
+    // wiring a future capture/lock/recording tile back up is then a one-line emit.
 
     // Step aside for a polkit prompt: hide (suspend), run the privileged command as a
     // tracked process (pkexec blocks until the prompt is answered), and restore + refresh
@@ -234,8 +238,9 @@ Scope {
                 privProc.command = sc;
                 privProc.running = true;
             } else if (root.pendingCmd !== null) {
-                // Fully hidden now → run a deferred close command (lock / screenshot) on a
-                // clean frame, so the fading card is never captured under the lock blur.
+                // Fully hidden now → run a deferred close command on a clean frame, so the
+                // fading card is never captured under the lock blur. No caller today; see
+                // the note on pendingCmd above for why the path stays.
                 const c = root.pendingCmd;
                 root.pendingCmd = null;
                 Quickshell.execDetached(c);
@@ -375,8 +380,9 @@ Scope {
                                 id: rootGrid
                                 width: parent.width
                                 visible: !panelLoader.active
-                                // Lock / screenshot: close the Hub, run after it is fully
-                                // hidden (deferred), so the fading card isn't captured.
+                                // Deferred close: close the Hub, run the command only once
+                                // it is fully hidden, so the fading card isn't captured.
+                                // Unused today — kept with the mechanism (see RootGrid).
                                 onDeferredExec: (cmd) => { root.pendingCmd = cmd; Overlays.close("hub"); }
                                 // Section entry (Appearance/Network/…) → drill into its panel.
                                 onNavigate: (route) => root.push(route)

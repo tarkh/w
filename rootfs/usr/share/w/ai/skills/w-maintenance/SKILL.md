@@ -10,11 +10,11 @@ description: >-
   explains how to read the layers with w-conf).
 sources:
   - path: .claude/library/w-conf.md
-    sha256: 61a9d5827218b806a2083db341c4eaeac14b248810f63069e58e4a6463d0501d
+    sha256: 002069840e569db3a750c268458c12fc7ef2396539f4438e3f7068bb43ec729f
   - path: .claude/library/w-reset.md
     sha256: 0cfe5da213d8b847ea56f4f03407b1c7618eae902960c0d3bf224552704eb044
   - path: .claude/library/update-system.md
-    sha256: 74205f93b605f52abcacd7ef102d4240488ca82acf992e953a37e4c3c078bd09
+    sha256: 65246b3a19668323817559293d650d58f85d4fd5ea8ebb6bbb2f81de5f858a2f
   - path: .claude/library/w-rollback.md
     sha256: 95fe918c6339f5e6aa423b77857f702c0ceb21783b059c4c4bbf78bdebd7ab73
 tools:
@@ -183,9 +183,22 @@ is a no-op (stable updates arrive as the signed `w-system` package via `w-update
 ```
 w-sync check     # fetch + behind-count + incoming commits → /var/lib/w/state/sync.json
 w-sync log       # the pending commits
-w-sync status    # channel + current state
-w-sync update    # fetch → pre-snapshot home → git pull --ff-only → selective apply
+w-sync status    # channel + current state (incl. whether signatures are required)
+w-sync update    # fetch → VERIFY SIGNATURE → pre-snapshot home → pull --ff-only → selective apply
 ```
+
+**An update is verified before anything on the machine changes.** Every W release is
+one commit tagged `vX.Y.Z`, and the tag is signed. `w-sync update` refuses to pull a
+tip whose tag is not signed by a key in
+`/usr/share/w/update/w-release.allowed_signers` — the check runs before the
+pre-update snapshot, so a refused update leaves the machine byte-for-byte as it was.
+`w-sync status` prints a `Signed :` line saying whether this is armed.
+
+If it refuses ("REFUSING TO UPDATE"), that is a fact to report, not an obstacle to
+route around. Do not suggest `VERIFY_SIGNATURE=no` in `/etc/w/update.conf` as a fix:
+it is there for machines tracking a fork rather than the official repository, where
+no signed release tags exist. A missing trust anchor is repaired with
+`sudo w-reset updatesys`, which restores it from the checkout.
 
 **The checkout belongs to the primary user by design** (yay/makepkg refuse to run as
 root, and `.git/config` is `chmod 600` because the clone URL carries credentials), so
