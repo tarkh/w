@@ -68,8 +68,22 @@ Exit codes:
 EOF
 }
 
-# ── reboot needed? (running kernel's modules removed by an in-place upgrade) ──────
-reboot_pending() { [[ ! -d "/usr/lib/modules/$(uname -r)" ]]; }
+# ── reboot needed? ───────────────────────────────────────────────────────────────
+# Two ways to owe a reboot, and the bar's indicator has to know about both:
+#   1. The running kernel was upgraded IN PLACE — its modules tree is gone, so nothing
+#      it tries to load now will be found.
+#   2. `w-kernel set` picked a DIFFERENT kernel as the default. The running one is
+#      perfectly fine, but the machine will not be on it until it reboots — and
+#      switching kernels is exactly the case where a user needs to be told that the
+#      thing they asked for has not happened yet.
+# The second is asked of w-kernel rather than reimplemented here (it owns the
+# bootloader split). Unprivileged, and absent w-kernel this degrades to case 1 alone.
+reboot_pending() {
+  [[ -d "/usr/lib/modules/$(uname -r)" ]] || return 0
+  command -v w-kernel &>/dev/null || return 1
+  w-kernel list --porcelain 2>/dev/null \
+    | awk -F'\t' 'NR > 1 && $5 == "yes" && $6 == "no" { found = 1 } END { exit !found }'
+}
 
 # ── check: count updates, detect reboot, write the status file (non-root) ────────
 cmd_check() {

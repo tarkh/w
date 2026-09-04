@@ -25,8 +25,10 @@ the task.
 - [w-software](skills/w-software/SKILL.md): Installing software — pacman/yay (repo + AUR) and Flatpak (Bazaar store, Flatseal).
 - [w-apps](skills/w-apps/SKILL.md): Everyday apps — file managers (yazi/Nemo), media viewers (imv/mpv/zathura), editors (micro/helix), mounting drives & network shares, driverless printing/scanning.
 - [w-packs](skills/w-packs/SKILL.md): Optional software bundles by direction (`w-pack list/install/status`); an installed bundle curates its own skill here.
-- [w-security](skills/w-security/SKILL.md): Security — `w-kernel` hardening, sudo-rs/run0, keyring, fwupd, `w-crypt`/`w-secureboot`.
+- [w-security](skills/w-security/SKILL.md): Security — `w-kernel` hardening, sudo-rs/run0, keyring, `w-ssh` (SSH agent slot + per-host key selectors), fwupd, `w-crypt`/`w-secureboot`.
 - [w-desktop](skills/w-desktop/SKILL.md): The desktop — Hyprland (Lua), the Quickshell UI, keybindings, screenshots.
+- [w-displays](skills/w-displays/SKILL.md): Displays — the monitor layout (`w-monitor`: resolution, scale, rotation, primary), the login-screen scope, and the night light (`w-nightlight`).
+- [w-session](skills/w-session/SKILL.md): Session memory — reopening the windows that were open at the next login (`w-session`), and named layouts (`Super+O`).
 - [w-audio](skills/w-audio/SKILL.md): Sound — the PipeWire + WirePlumber stack, `wpctl`/`pactl`, the Volume Control popup and wiremix, and diagnosing "no sound".
 - [w-power](skills/w-power/SKILL.md): Power — the hypridle idle daemon (auto-lock, lock-before-sleep, DPMS), suspend/reboot/shutdown via the power menu, and the battery indicator.
 - [w-input](skills/w-input/SKILL.md): Input — keybindings (`w-hotkeys`, profiles), keyboard layouts (`w-keyboard`), and the system locale (`w-locale`).

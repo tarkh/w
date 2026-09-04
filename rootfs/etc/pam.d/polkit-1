@@ -1,6 +1,24 @@
 #%PAM-1.0
-# Fingerprint first (no-op if fprintd not configured / no finger enrolled),
-# then fall through to password via system-auth.
+# W Linux — polkit authentication stack (see quickshell-auth.md).
+#
+# Fingerprint first (a no-op if fprintd is not configured or no finger is
+# enrolled), then fall through to password via system-auth.
+#
+# The first line exists so the SECOND one can be skipped on demand. While the W
+# auth card waits on the reader it offers "Use password"; pam_fprintd owns the
+# conversation until its own max-tries/timeout expire (30s by default), so
+# without this the button could only reveal the field and let the typed password
+# sit queued. GDM solves this by having two PAM services and choosing one —
+# polkit cannot, because polkit-agent-helper-1 hardcodes the service name
+# "polkit-1", so the choice has to be made inside this single stack.
+#
+#   gate exit 0     → success=ignore → continue here, pam_fprintd runs as always
+#   gate exit != 0  → default=1      → jump over pam_fprintd → system-auth
+#
+# Every failure of the gate (missing, unreadable, not executable) also lands on
+# `default`, i.e. on "ask for the password" — it can never skip authentication.
+# See /usr/lib/w/w-fp-gate for the flag it reads and why it is safe.
+auth       [success=ignore default=1]   pam_exec.so quiet /usr/lib/w/w-fp-gate
 auth       sufficient   pam_fprintd.so
 auth       include      system-auth
 account    include      system-auth

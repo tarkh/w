@@ -23,16 +23,26 @@ mod_polkit() {
   info "Removing polkit-kde-agent if present..."
   pacman -Rns --noconfirm polkit-kde-agent 2>/dev/null || true
 
+  # ⚠️ ORDER MATTERS: the executable bit BEFORE the PAM stack that calls it.
+  # The stack's first line runs /usr/lib/w/w-fp-gate through pam_exec, and
+  # apply_rootfs can land plain files 644 (see apply-rootfs-resets-file-modes).
+  # Deploying the stack first would leave a window in which every polkit
+  # authentication runs a non-executable gate: it still authenticates (a gate
+  # error means "skip the reader, ask for the password"), but the fingerprint
+  # would be silently dead in between.
+  #
+  # w-authd + its user unit also ride in via apply_rootfs; same guard.
+  [[ -f /usr/lib/w/w-authd ]] && chmod 755 /usr/lib/w/w-authd
+  [[ -f /usr/lib/w/w-fp-gate ]] && chmod 755 /usr/lib/w/w-fp-gate
+
   info "Deploying polkit-1 PAM stack..."
   # pam_fprintd.so sufficient: tries fingerprint first; if no reader or no
   # enrolled finger, fails immediately and falls through to system-auth (password).
   # w-authd runs this stack via polkit-agent-helper-1, so fingerprint + password
   # both flow through unchanged — the shell card just surfaces the PAM messages.
+  # The pam_exec gate ahead of it is what makes the card's "Use password" button
+  # immediate instead of a 30s wait; see w-fp-gate and quickshell-auth.md.
   install -Dm644 "$SRC/rootfs/etc/pam.d/polkit-1" /etc/pam.d/polkit-1
-
-  # w-authd + its user unit ride in via apply_rootfs; guard the executable bit
-  # (apply_rootfs can land plain files 644 — see apply-rootfs-resets-file-modes).
-  [[ -f /usr/lib/w/w-authd ]] && chmod 755 /usr/lib/w/w-authd
 
   info "W auth agent (w-authd) installed; started from hyprland.lua."
   info "Fingerprint unlock activates after enrolling a finger: run 'fprintd-enroll' as your user."

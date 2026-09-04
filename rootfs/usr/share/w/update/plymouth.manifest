@@ -3,4 +3,5 @@
 # palette is w-style output (900-plymouth), refreshed by `w-style render_system`.
 # Format: <path>\t<class>   (trailing '/' = directory)
 /usr/share/plymouth/themes/w/	managed
+/etc/plymouth/plymouthd.conf	managed
 /etc/systemd/system/plymouth-quit.service.d/override.conf	managed

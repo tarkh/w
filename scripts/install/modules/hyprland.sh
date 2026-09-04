@@ -101,6 +101,14 @@ mod_hyprland() {
   # in ~20ms instead of spawning a fresh ~300ms process per window. --global enables
   # it for every user; the unit ships with the ghostty package. Guard so a
   # standalone run before the package is present doesn't fail the module.
+  #
+  # Hanging a vendor unit off graphical-session.target also enlists it in W's
+  # NON-graphical activation of that target (mod_nightlight restarts hyprsunset,
+  # whose Requires= pulls the target, in a session-less user manager at firstboot).
+  # Ghostty's unit is the only one under the target without
+  # ConditionEnvironment=WAYLAND_DISPLAY, so it used to really start there and die
+  # on "Gtk: Failed to open display". W adds the condition back with a drop-in:
+  # rootfs/etc/systemd/user/app-com.mitchellh.ghostty.service.d/10-w-wayland.conf.
   if [[ -f /usr/lib/systemd/user/app-com.mitchellh.ghostty.service ]]; then
     systemctl --global enable app-com.mitchellh.ghostty.service
     info "Ghostty pre-warm service enabled (instant windows via ghostty +new-window)."

@@ -50,6 +50,7 @@ file_permissions=(
   # this list covers every executable in the tree, so it cannot be forgotten.
   ["/root/w/rootfs/usr/lib/w/papirus-folders"]="0:0:755"
   ["/root/w/rootfs/usr/lib/w/w-authd"]="0:0:755"
+  ["/root/w/rootfs/usr/lib/w/w-fp-gate"]="0:0:755"
   ["/root/w/rootfs/usr/lib/w/w-update-refresh"]="0:0:755"
   ["/root/w/rootfs/usr/lib/w/w-firstboot"]="0:0:755"
   ["/root/w/rootfs/usr/lib/w/w-ai-actuate"]="0:0:755"

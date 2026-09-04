@@ -277,7 +277,10 @@ verify_tip() {
   }
   [[ -r "$SIGNERS_SYS" ]] \
     || die "no release trust anchor at $SIGNERS_SYS — refusing to pull code this machine cannot verify.
-Restore it with: sudo w-reset updatesys   (or set VERIFY_SIGNATURE=no in $UPDATE_CONF to accept that risk)."
+Restore it with: sudo w-reset updatesys w-release.allowed_signers
+(the per-file form on purpose — bare 'w-reset updatesys' resets the whole module,
+$UPDATE_CONF included, which is not what a missing key asks for.)
+Or set VERIFY_SIGNATURE=no in $UPDATE_CONF to accept that risk."
 
   local tags tag
   tags="$(git_c tag --points-at "$UPSTREAM" --list 'v[0-9]*' 2>/dev/null || true)"

@@ -92,15 +92,20 @@ mod_updatesys() {
   install -d -m755 /var/lib/w/state
   chown "$sowner" /var/lib/w/state 2>/dev/null || true
 
-  # Vendor default for `w-reset updatesys` (drop the override back to stable).
+  # Vendor default for `w-reset updatesys` — the same answers a fresh install of THIS
+  # machine would be given, not a fixed line. The channel is not a matter of taste:
+  # it is detected from the checkout, so "as on a fresh install" means edge wherever
+  # there is one. Hardcoding stable here made `w-reset updatesys` a one-way door off
+  # the edge channel — the machine came back answering "not an edge system" and stayed
+  # that way until someone edited the file by hand (found live, 2026-09-03).
   install -Dm644 /dev/stdin /usr/share/w/vendor/etc-w/update.conf <<EOF
 # /etc/w/update.conf — W Linux update channel (read by w-sync). Vendor default.
-CHANNEL=stable
-REF=main
-VERIFY_SIGNATURE=yes
-SITE_REPO=
-SITE_REF=main
-SITE=default
+CHANNEL=$channel
+REF=$ref
+VERIFY_SIGNATURE=$verify
+SITE_REPO=$site_repo
+SITE_REF=$site_ref
+SITE=$site_profile
 EOF
 
   # Seed the live config once (seed-if-absent), reflecting the detected channel.

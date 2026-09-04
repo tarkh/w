@@ -16,9 +16,13 @@ Window.SetBackgroundBottomColor(0, 0, 0);
 #     canvas is centred on every monitor;
 #   * the only region visible on all of them is the centred `safe` rect of
 #     min(width) x min(height) → off-centre elements are placed relative to that.
-# Note the sizes are LOGICAL: plymouth picks a per-head device scale from the DPI, so
-# a HiDPI panel reports half its pixel size and mixed-DPI setups have differently
-# sized canvases per head.
+# The sizes here are REAL PIXELS because W pins `DeviceScale=1` in plymouthd.conf.
+# Left to itself plymouth picks a per-head device scale from the DPI (Mutter's
+# constants: perfect scale > 1.625 → 2), which halves the reported canvas on a retina
+# panel, draws every sprite through a bilinear 2x upscale, and gives mixed-DPI setups
+# differently sized canvases per head. Everything below is a fraction of the panel
+# instead, so the layout scales with the hardware without that indirection — and the
+# logo can be matched to the wallpapers, which know nothing about device scales.
 #
 # Displays are attached one at a time (plymouth main.c:on_pixel_display_added): the
 # first one starts the splash — which is when this script runs — and the rest arrive
@@ -153,12 +157,18 @@ fun CancelFade(sprite) {
 # ── Sprites ───────────────────────────────────────────────────────────────────
 # Created once, hidden and unpositioned — relayout() owns all geometry.
 
-logo_image  = Image("logo.png");
+# logo.png is rendered for THIS machine's panel when the initramfs is built, so it is
+# normally drawn 1:1; logo_src keeps the pristine master for the rescale in relayout().
+logo_src    = Image("logo.png");
+logo_image  = logo_src;
 logo_sprite = Sprite();
 logo_sprite.SetImage(logo_image);
 logo_sprite.SetOpacity(0);
 logo_sprite.id = "logo";
 
+# Bar/underline thickness: fractions of the panel like every other measurement here,
+# so the splash keeps its proportions on a 1080p screen and a retina one alike (2px at
+# 1080 rows — what it always was — 4px at 1800).
 bar_height    = 2;
 bar_max_width = 0;
 bar_x         = 0;
@@ -232,6 +242,46 @@ password_was_used = 0;     # 1 if there was passwd request
 progress_baseline = 0;     # progress on unlock moment
 progress_started  = 0;     # flag: baseline already captured
 
+# ── Logo size ─────────────────────────────────────────────────────────────────
+# The same mark is baked into every wallpaper master at LOGO_MASTER_PX, and both the
+# greeter and hyprpaper cover-fit that master onto the panel — so on the login screen
+# and the desktop the logo ends up at LOGO_MASTER_PX x <cover factor>. The splash
+# matches it by rendering logo.png at exactly that many pixels when the initramfs is
+# built (/usr/lib/w/plymouth-logo.sh, through w-wallpaper's own cover resolver), which
+# is why nothing is scaled here in the normal case.
+#
+# This recomputes the number for the displays actually present, covering what the
+# build could not know: a monitor swapped since, or a second head shrinking the safe
+# area. That path goes through plymouth's scaler (a bare bilinear sampler), so it is
+# slightly softer than the baked render — right size beats sharp-but-wrong.
+#
+# The ladder MUST mirror WALLPAPER_TIERS in /usr/bin/w-wallpaper: tier by width, then
+# the cover fit of that tier onto the panel. `check.sh --unit` holds the two together
+# (scripts/check/tests/plymouth.bats) — this file is not shell and no linter would
+# ever catch the drift.
+LOGO_MASTER_PX = 256;            # logo box in themes/<name>/logo/W-logo-256x256.png
+TIER_COUNT     = 4;
+tier_w = null;
+tier_h = null;
+tier_w[0] = 5120; tier_h[0] = 2880;
+tier_w[1] = 3840; tier_h[1] = 2160;
+tier_w[2] = 2560; tier_h[2] = 1440;
+tier_w[3] = 1920; tier_h[3] = 1080;
+
+# Counter is `m`: `i` belongs to StartFade() and `k` to relayout()'s own loops.
+fun logo_size_for(w, h) {
+  tier = TIER_COUNT - 1;                       # below the smallest tier → smallest
+  for (m = 0; m < TIER_COUNT; m++) {
+    if (w >= tier_w[m]) {
+      tier = m;
+      break;
+    }
+  }
+  fx = w / tier_w[tier];
+  fy = h / tier_h[tier];
+  return Math.Int(LOGO_MASTER_PX * Math.Max(fx, fy) + 0.5);
+}
+
 # ── Layout ────────────────────────────────────────────────────────────────────
 # Positions and scales every sprite for the current display set. Touches geometry
 # only — opacity, fades and boot state are left alone, so it is safe to call at any
@@ -239,9 +289,20 @@ progress_started  = 0;     # flag: baseline already captured
 fun relayout() {
   measure_screen();
 
-  # Logo — centred on the canvas, i.e. centred on every display.
+  # Logo — centred on the canvas, i.e. centred on every display. Sized to match the
+  # wallpapers (see logo_size_for); the rescale is skipped whenever the render baked
+  # into the initramfs already fits this display set, which is the normal case.
+  logo_target = logo_size_for(safe_w, safe_h);
+  if (logo_target != logo_image.GetWidth()) {
+    logo_image = logo_src.Scale(logo_target, logo_target);
+    logo_sprite.SetImage(logo_image);
+  }
   logo_sprite.SetX(Math.Int(screen_half_w - logo_image.GetWidth()  / 2));
   logo_sprite.SetY(Math.Int(screen_half_h - logo_image.GetHeight() / 2));
+
+  # Hairlines scale with the panel — see bar_height above.
+  bar_height    = Math.Max(2, Math.Int(safe_h / 450));
+  prompt_line_h = bar_height;
 
   # Progress bar — 35% of the safe width, and 75% down the safe height, expressed as
   # an offset from the centre so it lands on the same spot on every display.

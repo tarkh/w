@@ -45,6 +45,35 @@ Scope {
     property string choiceLabel: ""        // checkbox label ("" = no checkbox)
     property bool choiceChecked: false     // e.g. "Automatically unlock this key…"
 
+    // ── fingerprint mode ─────────────────────────────────────────────────────
+    // The daemon says on `begin` whether PAM will really try a finger (fp) — it
+    // asks fprintd, so this is a fact about the machine, not a guess from prompt
+    // text. While fpMode holds, the card shows a glyph and a line of guidance and
+    // NO input: there is nothing to type yet, and a password field standing next
+    // to "touch the reader" is exactly the ambiguity this mode removes.
+    //
+    // Two things end it, both honest:
+    //   • `request` — pam_fprintd gave up (bad swipes / timeout) and PAM moved on
+    //     to the password. This is the "finger failed a few times" path, and it
+    //     converts the card in place rather than opening a second window.
+    //   • the user asking for it (usePassword) — see root.usePassword().
+    property bool fpAvailable: false
+    property bool fpUserOptedOut: false
+    readonly property bool fpMode: root.fpAvailable && !root.fpUserOptedOut
+                                   && root.promptText.length === 0
+
+    // The opt-out normally produces a password prompt within a blink (the daemon
+    // restarts PAM with the reader skipped), so the "still waiting" note must not
+    // flash on the healthy path. It appears only if the switch did NOT land —
+    // an old daemon without the skip support, or a PAM stack deployed without the
+    // gate — where the honest answer really is "your password is queued".
+    property bool fpOptOutStalled: false
+    onFpUserOptedOutChanged: {
+        root.fpOptOutStalled = false;
+        if (root.fpUserOptedOut) stallTimer.restart(); else stallTimer.stop();
+    }
+    Timer { id: stallTimer; interval: 1200; onTriggered: root.fpOptOutStalled = true }
+
     // Whose password is being asked for, and — when the answer isn't "yours" — who else
     // may answer. A polkit auth_admin action raised on a NON-admin's session sends the
     // machine's administrators here: without the name the card asked for "the password"
@@ -108,6 +137,8 @@ Scope {
             root.pickerOpen = false;
             root.promptText = "";
             root.infoText = "";
+            root.fpAvailable = !!m.fp;
+            root.fpUserOptedOut = false;
             if (!retry) { root.errorText = ""; root.failCount = 0; }   // fresh prompt
             root.checking = false;
             field.text = "";
@@ -116,14 +147,36 @@ Scope {
         }
         if (m.id !== root.curId) return;
         switch (m.type) {
-        case "request": root.promptText = m.prompt || ""; break;
+        case "request":
+            // PAM is asking for a password, which is also the signal that the
+            // fingerprint module has given up. Setting promptText ends fpMode, so
+            // route focus into the field that just appeared — nothing else does it,
+            // and without this the roving cursor would sit on a row that no longer
+            // exists and typing would go nowhere.
+            root.promptText = m.prompt || "";
+            card.focusRow(card.fieldRowIndex());
+            break;
         case "info":    root.infoText = m.text || ""; break;
         case "error":                             // a try failed; daemon retries in place
             root.errorText = m.text || Strings.t("auth.failed");
             root.checking = false;
-            root.failCount += 1;
-            field.text = "";                      // clear so the next try starts empty
-            card.focusRow(card.fieldRowIndex());
+            // A bad SWIPE is not a bad password: pam_fprintd reports each mismatch
+            // while it still owns the conversation, and counting those toward the
+            // faillock hint would warn about a lockout that nothing is approaching.
+            // The password counter starts once PAM actually asks for a password.
+            if (!root.fpMode) {
+                root.failCount += 1;
+                field.text = "";                  // clear so the next try starts empty
+                // A retry is a FRESH PAM conversation, and the stack starts at
+                // pam_fprintd again — so the reader really is being waited on once
+                // more, and the card says so instead of showing a password field
+                // that will sit unanswered for several seconds. Whoever explicitly
+                // asked for the password keeps it: fpUserOptedOut is not reset here,
+                // only by the next `begin`.
+                root.promptText = "";
+                root.infoText = "";
+                card.focusRow(card.fieldRowIndex());
+            }
             break;
         case "end":
             if (m.result === "ok" || m.result === "cancel") {
@@ -137,6 +190,23 @@ Scope {
             }
             break;
         }
+    }
+
+    // Leave fingerprint mode on the user's initiative (reader unreachable, wrong
+    // hand, plain preference). The daemon does the real work: it restarts the PAM
+    // session with pam_fprintd skipped, so the password prompt arrives at once
+    // instead of after the reader's 30s timeout (see w-fp-gate). Nothing outside
+    // PAM can interrupt pam_fprintd mid-conversation — running the stack again
+    // without it is the whole mechanism.
+    //
+    // The field is revealed immediately rather than waiting for that round trip:
+    // typing may start straight away, and a password submitted before `request`
+    // lands is held by the daemon in `pending` and answered the moment PAM asks.
+    function usePassword() {
+        if (root.curId < 0 || !root.fpMode) return;
+        root.fpUserOptedOut = true;
+        root.send({ type: "skipfp", id: root.curId });
+        card.focusRow(card.fieldRowIndex());
     }
 
     function submit() {
@@ -235,6 +305,14 @@ Scope {
                             for (let i = 0; i < root.authUsers.length; i++)
                                 r.push({ type: "pickerRow", index: i });
                     }
+                    // Fingerprint mode has no input at all: the only moves are
+                    // "let me type instead" and "cancel". Authenticate is absent
+                    // rather than disabled — there is nothing for it to send.
+                    if (root.fpMode) {
+                        r.push({ type: "usePasswordBtn" });
+                        r.push({ type: "cancelBtn" });
+                        return r;
+                    }
                     if (root.promptKind !== "confirm") r.push({ type: "field" });
                     if (root.choiceLabel.length > 0) r.push({ type: "choice" });
                     r.push({ type: "authBtn" });
@@ -249,6 +327,7 @@ Scope {
                 readonly property bool choiceFocused: card.focusedRow?.type === "choice"
                 readonly property bool authBtnFocused: card.focusedRow?.type === "authBtn"
                 readonly property bool cancelBtnFocused: card.focusedRow?.type === "cancelBtn"
+                readonly property bool usePasswordBtnFocused: card.focusedRow?.type === "usePasswordBtn"
                 function pickerRowFocused(i) {
                     return card.focusedRow?.type === "pickerRow" && card.focusedRow.index === i;
                 }
@@ -276,6 +355,7 @@ Scope {
                     case "pickerRow": root.selectUser(root.authUsers[row.index]); return;
                     case "choice": root.choiceChecked = !root.choiceChecked; return;
                     case "authBtn": root.submit(); return;
+                    case "usePasswordBtn": root.usePassword(); return;
                     case "cancelBtn": root.cancel(); return;
                     }
                 }
@@ -391,7 +471,12 @@ Scope {
 
                                 Text {
                                     width: parent.width - (chevron.visible ? chevron.width + parent.spacing : 0)
-                                    text: Strings.t("auth.passwordFor").replace("%1", root.authUser)
+                                    // Name what is actually being asked for. In
+                                    // fingerprint mode "password for w" is simply
+                                    // untrue, and the identity still matters: PAM
+                                    // matches THAT account's enrolled finger.
+                                    text: Strings.t(root.fpMode ? "auth.fingerprintFor" : "auth.passwordFor")
+                                          .replace("%1", root.authUser)
                                     color: Colors.muted
                                     font.family: Fonts.family
                                     font.pixelSize: 13
@@ -457,6 +542,66 @@ Scope {
                         }
                     }
 
+                    // ── fingerprint stage ─────────────────────────────────────
+                    // The minimal state of this card: one glyph, one line, no input.
+                    // A GLYPH rather than a themed icon on purpose — it is drawn in
+                    // the Nerd Font at the brand accent, so it follows a theme change
+                    // exactly like the rest of the shell chrome, with no dependency on
+                    // whatever the icon theme happens to carry for "fingerprint".
+                    Column {
+                        width: parent.width
+                        spacing: 10
+                        visible: root.fpMode
+
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: String.fromCodePoint(0xf0237)   // nf-md-fingerprint
+                            color: Colors.accent
+                            font.family: Fonts.mono
+                            font.pixelSize: 64
+
+                            // A slow pulse: the card is waiting on a physical act, and
+                            // a still glyph reads as a picture rather than a prompt.
+                            SequentialAnimation on opacity {
+                                running: root.fpMode
+                                loops: Animation.Infinite
+                                NumberAnimation { from: 1.0; to: 0.45; duration: 900
+                                                  easing.type: Easing.InOutSine }
+                                NumberAnimation { from: 0.45; to: 1.0; duration: 900
+                                                  easing.type: Easing.InOutSine }
+                            }
+                        }
+
+                        // PAM's own wording when it sent any ("Place your finger on
+                        // the fingerprint reader"), our string until then — the info
+                        // message arrives a beat after the card opens, and an empty
+                        // gap under the glyph would read as a hung dialog.
+                        Text {
+                            width: parent.width
+                            horizontalAlignment: Text.AlignHCenter
+                            text: root.infoText.length > 0 ? root.infoText
+                                                           : Strings.t("auth.fingerprintHint")
+                            color: Colors.muted
+                            font.family: Fonts.family
+                            font.pixelSize: 13
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+
+                    // Opted out of the finger but PAM has not asked yet: the field is
+                    // already there and typing is already being kept, so say plainly
+                    // why the submit has not gone through instead of looking stuck.
+                    Text {
+                        width: parent.width
+                        visible: root.fpAvailable && root.fpUserOptedOut
+                                 && root.promptText.length === 0 && root.fpOptOutStalled
+                        text: Strings.t("auth.fingerprintStillWaiting")
+                        color: Colors.muted
+                        font.family: Fonts.family
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                    }
+
                     // ── password field ────────────────────────────────────────
                     // A gcr "confirm" prompt (e.g. create/unlock a keyring) has no
                     // password — only a message and Continue/Cancel — so hide the field.
@@ -464,7 +609,7 @@ Scope {
                         width: parent.width
                         height: 46
                         radius: Geometry.radiusSm
-                        visible: root.promptKind !== "confirm"
+                        visible: root.promptKind !== "confirm" && !root.fpMode
                         color: Colors.inputBg
                         border.width: root.errorText.length > 0 ? 1 : (field.activeFocus ? 2 : 0)
                         border.color: root.errorText.length > 0 ? Colors.dangerBorder : Colors.accentInk
@@ -512,7 +657,7 @@ Scope {
                     MouseArea {
                         width: parent.width
                         height: choiceRow.implicitHeight
-                        visible: root.choiceLabel.length > 0
+                        visible: root.choiceLabel.length > 0 && !root.fpMode
                         cursorShape: Qt.PointingHandCursor
                         onClicked: root.choiceChecked = !root.choiceChecked
 
@@ -557,14 +702,17 @@ Scope {
                         }
                     }
 
-                    // ── fingerprint / PAM info hint ───────────────────────────
+                    // ── PAM info hint (password stage) ────────────────────────
+                    // The compact form, for when PAM still has something to say after
+                    // the card became a password prompt. In fingerprint mode the same
+                    // text is the caption under the big glyph instead of a second copy.
                     Row {
                         width: parent.width
                         spacing: 8
-                        visible: root.infoText.length > 0
+                        visible: root.infoText.length > 0 && !root.fpMode
                         Text {
                             anchors.verticalCenter: parent.verticalCenter
-                            text: String.fromCodePoint(0xf0234)   // nf-md-fingerprint
+                            text: String.fromCodePoint(0xf0237)   // nf-md-fingerprint
                             color: Colors.accent
                             font.family: Fonts.family
                             font.pixelSize: 16
@@ -616,9 +764,12 @@ Scope {
                         spacing: 10
                         layoutDirection: Qt.RightToLeft
 
-                        // Authenticate (primary).
+                        // Authenticate (primary). Absent in fingerprint mode: there
+                        // is no input to submit, so the primary action becomes the
+                        // opt-out below.
                         Rectangle {
                             id: authBtn
+                            visible: !root.fpMode
                             width: 128
                             height: 40
                             radius: Geometry.radiusSm
@@ -635,6 +786,27 @@ Scope {
                                 font.bold: true
                             }
                             MouseArea { anchors.fill: parent; onClicked: root.submit() }
+                        }
+
+                        // Use password instead (primary while the finger is awaited).
+                        Rectangle {
+                            id: usePasswordBtn
+                            visible: root.fpMode
+                            width: 168
+                            height: 40
+                            radius: Geometry.radiusSm
+                            color: Colors.accent
+                            border.width: card.usePasswordBtnFocused ? 2 : 0
+                            border.color: Colors.accentFg
+                            Text {
+                                anchors.centerIn: parent
+                                text: Strings.t("auth.usePassword")
+                                color: Colors.accentFg
+                                font.family: Fonts.family
+                                font.pixelSize: 14
+                                font.bold: true
+                            }
+                            MouseArea { anchors.fill: parent; onClicked: root.usePassword() }
                         }
 
                         // Cancel (secondary).

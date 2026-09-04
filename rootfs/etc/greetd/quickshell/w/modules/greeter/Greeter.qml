@@ -47,18 +47,44 @@ Scope {
     property var users: []
     property var userOptions: root.users.map(u => ({ label: u.label, value: u.name }))
 
-    // ── Wallpaper manifest (per-tier resolved paths, written by `w-wallpaper set`) ─
-    // Same selection logic as hyprpaper: pick the first tier whose minWidth the
-    // monitor meets. Each path already has the theme's fallback applied, so any
-    // non-empty theme yields a wallpaper for every monitor.
-    property var wpTiers: []                 // [{minWidth, path}], widest-first
-    function wallpaperFor(physWidth) {
-        for (const t of root.wpTiers) if (physWidth >= t.minWidth && t.path) return t.path;
-        return "";
+    // ── Wallpaper manifest (written by `w-wallpaper set`, see w-wallpaper.md) ─────
+    // Keyed by connector name, because the manifest's `outputs` section carries the
+    // pixel geometry hyprctl reports — the only numbers that agree with what
+    // hyprpaper picks in the user session, so the mark baked into the master is the
+    // same size on the login screen and on the desktop.
+    //
+    // Qt cannot supply those numbers. At a fractional monitor scale QScreen reports
+    // the LOGICAL size together with an integer (ceil'd) devicePixelRatio, so
+    // width * dpr overshoots — 1920 * 2 = 3840 on a 2880px panel at scale 1.5 — and
+    // selects a tier too high, shrinking everything baked into it by a third.
+    property var wpOutputs: ({})             // connector name → resolved wallpaper
+    function wallpaperFor(name) {
+        const p = root.wpOutputs[name];
+        // The symlink is `w-wallpaper set`'s own hyprctl-resolved answer for the
+        // primary monitor — the right fallback for an output the manifest missed.
+        return p ? "file://" + p : "file:///run/w/wallpaper/wallpaper";
     }
     FileView {
+        id: wpManifest
         path: "/run/w/wallpaper/manifest.json"
-        onLoaded: { try { root.wpTiers = JSON.parse(text()); } catch (e) { root.wpTiers = []; } }
+        watchChanges: true
+        onFileChanged: reload()
+        onLoaded: {
+            const out = {};
+            try {
+                const m = JSON.parse(text());
+                for (const o of (m.outputs || [])) if (o.name && o.path) out[o.name] = o.path;
+            } catch (e) { /* keep the symlink fallback */ }
+            root.wpOutputs = out;
+        }
+    }
+    // A monitor plugged in after the greeter started is not in the manifest: the
+    // wrapper wrote it once, before Quickshell came up. Re-run the writer — it asks
+    // hyprctl, so it sees the new output — and the watch above picks up the result.
+    Process { id: wpRefresh; command: ["w-wallpaper", "set"] }
+    Connections {
+        target: Quickshell
+        function onScreensChanged() { wpRefresh.running = true; }
     }
 
     // Monitor that holds the login card: configured connector name, else the
@@ -262,12 +288,9 @@ Scope {
 
             Image {
                 anchors.fill: parent
-                // Per-monitor pick by physical width (logical × dpr) so tiers match
-                // hyprpaper's hyprctl widths; fall back to the single symlink.
-                source: {
-                    const p = root.wallpaperFor(Math.round(modelData.width * modelData.devicePixelRatio));
-                    return p ? "file://" + p : "file:///run/w/wallpaper/wallpaper";
-                }
+                // Per-monitor, by connector name — the compositor already resolved
+                // which master this output gets (see wallpaperFor).
+                source: root.wallpaperFor(modelData.name)
                 fillMode: Image.PreserveAspectCrop
                 cache: false
                 asynchronous: true

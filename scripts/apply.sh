@@ -388,9 +388,23 @@ apply_plymouth() {
   rsync -a --chown=root:root "$SRC/rootfs/usr/share/plymouth/" /usr/share/plymouth/
 
   # Seed the logo from the baseline theme (w-style later swaps it per active theme).
-  # The logo lives in the theme system, not in the committed Plymouth dir.
-  install -m 644 "$SRC/rootfs/etc/w/themes/w/logo/W-logo-256x256.png" \
-    /usr/share/plymouth/themes/w/logo.png
+  # The logo lives in the theme system, not in the committed Plymouth dir. Rendered,
+  # not copied: its pixel size has to match what the wallpapers show on THIS panel,
+  # or the mark changes size the moment the splash hands over to the greeter.
+  # Sourced from the repo copy — /usr/lib/w is populated by apply_rootfs, which
+  # --plymouth alone does not run.
+  W_WALLPAPER_BIN="$SRC/rootfs/usr/bin/w-wallpaper"
+  # shellcheck source=/dev/null
+  source "$SRC/rootfs/usr/lib/w/plymouth-logo.sh"
+  plymouth_logo_install "$SRC/rootfs/etc/w/themes/w" /usr/share/plymouth/themes/w/logo.png
+  chmod 644 /usr/share/plymouth/themes/w/logo.png
+
+  # plymouthd's own config (theme + DeviceScale=1 — see the file's header). Copied
+  # explicitly rather than left to apply_rootfs: the copy that matters is the one
+  # inside the initramfs rebuilt below, and --plymouth must work on its own.
+  info "Deploying plymouthd config..."
+  mkdir -p /etc/plymouth
+  cp "$SRC/rootfs/etc/plymouth/plymouthd.conf" /etc/plymouth/plymouthd.conf
 
   info "Configuring mkinitcpio..."
   if ! grep -q 'plymouth' /etc/mkinitcpio.conf; then

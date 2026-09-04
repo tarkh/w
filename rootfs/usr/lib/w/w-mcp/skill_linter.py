@@ -5,8 +5,8 @@
 # w_skill_add, which runs lint_skill() on the full file content before it ever
 # reaches disk and refuses the write on errors.
 #
-# System skills (SYS_ROOT) predate the agent-authored format: none of the 19
-# shipped SKILL.md carry `origin:`/`created:` frontmatter, and at least one
+# System skills (SYS_ROOT) predate the agent-authored format: no shipped
+# SKILL.md carries `origin:`/`created:` frontmatter, and at least one
 # (hyprland) legitimately ships a helper script (install.sh, refreshes its wiki
 # copy on the target — not agent-authored, not subject to the no-executables
 # rule). So the strict Этап 6.11 rules (origin required, no executables in the

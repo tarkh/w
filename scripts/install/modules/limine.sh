@@ -109,9 +109,13 @@ EOF
 # retire_seed note below). A one-shot sed can't survive the async snapper-sync re-runs;
 # limine-entry-tool's own post.d hooks are the fix — they run after EVERY limine.conf
 # write (snapper-sync included, same channel as 90-limine-enroll-config). This hook
-# repoints default_entry to `<branch>/<first kernel leaf>` (Limine entry-path form,
+# repoints default_entry to `<branch>/<kernel leaf>` (Limine entry-path form,
 # CONFIG.md). Prefix 50- sorts before 90-limine-enroll-config so the enrolled Secure
-# Boot hash is computed over the already-corrected config. $1 = target hook path.
+# Boot hash is computed over the already-corrected config. WHICH leaf is the kernel
+# selection: it reads /etc/w/kernel.conf (written by `w-kernel set`) and falls back to
+# the first leaf — see the hook body. It also mirrors the leaf it pins into
+# /var/lib/w/kernel.default, because limine.conf itself sits on a dmask=0077 ESP and
+# the Hub reads the active kernel as the desktop user. $1 = target hook path.
 limine_write_default_entry_hook() {
   local file="$1"
   mkdir -p "$(dirname "$file")"
@@ -126,12 +130,34 @@ esp="${esp:-/boot/efi}"
 conf="$esp/limine.conf"
 [[ -f "$conf" ]] || exit 0
 
-# First top-level branch name (/+Name) and its first depth-2 kernel leaf (//name).
+# First top-level branch name (/+Name) and the depth-2 kernel leaf (//name) to boot.
 # Excludes the //Snapshots sub-branch and deeper snapshot entries (///, ////).
+# limine-entry-tool names each leaf after the kernel's pkgbase (//linux-zen), which is
+# exactly what `w-kernel set` records in /etc/w/kernel.conf — so the choice survives
+# every regeneration (limine-update, limine-snapper-sync) instead of being decided by
+# whichever leaf happens to come first. The first leaf stays the fallback: it is the
+# only answer on a machine that never made a choice, and with one kernel installed the
+# two agree anyway.
 branch="$(sed -n 's#^/+##p' "$conf" | head -1)"
-kernel="$(sed -n 's#^[[:space:]]*//\([^/].*\)#\1#p' "$conf" | grep -vx 'Snapshots' | head -1)"
+leaves="$(sed -n 's#^[[:space:]]*//\([^/].*\)#\1#p' "$conf" | sed 's#[[:space:]]*$##' | grep -vx 'Snapshots')"
+want=""
+[[ -r /etc/w/kernel.conf ]] && want="$(sed -n 's/^DEFAULT_KERNEL="\?\([^"]*\)"\?.*/\1/p' /etc/w/kernel.conf | head -1)"
+kernel=""
+[[ -n "$want" ]] && kernel="$(grep -Fx -- "$want" <<<"$leaves" | head -1)"
+[[ -n "$kernel" ]] || kernel="$(head -1 <<<"$leaves")"
 [[ -n "$branch" && -n "$kernel" ]] || exit 0
 target="${branch}/${kernel}"
+
+# Mirror the leaf we are about to pin where an unprivileged reader can see it: the
+# ESP is mounted dmask=0077, so the Hub (which asks `w-kernel list` as the desktop
+# user) cannot read limine.conf and would render the active kernel as "—". Written
+# from $kernel itself, so the mirror cannot disagree with the pin. Best-effort and
+# deliberately before the sed: a failure here must never change this hook's exit
+# code — an unpinned default_entry is a boot hang, a stale mirror is a wrong label.
+if [[ -d /var/lib/w ]]; then
+  printf '%s\n' "$kernel" > /var/lib/w/kernel.default 2>/dev/null || true
+  chmod 644 /var/lib/w/kernel.default 2>/dev/null || true
+fi
 
 if grep -q '^default_entry:' "$conf"; then
   current="$(sed -n 's#^default_entry:[[:space:]]*##p' "$conf" | head -1)"
@@ -316,6 +342,21 @@ mod_limine() {
     # point the config + initial snapshot are in place.
     if systemctl list-unit-files limine-snapper-sync.service &>/dev/null; then
       systemctl enable limine-snapper-sync.service 2>/dev/null || true
+      # The ESP is self-limiting by design: MAX_SNAPSHOT_ENTRIES defaults to "auto",
+      # which drops the OLDEST snapshot boot entries once usage passes
+      # LIMIT_USAGE_PERCENT (85). That is the right behaviour — it degrades instead of
+      # filling up, and it never touches the current kernels (a different hook stages
+      # those) or the btrfs snapshots themselves. But it does it SILENTLY by default,
+      # so a machine carrying several kernels would lose old snapshot menu entries with
+      # no word about why. Turn the notification on: the eviction stays automatic, it
+      # just stops being invisible. Idempotent, and only where the config exists.
+      if [[ -f /etc/limine-snapper-sync.conf ]]; then
+        if grep -q '^ENABLE_NOTIFICATION=' /etc/limine-snapper-sync.conf; then
+          sed -i 's/^ENABLE_NOTIFICATION=.*/ENABLE_NOTIFICATION=yes/' /etc/limine-snapper-sync.conf
+        else
+          echo 'ENABLE_NOTIFICATION=yes' >> /etc/limine-snapper-sync.conf
+        fi
+      fi
     else
       # Snapshot entries are a feature, not the boot path — a WARN, not a CRITICAL.
       # e2e asserts on the unit directly so losing it still fails the gate.

@@ -4,12 +4,16 @@
 #   secrets  — gnome-keyring serves org.freedesktop.secrets ONLY (the unique value:
 #              Bitwarden/NM/libsecret apps store here). Auto-unlocked at login via
 #              pam_gnome_keyring in /etc/pam.d/greetd (deployed here).
-#   ssh      — gcr-ssh-agent (from gcr-4) is W's default SSH agent. Its user socket
-#              listens at $XDG_RUNTIME_DIR/gcr/ssh and self-exports SSH_AUTH_SOCK via
-#              the socket's ExecStartPost, so no session-env hardcoding is needed.
-#              Enabled globally for all users; a future --bitwarden masks it and
-#              repoints SSH_AUTH_SOCK. (gnome-keyring's own ssh component was removed
-#              upstream long ago — gcr-ssh-agent is its successor.)
+#   ssh      — gcr-ssh-agent (from gcr-4) is W's default SSH agent, and a DEFAULT is
+#              all it is: the agent is a slot. The session exports one stable path
+#              (SSH_AUTH_SOCK=$XDG_RUNTIME_DIR/w/ssh-agent.sock, env-hyprland) and
+#              `w-ssh use <name>` re-points the symlink behind it at whichever agent
+#              the user actually keeps their keys in — masking this unit on the way
+#              out, since its ExecStartPost would otherwise keep re-announcing gcr's
+#              own path. The catalog of backends is the vendor ssh.conf deployed
+#              below; nothing else in W names an agent socket. See w-ssh.md.
+#              (gnome-keyring's own ssh component was removed upstream long ago —
+#              gcr-ssh-agent is its successor.)
 # Note: gcr-ssh-agent's passphrase prompt is still gcr-prompter (GTK, follows the W
 #       GTK theme). The W auth dialog (w-authd) already replaced the polkit agent;
 #       phase 2 will fold this SSH passphrase prompt into the same Quickshell card.
@@ -44,6 +48,8 @@ mod_keyring() {
 
   if [[ -n "$mnt" ]]; then
     install -Dm644 "$SRC/rootfs/etc/pam.d/greetd" "$mnt/etc/pam.d/greetd"
+    install -Dm644 "$SRC/rootfs/usr/share/w/defaults/ssh.conf"   "$mnt/usr/share/w/defaults/ssh.conf"
+    install -Dm644 "$SRC/rootfs/usr/share/w/defaults/ssh.schema" "$mnt/usr/share/w/defaults/ssh.schema"
     chroot_run systemctl --global enable gcr-ssh-agent.socket
     chroot_run systemctl --global mask gnome-keyring-daemon.socket gnome-keyring-daemon.service
     return
@@ -51,10 +57,13 @@ mod_keyring() {
 
   ui_info "Deploying greetd PAM stack (keyring auto-unlock)..."
   install -Dm644 "$SRC/rootfs/etc/pam.d/greetd" /etc/pam.d/greetd
+  ui_info "Deploying the SSH agent catalog (w-ssh)..."
+  install -Dm644 "$SRC/rootfs/usr/share/w/defaults/ssh.conf"   /usr/share/w/defaults/ssh.conf
+  install -Dm644 "$SRC/rootfs/usr/share/w/defaults/ssh.schema" /usr/share/w/defaults/ssh.schema
   ui_info "Enabling gcr-ssh-agent.socket for all users..."
   systemctl --global enable gcr-ssh-agent.socket
   ui_info "Masking systemd gnome-keyring units (gkr-pam must be the sole starter)..."
   systemctl --global mask gnome-keyring-daemon.socket gnome-keyring-daemon.service
 
-  ui_info "Secrets active: gnome-keyring (secrets) auto-unlocks at login; gcr-ssh-agent is the SSH agent."
+  ui_info "Secrets active: gnome-keyring (secrets) auto-unlocks at login; gcr-ssh-agent is the SSH agent (w-ssh list)."
 }

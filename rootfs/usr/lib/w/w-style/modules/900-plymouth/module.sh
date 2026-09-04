@@ -1,8 +1,9 @@
 # w-style module: plymouth (system-scope) — the boot splash colours. Renders 2x2
-# solid swatches (bar + bar background) and pulls the active theme's logo into the
-# Plymouth theme dir, then rebuilds the initramfs (Plymouth runs from there, not
-# /usr/share). Source is the system-fallback theme. Not live: takes effect on next
-# boot. Band 900 = system-scope surfaces.
+# solid swatches (bar + bar background) and the active theme's logo (at the pixel
+# size this machine's panel calls for) into the Plymouth theme dir, then rebuilds
+# the initramfs (Plymouth runs from there, not /usr/share). Source is the
+# system-fallback theme. Not live: takes effect on next boot. Band 900 =
+# system-scope surfaces.
 DESC="boot splash colours (Plymouth)"
 
 PLYMOUTH_DIR="/usr/share/plymouth/themes/w"
@@ -34,8 +35,14 @@ render_system() {
     -alpha on -compose DstOut -composite \
     "$PLYMOUTH_DIR/lock.png"
 
-  # Pull the active theme's logo (baseline fallback) into the Plymouth theme dir
-  cp "$(resolve_theme_file "$(w_system_theme_dir)" "$THEME_LOGO_REL")" "$PLYMOUTH_DIR/logo.png"
+  # Render the active theme's logo (baseline fallback) into the Plymouth theme dir at
+  # the size this machine's panel needs — the same on-screen size the wallpapers give
+  # the mark baked into them, so it does not change size when the splash hands over to
+  # the greeter. Sizing and source preference live in the shared helper; the caller
+  # only says which theme. /usr/lib/w is not on PATH — absolute path by policy.
+  # shellcheck source=/dev/null
+  source /usr/lib/w/plymouth-logo.sh
+  plymouth_logo_install "$(w_system_theme_dir)" "$PLYMOUTH_DIR/logo.png"
 
   # Plymouth runs from the initramfs, not /usr/share — rebuild so colors apply. w-mkinitcpio
   # calls the real /usr/bin/mkinitcpio (bypassing the limine-mkinitcpio-hook prompt that

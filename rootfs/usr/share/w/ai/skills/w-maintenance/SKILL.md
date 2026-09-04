@@ -12,9 +12,9 @@ sources:
   - path: .claude/library/w-conf.md
     sha256: 002069840e569db3a750c268458c12fc7ef2396539f4438e3f7068bb43ec729f
   - path: .claude/library/w-reset.md
-    sha256: 0cfe5da213d8b847ea56f4f03407b1c7618eae902960c0d3bf224552704eb044
+    sha256: 75390ab0872e4a11dd2794a2a859a04d6a9f4ff6c90f80c7e0f9e2488a106ddb
   - path: .claude/library/update-system.md
-    sha256: 65246b3a19668323817559293d650d58f85d4fd5ea8ebb6bbb2f81de5f858a2f
+    sha256: abcb62f7c888b819407672b86f94795cbd1b716c26ca6c25998d7db240399a50
   - path: .claude/library/w-rollback.md
     sha256: 95fe918c6339f5e6aa423b77857f702c0ceb21783b059c4c4bbf78bdebd7ab73
 tools:
@@ -198,7 +198,9 @@ If it refuses ("REFUSING TO UPDATE"), that is a fact to report, not an obstacle 
 route around. Do not suggest `VERIFY_SIGNATURE=no` in `/etc/w/update.conf` as a fix:
 it is there for machines tracking a fork rather than the official repository, where
 no signed release tags exist. A missing trust anchor is repaired with
-`sudo w-reset updatesys`, which restores it from the checkout.
+`sudo w-reset updatesys w-release.allowed_signers`, which restores that one file from
+the checkout. Use the per-file form, not the bare module: `w-reset updatesys` resets
+everything the module owns, `/etc/w/update.conf` included.
 
 **The checkout belongs to the primary user by design** (yay/makepkg refuse to run as
 root, and `.git/config` is `chmod 600` because the clone URL carries credentials), so

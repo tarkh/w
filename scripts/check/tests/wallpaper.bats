@@ -95,3 +95,66 @@ setup() {
   run hyprpaper_ipc 1 wallpaper "DP-1,/tmp/x.webp"
   [[ "$status" -ne 0 ]]
 }
+
+# wallpaper_cover_factor: how far the master that ACTUALLY gets displayed is scaled
+# to fill the panel. This number is what ties the boot splash to the wallpapers —
+# the logo baked into every master is multiplied by it on screen.
+
+@test "wallpaper_cover_factor: panel that matches its tier exactly → 1" {
+  touch "$WP/wallpaper-2560x1440.webp"
+  [[ "$(wallpaper_cover_factor "$WP" 2560 1440)" == "1.0000" ]]
+}
+
+@test "wallpaper_cover_factor: 16:10 panel covers by height (the HiDPI laptop case)" {
+  touch "$WP/wallpaper-2560x1440.webp"
+  # 2880x1800 buckets into the 2560 tier; 1800/1440 = 1.25 exceeds 2880/2560 = 1.125.
+  [[ "$(wallpaper_cover_factor "$WP" 2880 1800)" == "1.2500" ]]
+}
+
+@test "wallpaper_cover_factor: ultrawide covers by width" {
+  touch "$WP/wallpaper-2560x1440.webp"
+  [[ "$(wallpaper_cover_factor "$WP" 3440 1440)" == "1.3438" ]]
+}
+
+@test "wallpaper_cover_factor: follows the fallback, not the nominal tier" {
+  # A theme with only an HD master: a 2880px panel displays THAT file, so the factor
+  # is 1800/1080, not the 1.25 the nominal 2560 tier would give.
+  touch "$WP/wallpaper-1920x1080.webp"
+  [[ "$(wallpaper_cover_factor "$WP" 2880 1800)" == "1.6667" ]]
+}
+
+@test "wallpaper_cover_factor: theme with no wallpapers still answers (nominal tier)" {
+  [[ "$(wallpaper_cover_factor "$WP" 2880 1800)" == "1.2500" ]]
+}
+
+@test "wallpaper_cover_factor: rejects garbage geometry" {
+  touch "$WP/wallpaper-1920x1080.webp"
+  run wallpaper_cover_factor "$WP" abc 1800
+  [[ "$status" -ne 0 ]]
+  run wallpaper_cover_factor "$WP" 0 0
+  [[ "$status" -ne 0 ]]
+}
+
+# wallpaper_manifest: the greeter's contract — a tier ladder plus, when a compositor
+# is up, one entry per output keyed by connector name (Qt cannot derive the pixel
+# width itself at a fractional monitor scale, see the function's comment).
+
+@test "wallpaper_manifest: writes tiers and per-output entries from hyprctl" {
+  touch "$WP/wallpaper-2560x1440.webp" "$WP/wallpaper-1920x1080.webp"
+  MANIFEST_FILE="$BATS_TEST_TMPDIR/manifest.json"
+  hyprctl() { printf '[{"name":"eDP-1","width":2880,"height":1800}]\n'; }
+  wallpaper_manifest "$WP"
+  run command jq -r '.outputs[0] | "\(.name) \(.width)x\(.height) \(.path)"' "$MANIFEST_FILE"
+  [[ "$output" == "eDP-1 2880x1800 $WP/wallpaper-2560x1440.webp" ]]
+  run command jq -r '.tiers | length' "$MANIFEST_FILE"
+  [[ "$output" == "4" ]]
+}
+
+@test "wallpaper_manifest: no compositor → tiers only, empty outputs" {
+  touch "$WP/wallpaper-1920x1080.webp"
+  MANIFEST_FILE="$BATS_TEST_TMPDIR/manifest.json"
+  hyprctl() { return 1; }
+  wallpaper_manifest "$WP"
+  run command jq -r '.outputs | length' "$MANIFEST_FILE"
+  [[ "$output" == "0" ]]
+}

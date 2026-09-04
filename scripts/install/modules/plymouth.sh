@@ -18,13 +18,11 @@ mod_plymouth() {
       "$MNT/etc/default/grub"
   fi
 
-  # Set default theme
+  # plymouthd's config (theme + DeviceScale=1, see the file's own header). Deployed
+  # from rootfs/ here rather than post-boot for the same reason as the theme below:
+  # this initramfs is the one the first boot runs on.
   mkdir -p "$MNT/etc/plymouth"
-  cat > "$MNT/etc/plymouth/plymouthd.conf" <<'EOF'
-[Daemon]
-Theme=w
-ShowDelay=0
-EOF
+  cp "$SRC/rootfs/etc/plymouth/plymouthd.conf" "$MNT/etc/plymouth/plymouthd.conf"
 
   # Seamless transition: keep splash until Wayland compositor takes over
   local dropin_dir="$MNT/etc/systemd/system/plymouth-quit.service.d"
@@ -48,6 +46,13 @@ EOF
   ui_info "Deploying Plymouth theme..."
   mkdir -p "$MNT/usr/share/plymouth"
   cp -a "$SRC/rootfs/usr/share/plymouth/." "$MNT/usr/share/plymouth/"
+  # The logo is COPIED at its master size here, not rendered to this panel's size the
+  # way apply.sh --plymouth and w-style do it: rendering needs ImageMagick, which is
+  # in neither the ISO nor the freshly pacstrapped chroot (it arrives with
+  # packages/pacman.txt on first boot). The only splash that shows this copy is the
+  # very first boot — the LUKS prompt on the encrypted path — where there is no
+  # wallpaper on screen to compare it against; firstboot's apply run replaces it with
+  # the correctly sized render and rebuilds the initramfs.
   install -Dm644 "$SRC/rootfs/etc/w/themes/w/logo/W-logo-256x256.png" \
     "$MNT/usr/share/plymouth/themes/w/logo.png"
   chown -R root:root "$MNT/usr/share/plymouth"

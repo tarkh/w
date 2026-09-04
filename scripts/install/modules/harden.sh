@@ -2,48 +2,33 @@
 # Userspace layer: wired into apply.sh only (the installer stays minimal-base).
 # sysctl drop-ins + w-kernel arrive via apply_rootfs (--rootfs); this module
 # activates them and patches the boot cmdline.
+#
+# It is a one-line delegation to `w-kernel harden on` ON PURPOSE. The cmdline token
+# set and the way it is written used to be duplicated here and in w-kernel, with a
+# comment in both telling the next person to keep them in sync — and they still
+# diverged the moment the encrypted install path appeared: this module wrote
+# GRUB_CMDLINE_LINUX_DEFAULT and ran grub-mkconfig unconditionally, while a Limine
+# system boots /etc/kernel/cmdline and never reads either. grub IS installed there
+# (it is in base.txt, shared with the plain path), so nothing failed — the config was
+# written, the regeneration succeeded, and the hardening cmdline simply never reached
+# the kernel. One implementation, in the tool that also has to toggle it back off, is
+# the only shape in which "applied at install" and "on according to the Hub" can mean
+# the same thing.
+#
+# Ordering note: this runs long after apply_bootloader in ALL_MODULES, so
+# /etc/default/limine (w-kernel's bootloader probe) already exists where it should.
 
 # Compatibility shim: apply.sh uses info(), install context uses ui_info().
 command -v ui_info &>/dev/null || ui_info() { info "$@"; }
 
-# Hardening boot params. Toggled as a set; w-kernel harden off removes them.
-W_HARDEN_CMDLINE="init_on_alloc=1 init_on_free=1 slab_nomerge \
-randomize_kstack_offset=1 page_alloc.shuffle=1 vsyscall=none debugfs=off"
-
-# Append only the missing tokens to GRUB_CMDLINE_LINUX_DEFAULT, preserving what's
-# already there (splash/quiet from plymouth). Idempotent — re-running adds nothing.
-harden_add_cmdline() {
-  local file="$1" tokens="$2" tok
-  grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' "$file" \
-    || echo 'GRUB_CMDLINE_LINUX_DEFAULT=""' >> "$file"
-  for tok in $tokens; do
-    # match the bare token inside the quoted value, word-bounded
-    grep -qE "^GRUB_CMDLINE_LINUX_DEFAULT=\".*(^|[\" ])${tok//./\\.}([\" ]|\$)" "$file" \
-      && continue
-    sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=\"\(.*\)\"|GRUB_CMDLINE_LINUX_DEFAULT=\"\1 ${tok}\"|" "$file"
-  done
-  # collapse any accidental double/leading spaces introduced by appends
-  sed -i 's|^\(GRUB_CMDLINE_LINUX_DEFAULT="\) *|\1|; s|  *\("$\)|\1|; s|\(GRUB_CMDLINE_LINUX_DEFAULT="[^"]*\)  *|\1 |g' "$file"
-}
-
 mod_harden() {
-  local mnt="${MNT:-}"
-  local grub_default="${mnt}/etc/default/grub"
-
-  ui_info "Applying sysctl hardening..."
-  if [[ -z "$mnt" ]]; then
-    sysctl --system >/dev/null
+  # apply.sh runs on the live system and never sets MNT; the installer does not call
+  # this module at all. Refuse rather than silently harden the HOST from a chroot.
+  if [[ -n "${MNT:-}" ]]; then
+    ui_info "Hardening: skipped (no chroot support — run apply.sh --harden on the installed system)."
+    return 0
   fi
 
-  ui_info "Adding hardening boot params to kernel cmdline..."
-  harden_add_cmdline "$grub_default" "$W_HARDEN_CMDLINE"
-
-  ui_info "Regenerating GRUB config (cmdline + microcode initrd)..."
-  if [[ -n "$mnt" ]]; then
-    chroot_run grub-mkconfig -o /boot/grub/grub.cfg
-  else
-    grub-mkconfig -o /boot/grub/grub.cfg
-  fi
-
-  ui_info "Hardening applied. Reboot required for cmdline params to take effect."
+  ui_info "Applying hardening profile (sysctl drop-ins + boot cmdline)..."
+  w-kernel harden on
 }

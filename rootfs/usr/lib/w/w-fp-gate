@@ -1,0 +1,45 @@
+#!/bin/sh
+# w-fp-gate — "should PAM try the fingerprint this time?" for /etc/pam.d/polkit-1.
+#
+# Run by pam_exec as the FIRST auth module, purely so the next one can be skipped:
+#
+#   auth [success=ignore default=1] pam_exec.so quiet /usr/lib/w/w-fp-gate
+#   auth sufficient                 pam_fprintd.so
+#   auth include                    system-auth
+#
+#   exit 0     → success=ignore → carry on to pam_fprintd (the normal path)
+#   exit != 0  → default=1      → jump over pam_fprintd, straight to the password
+#
+# ── Why this exists ──────────────────────────────────────────────────────────
+# The W auth card offers "Use password" while it is waiting on the reader. Making
+# that button immediate is impossible from outside PAM: pam_fprintd owns the
+# conversation until its own max-tries/timeout expire (30s by default), so a
+# password typed meanwhile just sits queued, and cancelling the session only
+# restarts a stack that begins with pam_fprintd all over again. GDM solves the
+# same problem with two PAM services (gdm-fingerprint / gdm-password) and picks
+# one; polkit cannot — polkit-agent-helper-1 hardcodes the service name
+# "polkit-1". So the choice has to live INSIDE the one stack, and this is it.
+#
+# w-authd drops the flag when the user asks for the password, then restarts the
+# PolkitAgent.Session: the new run skips the reader and asks for a password at
+# once. The flag is removed when the prompt ends (and on daemon start, so a crash
+# cannot leave fingerprint disabled).
+#
+# ── Why this is safe ─────────────────────────────────────────────────────────
+# The flag can only ever REMOVE an authentication method, never add or bypass
+# one: its single effect is that the password is demanded. Every failure mode
+# lands on the same side — a missing, unreadable or non-executable gate makes
+# pam_exec return an error, which `default=1` also turns into "skip the reader,
+# ask for the password".
+#
+# pam_exec runs this with the REAL uid of the calling process, i.e. the user whose
+# w-authd forked the polkit helper — exactly the person at the keyboard, and the
+# only one who can write into their own $XDG_RUNTIME_DIR (mode 0700). No name
+# lookup and no root access are needed, so this script never runs privileged.
+#
+# Keep it trivial: one stat, no network, no D-Bus, no loops. It sits in front of
+# every privileged action on the machine, and a gate that blocks is a machine
+# that cannot authenticate.
+
+[ -e "/run/user/$(id -ru)/w/fp-skip" ] && exit 1
+exit 0

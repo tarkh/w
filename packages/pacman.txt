@@ -101,6 +101,11 @@ gucharmap
 
 # Theming (w-style renders GRUB/Plymouth assets; w-theme crossfade via grim)
 imagemagick
+# ImageMagick's SVG delegate — only an optdepend upstream, but the Plymouth logo is
+# rasterised from the theme's vector master at whatever pixel size the panel calls
+# for (lib/w/plymouth-logo.sh); without librsvg that render silently degrades to an
+# upscale of the 256px PNG.
+librsvg
 grim
 # Source-palette extraction for `w-theme new` (Material HCT). Official repo, one
 # static-ish Rust binary — the alternatives (pywal16, colorice) are AUR/PyPI and

@@ -2,15 +2,18 @@
 name: w-security
 description: >-
   W Linux security model and tools: kernel/sysctl hardening (w-kernel), privileges
-  (sudo-rs, run0), the secrets keyring (gnome-keyring, gcr-ssh-agent, seahorse),
+  (sudo-rs, run0), the secrets keyring (gnome-keyring, seahorse), the SSH agent slot (w-ssh:
+  switching agents, per-host key selectors, "too many authentication failures"),
   firmware updates (fwupdmgr), and disk encryption / Secure Boot (w-crypt,
   w-secureboot) on encrypted installs. Load this for hardening, secrets/SSH keys,
   firmware, or LUKS/TPM2/Secure Boot questions.
 sources:
   - path: .claude/library/security.md
-    sha256: 364888438b946122813a6e365cb060270b25f25b7b0fbc9f8e01e08d86c24b6e
+    sha256: f406324ae9e0c67ff4c0e72a0439ad46f79368a92ae7ad58b928e69db0f3f486
+  - path: .claude/library/w-ssh.md
+    sha256: 34bbf5becbefc07d81b82f475b37fa1e32b8ed0e969f0d88ab07ec9e6208ab79
   - path: .claude/library/package-limine.md
-    sha256: a54c01ec7b7d2d5195b0ed8beb3adaf0c481154a1d21de8362522954b490097a
+    sha256: 5951a5fff90962e7eb7045b4c8967a84a94b228fab59c6e4548921b32297889a
 tools:
   - w_fwupd_refresh
 ---
@@ -27,8 +30,36 @@ CVE fixes. On top of that:
 The default kernel is `linux-zen` (not `linux-hardened`, which would break Flatpak's user
 namespaces and DKMS). sysctl and boot-cmdline hardening are applied as a profile.
 
-- `w-kernel` — select the active kernel (`linux-zen` ↔ vanilla `linux`) and toggle the
-  hardening profile on/off; it regenerates the bootloader/initramfs as needed.
+- `w-kernel list [--porcelain]` — the known kernels, which are installed, which one boots
+  next and which one is running. Porcelain is TSV:
+  `name pkg version installed default running`.
+- `w-kernel set <zen|vanilla|lts>` — install that kernel plus its paired headers (every
+  DKMS module rebuilds behind them) and make it the default. It regenerates whatever this
+  machine actually boots — GRUB on a plain install, Limine on an encrypted one.
+- `w-kernel remove <zen|vanilla|lts>` — uninstall one. It refuses the running kernel and
+  the default one; switch first.
+- `w-kernel harden <on|off|status>` — the hardening profile as a whole (sysctl drop-ins
+  plus boot cmdline). `status --porcelain` is TSV: `state(on|off|mixed) pending(yes|no)`.
+
+Three things worth knowing before advising someone here:
+
+- **Switching kernels never removes one.** Every installed kernel stays a bootable menu
+  entry, so switching to one that is already installed is an instant, offline repin of
+  the boot default — no download. That is the answer when a kernel upgrade breaks a
+  driver (Wi-Fi included): keep `lts` installed as a rescue kernel, and switching to it
+  works even with no network. `lts` is an older, long-supported series that usually still
+  carries a driver a newer kernel regressed or has not gained yet.
+- **A kernel switch only takes effect at the next boot.** Until then the running kernel
+  and the default disagree; `w-update` reports that as a pending reboot, and the bar shows
+  its reboot glyph.
+- **`harden status` can say `mixed`.** The sysctl drop-ins and the boot cmdline are two
+  halves that can end up toggled apart. Report it as "partially applied" — never round it
+  down to "off". `pending=yes` means the configured cmdline has not reached the running
+  kernel yet (reboot owed). Note that `harden off` removes the boot parameters at once but
+  leaves sysctl values already applied to the running kernel in place until a reboot.
+
+Both surfaces are also in the Hub: the kernel under System → General, hardening under
+System → Security.
 
 ## Privileges — sudo-rs and run0
 
@@ -43,14 +74,57 @@ namespaces and DKMS). sysctl and boot-cmdline hardening are applied as a profile
 Two decoupled layers:
 
 - **Secrets:** `gnome-keyring` provides the Secret Service, auto-unlocked by your login
-  password. GUI manager: **seahorse** ("Passwords and Keys").
-- **SSH agent:** `gcr-ssh-agent` is W's default SSH agent; it exports `SSH_AUTH_SOCK`
-  itself. To store a key passphrase persistently, just `ssh user@server` — on first use
-  the agent shows a prompt with an "automatically unlock" checkbox and saves it to the
-  keyring. (`ssh-add` does **not** persist to the keyring; `ssh-add -l` is not a reliable
-  unlocked-state indicator.)
+  password. GUI manager: **seahorse** ("Passwords and Keys"). Any password manager the
+  user installs stores its own unlock key here too, via libsecret.
+- **SSH agent:** a **slot**, not a fixture — see the next section.
 - **Caveat:** logging in with fingerprint only does **not** auto-unlock the keyring (a PAM
-  limitation) — the login password does.
+  limitation) — the login password does. W's greeter has no fingerprint step, so in
+  practice the keyring is unlocked; this matters only if that ever changes.
+
+## The SSH agent slot — `w-ssh`
+
+The session always exports one stable path, `SSH_AUTH_SOCK=$XDG_RUNTIME_DIR/w/ssh-agent.sock`,
+and a **symlink** behind it points at whichever agent is active. So switching agents is one
+command, takes effect for anything started afterwards, and needs no dotfile and no relogin.
+
+- `w-ssh status` — **start here for any SSH problem**: active agent, whether its socket is
+  live, how many keys it offers, whether the generated selectors and the `~/.ssh/config`
+  Include are in place. It also flags the common confusion where the calling shell was
+  started before the last switch and still carries the old socket.
+- `w-ssh list` / `w-ssh use <name>` — the catalog is `gcr` (W's default, from gcr-4),
+  `bitwarden`, `onepassword`, `openssh`, and `none`. `use` masks `gcr-ssh-agent.socket`
+  for that user when another agent takes over, and unmasks it on the way back — the
+  handoff is explicit and reversible.
+- Adding an agent W does not know about is one `SOCKET_<name>=` line in
+  `/etc/w/ssh.conf` or `~/.config/w/ssh.conf`; `%t` = `$XDG_RUNTIME_DIR`, `%h` = home.
+
+### `w-ssh sync` — per-host key selectors (why "Too many authentication failures" happens)
+
+An agent holding a whole password vault offers **every** key it has, and `sshd` gives up
+after `MaxAuthTries` (6 by default). With more than six keys the right one is never
+reached and the connection dies as `Too many authentication failures`. This is inherent to
+the agent protocol — not a bug in W or in the password manager — and the only fix is to
+tell ssh which key to offer per host.
+
+`w-ssh sync` generates exactly that from the agent, reading each key's **name in the
+vault** as the list of hosts it belongs to: an item named `GitLab git.example.com` yields
+a `Host GitLab git.example.com` block with `IdentityFile` + `IdentitiesOnly yes`. Output
+goes to `~/.ssh/config.d/50-w-agent.conf` and `~/.ssh/agent-keys/`; `~/.ssh/config` is
+never rewritten. The public key on disk is a **selector**, not a copied secret.
+
+So the user's workflow is: add a key to the vault → put the host(s) in its name → run
+`w-ssh sync`. Key listing works while the vault is locked, so this needs no unlock.
+
+- `w-ssh include` adds `Include config.d/*.conf` **at the top** of `~/.ssh/config`. It has
+  to be above the first `Host`/`Match` line: a `Host` block runs to the next one and a
+  blank line does not close it, so an Include below one applies to that single host —
+  silently. If `w-ssh status` reports the Include is "inside a Host block", that is the
+  bug, and moving the line is the fix.
+
+**Passphrases with the default agent (gcr-ssh-agent):** to store one persistently, just
+`ssh user@server` — on first use the prompt (W's auth card) offers an "automatically
+unlock" checkbox and saves it to the keyring. `ssh-add` does **not** persist to the
+keyring, and `ssh-add -l` is not a reliable unlocked-state indicator.
 
 ## Firmware — fwupd
 
@@ -97,6 +171,23 @@ fallback, with **Limine** as the bootloader and snapshot-boot support. Two tools
 
 These tools are only present on encrypted/Limine installs; on a standard install the
 bootloader is GRUB and neither applies.
+
+### ESP space on an encrypted install
+
+The ESP is 2 GiB there because Limine cannot read the LUKS root: kernels, initramfs and
+the snapshot boot entries are all copied onto it. It is not a scarce resource, and a
+second or third kernel is not what threatens it:
+
+- Snapshot boot entries are content-addressed (`vmlinuz_sha256_…`), so many snapshots
+  sharing one kernel cost one copy. What grows the ESP is the number of *distinct*
+  kernel/initramfs builds still referenced — kernel upgrades and initramfs rebuilds.
+- Measured: one kernel ≈ 92 MB used of 2048; adding `linux-lts` cost +37 MB.
+- It is self-limiting. `limine-snapper-sync` evicts the oldest snapshot boot entries once
+  the ESP passes 85% usage, so it degrades instead of filling up, and it never touches the
+  current kernels or the btrfs snapshots themselves.
+
+So do not advise trimming the snapshot policy or repartitioning to make room for a kernel;
+neither is the constraint.
 
 ### If the ESP stops receiving kernel updates
 

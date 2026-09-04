@@ -269,6 +269,22 @@ w_actuate_main() {
       local sb="${1:-}"
       case "$sb" in on) CMD=(w-secureboot enable) ;; off) CMD=(w-secureboot disable) ;; *) die "secureboot state must be on or off";; esac
       ;;
+    kernel-set)
+      # Switch the active kernel (Hub System → General). Long and network-bound —
+      # it pulls the kernel + its paired headers and every DKMS module rebuilds
+      # behind them — so the Hub runs this inside w-term for live output, the same
+      # hybrid model as sync-update/secureboot. w_pac's mirror retry lives inside
+      # w-kernel itself, which is where the transaction is.
+      local kn="${1:-}"
+      case "$kn" in zen|vanilla|lts) CMD=(w-kernel set "$kn") ;; *) die "kernel must be zen, vanilla or lts";; esac
+      ;;
+    kernel-harden)
+      # Kernel hardening profile on/off (Hub System → Security). Instant actuation —
+      # renaming three sysctl drop-ins, one `sysctl --system`, a cmdline edit and a
+      # bootloader regen — so this one goes through runPrivileged, not a terminal.
+      local kh="${1:-}"
+      case "$kh" in on|off) CMD=(w-kernel harden "$kh") ;; *) die "hardening state must be on or off";; esac
+      ;;
     run)
       (($#)) || die "no command given"
       CMD=("$@")           # arbitrary command; gated by the polkit prompt + audited

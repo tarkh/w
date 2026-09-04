@@ -64,6 +64,8 @@ Commands:
                             --wait [SEC] Wait for hyprpaper socket (default: 10s)
   tiers [--porcelain]     List the resolution tiers a theme may ship
                             --porcelain  One WIDTHxHEIGHT per line, largest first
+  cover <WIDTHxHEIGHT>    Print how far the displayed master is scaled to fill
+                          a panel of that pixel size (cover fit)
   help, --help            Show this help
 
 Exit codes:
@@ -79,6 +81,7 @@ Examples:
   w-wallpaper apply --wait
   w-wallpaper apply --wait 5
   w-wallpaper tiers --porcelain
+  w-wallpaper cover 2880x1800
 EOF
 }
 
@@ -128,19 +131,60 @@ wallpaper_file() {
 # bucket a monitor into a tier and to drive the manifest below.
 WALLPAPER_MINWIDTH=(5120 3840 2560 0)
 
-# Write the manifest: for each tier, the resolved file (fallback applied) plus its
-# minimum width, newest-first. Resolution-aware consumers without hyprctl (the
-# greeter) read this and pick a wallpaper per monitor by width using the SAME
-# resolver as hyprpaper — one selection logic across userspace and the greeter.
-# Best-effort: any failure leaves the previous manifest (or none) in place.
+# How far the master that would ACTUALLY be displayed gets scaled to fill a panel
+# of <width>x<height> pixels. Both consumers cover-fit (fill the screen, crop the
+# overflow), so this one number turns anything baked into the masters at a fixed
+# pixel size — the brand logo in the centre — into its on-screen size:
+#   on-screen px = baked px x factor
+# It resolves the file first rather than taking the nominal tier, because a theme
+# that ships an incomplete ladder is displayed through wallpaper_file's fallback
+# and it is THAT master's dimensions the screen sees. Plymouth draws the same logo
+# and asks here for the size (see /usr/lib/w/plymouth-logo.sh); keeping the answer
+# in this file is what stops the boot splash and the wallpapers from drifting apart.
+wallpaper_cover_factor() { # <dir> <width> <height>  → e.g. 1.2500
+  local dir="$1" w="${2:-}" h="${3:-}" master tw th
+  [[ "$w" =~ ^[0-9]+$ && "$h" =~ ^[0-9]+$ && "$w" -gt 0 && "$h" -gt 0 ]] || return 1
+  # Real file if the theme has one, else the nominal tier for that width — the
+  # factor stays defined even for a theme with no wallpapers at all.
+  master=$(wallpaper_file "$dir" "$w") || master=$(wallpaper_for_width "$w")
+  master="${master##*/}"; master="${master%.*}"; master="${master#wallpaper-}"
+  tw="${master%x*}"; th="${master#*x}"
+  [[ "$tw" =~ ^[0-9]+$ && "$th" =~ ^[0-9]+$ ]] || return 1
+  awk -v w="$w" -v h="$h" -v tw="$tw" -v th="$th" \
+    'BEGIN { x = w / tw; y = h / th; printf "%.4f\n", (x > y ? x : y) }'
+}
+
+# Write the manifest, in two sections:
+#
+#   tiers   — for each tier, the resolved file (fallback applied) plus its minimum
+#             width, widest-first. A width-addressed ladder, same resolver as
+#             hyprpaper, for a consumer that knows a monitor's pixel width.
+#   outputs — one entry per connected output, straight from the compositor.
+#
+# The greeter draws its own wallpaper and CANNOT derive a monitor's pixel width
+# itself: at a fractional monitor scale Qt reports the logical size with an
+# integer (ceil'd) device pixel ratio, so width x dpr overshoots — 1920 x 2 =
+# 3840 on a 2880px panel at scale 1.5 — and picks a bigger master than hyprpaper
+# did, shrinking everything baked into it. hyprctl is the only source that agrees
+# with hyprpaper, so its numbers are recorded here, keyed by connector name.
+# Best-effort: any failure leaves the previous manifest (or none) in place, and a
+# missing/dead compositor simply yields an empty outputs list.
 wallpaper_manifest() {
-  local dir="$1" i n=${#WALLPAPER_TIERS[@]} path entries=()
+  local dir="$1" i n=${#WALLPAPER_TIERS[@]} path tiers=() outs=() mons name width height
   for (( i = 0; i < n; i++ )); do
     path=$(wallpaper_file "$dir" "${WALLPAPER_MINWIDTH[i]}") || path=""
-    entries+=("{\"minWidth\":${WALLPAPER_MINWIDTH[i]},\"path\":\"${path}\"}")
+    tiers+=("{\"minWidth\":${WALLPAPER_MINWIDTH[i]},\"path\":\"${path}\"}")
   done
+
+  mons=$(hyprctl monitors -j 2>/dev/null | jq -r '.[] | "\(.name)\t\(.width)\t\(.height)"' 2>/dev/null) || mons=""
+  while IFS=$'\t' read -r name width height; do
+    [[ -n "$name" && "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]] || continue
+    path=$(wallpaper_file "$dir" "$width") || path=""
+    outs+=("{\"name\":\"${name}\",\"width\":${width},\"height\":${height},\"path\":\"${path}\"}")
+  done <<< "$mons"
+
   local IFS=,
-  printf '[%s]\n' "${entries[*]}" > "$MANIFEST_FILE" 2>/dev/null || true
+  printf '{"tiers":[%s],"outputs":[%s]}\n' "${tiers[*]}" "${outs[*]}" > "$MANIFEST_FILE" 2>/dev/null || true
 }
 
 # ── Commands ──────────────────────────────────────────────────────────────────
@@ -269,6 +313,19 @@ cmd_tiers() {
   done
 }
 
+# ── cover ─────────────────────────────────────────────────────────────────────
+# The scale a panel of <WIDTHxHEIGHT> px applies to the master it displays, for
+# the invoking user's effective theme. Callers that need to draw an element at the
+# same on-screen size as its counterpart baked into the wallpaper multiply by it.
+cmd_cover() {
+  local geom="${1:-}"
+  [[ $# -le 1 ]] || { echo "w-wallpaper: cover: unknown option: $2" >&2; exit 2; }
+  [[ "$geom" =~ ^([0-9]+)x([0-9]+)$ ]] \
+    || { echo "w-wallpaper: cover: <WIDTHxHEIGHT> required (e.g. 2880x1800)" >&2; exit 2; }
+  wallpaper_cover_factor "$(wallpaper_dir)" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" \
+    || { echo "w-wallpaper: cover: cannot resolve a master for $geom" >&2; exit 1; }
+}
+
 # Source-guard: the unit tests (scripts/check/tests) source this file for the
 # pure resolver functions above — only a direct invocation reaches the dispatch.
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then return 0; fi
@@ -278,6 +335,7 @@ case "${1:-}" in
   get)             shift; cmd_get "$@" ;;
   apply)           shift; cmd_apply "$@" ;;
   tiers)           shift; cmd_tiers "$@" ;;
+  cover)           shift; cmd_cover "$@" ;;
   help|--help|-h)  usage; exit 0 ;;
   "")              usage >&2; exit 2 ;;
   *)               echo "w-wallpaper: unknown command: $1" >&2; usage >&2; exit 2 ;;

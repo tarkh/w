@@ -55,6 +55,29 @@
     "en": "Disk auto-unlock still needs to be re-sealed to the new boot state",
     "ru": "Авторазблокировку диска ещё нужно переустановить под новую цепочку загрузки" },
   "hub.secureBoot.finish": { "en": "Finish", "ru": "Завершить" },
+  "hub.harden":       { "en": "Kernel hardening", "ru": "Защита ядра" },
+  "hub.hardenLabel":  { "en": "Hardening profile", "ru": "Профиль защиты" },
+  "hub.harden.on":    { "en": "on",       "ru": "вкл" },
+  "hub.harden.off":   { "en": "off",      "ru": "выкл" },
+  "hub.harden.mixed": { "en": "partial",  "ru": "частично" },
+  "hub.hardenHint": {
+    "en": "Stricter kernel, filesystem and network settings plus hardened boot parameters. Turning it off removes the boot parameters at once, but settings already applied to the running kernel stay until the next reboot.",
+    "ru": "Более строгие параметры ядра, файловой системы и сети плюс защитные параметры загрузки. Выключение сразу убирает параметры загрузки, но уже применённые к работающему ядру настройки остаются до перезагрузки." },
+  "hub.hardenReboot": {
+    "en": "Reboot to apply the boot parameters.",
+    "ru": "Перезагрузите, чтобы применить параметры загрузки." },
+  "hub.kernel":        { "en": "Kernel",        "ru": "Ядро" },
+  "hub.kernelLabel":   { "en": "Active kernel", "ru": "Активное ядро" },
+  "hub.kernel.zen":     { "en": "Zen",     "ru": "Zen" },
+  "hub.kernel.vanilla": { "en": "Vanilla", "ru": "Обычное" },
+  "hub.kernel.lts":     { "en": "LTS",     "ru": "LTS" },
+  "hub.kernelNotInstalled": { "en": "not installed", "ru": "не установлено" },
+  "hub.kernelHint": {
+    "en": "Zen is tuned for desktop responsiveness; LTS is an older, long-supported series worth switching to when hardware needs a driver a newer kernel dropped or has not gained yet. Choosing a kernel installs it and makes it the default — nothing is removed, so every installed kernel stays selectable in the boot menu.",
+    "ru": "Zen настроен на отзывчивость десктопа; LTS — более старая серия с долгой поддержкой, её стоит выбрать, когда железу нужен драйвер, которого в свежем ядре ещё или уже нет. Выбор ядра ставит его и делает загружаемым по умолчанию — ничего не удаляется, все установленные ядра остаются в меню загрузки." },
+  "hub.kernelRebootTitle": { "en": "Reboot to switch kernel", "ru": "Перезагрузите, чтобы сменить ядро" },
+  "hub.kernelRunningNow":  { "en": "Running now", "ru": "Сейчас работает" },
+  "hub.rebootNow":         { "en": "Reboot", "ru": "Перезагрузить" },
   "hub.connections": { "en": "Connections…", "ru": "Соединения…" },
   "hub.hostname":    { "en": "Hostname",   "ru": "Имя хоста" },
 
@@ -597,5 +620,9 @@
   "auth.checking":            { "en": "Checking…",    "ru": "Проверка…" },
   "auth.cancel":              { "en": "Cancel",       "ru": "Отмена" },
   "auth.failed":              { "en": "Authentication failed. Try again.", "ru": "Аутентификация не удалась. Попробуйте снова." },
-  "auth.lockoutHint":         { "en": "Too many failed attempts temporarily block sign-in.", "ru": "Слишком много неверных попыток временно блокируют вход." }
+  "auth.lockoutHint":         { "en": "Too many failed attempts temporarily block sign-in.", "ru": "Слишком много неверных попыток временно блокируют вход." },
+  "auth.fingerprintFor":      { "en": "Fingerprint of user %1", "ru": "Отпечаток пользователя %1" },
+  "auth.fingerprintHint":     { "en": "Touch the fingerprint reader", "ru": "Приложите палец к сканеру отпечатка" },
+  "auth.fingerprintStillWaiting": { "en": "Type your password — it is sent as soon as the reader gives up.", "ru": "Введите пароль — он отправится, как только сканер прекратит попытки." },
+  "auth.usePassword":         { "en": "Use password",  "ru": "Ввести пароль" }
 }

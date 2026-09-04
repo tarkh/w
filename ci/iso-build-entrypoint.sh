@@ -41,9 +41,17 @@ pacman -Su --noconfirm
 #                     types. Without them a `Connections { target: root }` is
 #                     reported as "cannot assign Hub to QObject" — not a defect,
 #                     just a base class it could not follow.
+#   jq                w-bar IS jq: every block the bar composes is read and
+#                     written through it. Absent, the bar suite's 23 cases fail
+#                     on the container rather than on the code — which is how
+#                     this list learned it was incomplete.
+#   openssh           ssh-keygen, which the release-signing suite runs against
+#                     real one-shot keys. Absent, all 17 cases SKIP and the
+#                     edge channel's signature boundary rides untested on a
+#                     green run — the same hole, in its quiet form.
 info "Installing build and check dependencies..."
 pacman -S --noconfirm --needed \
-  archiso base-devel git rsync sudo \
+  archiso base-devel git rsync sudo jq openssh \
   shellcheck ruff bats python python-numpy qt6-declarative quickshell
 
 # The paths suite asserts no shipped /usr/bin path collides with a file owned by
@@ -100,8 +108,13 @@ runuser -u builder -- git config --global --add safe.directory "$REPO"
 # baked into the image. Nothing else in the pipeline would notice. The probe
 # fails only on a definitive "no such name"; a network hiccup is reported and
 # tolerated, so it cannot make the nightly run flaky.
-info "scripts/check.sh --online"
-runuser -u builder -- bash -c "cd $REPO && bash scripts/check.sh --online"
+#
+# --strict is the rule the package list above needs to stay honest: here, and
+# only here, a suite or a case that steps aside because its tool is missing is
+# a failure. On a laptop that skip is a courtesy; in the container it means the
+# run reported on less than it claims, and nothing else would ever say so.
+info "scripts/check.sh --online --strict"
+runuser -u builder -- bash -c "cd $REPO && bash scripts/check.sh --online --strict"
 
 if [[ $CHECK_ONLY -eq 1 ]]; then
   info "--check-only: stopping before the build."

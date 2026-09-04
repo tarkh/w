@@ -181,6 +181,15 @@ backup_summary() {
 }
 
 # ── Restore primitives ───────────────────────────────────────────────────────
+# A restored file keeps the mode of the pristine copy rather than a fixed 644: these
+# trees carry executables (/usr/bin/w-sync, /usr/lib/w/w-ai-actuate), and putting one
+# back unexecutable leaves the machine with an update client it cannot run — exit 126
+# on every call, repairable only by hand. Found live on 2026-09-03, on the very
+# recovery `w-sync` recommends. Git is the authority on the bit and check.sh's `perms`
+# suite guards it there, so "as in the source tree" is the right answer. The directory
+# branches never had the bug — `rsync -a` preserves modes already.
+src_mode() { stat -c %a "$1"; }
+
 # Own every parent dir from the home root down (install -D alone makes them
 # root-owned, breaking later user-scope writes — same trap the deploy SDK guards).
 own_home_parents() {
@@ -207,7 +216,7 @@ restore_home() {                       # <relpath> (trailing '/' = dir)
     [[ -f "$src" ]] || { warn "skel file missing, skipping: $rel"; return 0; }
     backup_path "$dst"
     own_home_parents "$rel"
-    install -Dm644 -o "$TARGET_USER" -g "$TARGET_USER" "$src" "$dst"
+    install -D -m "$(src_mode "$src")" -o "$TARGET_USER" -g "$TARGET_USER" "$src" "$dst"
   fi
 }
 
@@ -221,7 +230,7 @@ restore_system() {                     # <abspath> (trailing '/' = dir)
   else
     [[ -f "$src" ]] || { warn "source missing ($src): $p"; return 1; }
     backup_path "$p"
-    install -Dm644 -o root -g root "$src" "$p"
+    install -D -m "$(src_mode "$src")" -o root -g root "$src" "$p"
   fi
 }
 

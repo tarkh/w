@@ -9,7 +9,7 @@ description: >-
   pacman mirrors.
 sources:
   - path: .claude/library/w-update.md
-    sha256: 003ff0b751fb62384aed2c71ff5430a9988c61493e480aa868f88550c0c1bd0a
+    sha256: 60bec3543825f62331f0c0daa7af83f21a467705df9d6b1dfbb933da7415d117
   - path: .claude/library/w-mirrors.md
     sha256: 14ad9894e2c6f65dfa71e6e77d8113285c226ea9955bee465e804e938517f115
 tools:
@@ -86,10 +86,19 @@ default-on Tier-2 action. Do it as **plan → apply**, never a blind auto-apply:
 
 ## Reboot-pending detection
 
-W decides a reboot is needed by testing whether the running kernel's module directory
-still exists: `[[ ! -d /usr/lib/modules/$(uname -r) ]]`. An in-place kernel upgrade
-removes the running kernel's modules, so their absence means you are on a stale kernel
-and should reboot. This needs no root and has zero false positives.
+A reboot is owed in two cases, and `w-update` reports both through the same flag.
+
+1. The running kernel's module directory is gone: `[[ ! -d /usr/lib/modules/$(uname -r) ]]`.
+   An in-place kernel upgrade removes the running kernel's modules, so their absence means
+   you are on a stale kernel. This needs no root and has zero false positives.
+2. The default kernel is not the running one — someone ran `w-kernel set` (or used the
+   Hub's kernel selector). The running kernel is fine; the machine simply will not be on
+   the chosen one until it reboots. `w-update` asks `w-kernel list --porcelain` for this
+   rather than working it out itself.
+
+So "a reboot is pending" does not always mean an upgrade happened. Check
+`w-kernel list` before telling someone a package update is waiting on a restart — it may
+be a kernel switch instead, and the useful advice differs.
 
 ## A kernel upgrade can break an out-of-tree driver — and take the network with it
 

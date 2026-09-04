@@ -8,6 +8,143 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.5.0
+
+- **Choosing a kernel and switching hardening on now work on encrypted installs, where
+  both were silently doing nothing.** `w-kernel` and the hardening step wrote
+  `/etc/default/grub` and ran `grub-mkconfig` unconditionally. An encrypted install
+  boots through Limine, which reads `/etc/kernel/cmdline` and never looks at GRUB's
+  config — but GRUB is installed there all the same, so the write succeeded, the
+  regeneration reported success, and nothing anywhere said otherwise. On every
+  encrypted machine the result was that `w-kernel set` did not change which kernel
+  booted, and the hardening boot parameters never reached the kernel: `w-kernel harden
+  status` answered `mixed` — sysctl drop-ins on, not one cmdline token. `w-kernel` now
+  detects the bootloader and writes what that bootloader actually reads.
+
+  Updating fixes this for you — the hardening profile is applied again through the
+  corrected path — but **boot parameters only take effect at the next reboot**. To see
+  where a machine stands:
+
+  ```
+  w-kernel harden status
+  cat /proc/cmdline
+  ```
+
+- **The kernel is now selectable from the Hub, and `linux-lts` is offered as a third
+  choice.** W Hub → System → General lists zen (W's default), vanilla and lts, marking
+  which is installed, which is the default and which is running; picking one opens a
+  terminal, because installing a kernel is a long download plus a DKMS rebuild.
+  Hardening became a switch in W Hub → System → Security. That Security tab used to be
+  hidden on machines without Limine — that is, on every unencrypted install, which is
+  exactly where bootloader-independent hardening was least reachable. It is now always
+  shown, and the Secure Boot rows inside it are what depends on Limine.
+
+  From a terminal:
+
+  ```
+  w-kernel list
+  sudo w-kernel set lts
+  sudo w-kernel remove vanilla
+  sudo w-kernel harden off
+  ```
+
+  `set` never uninstalls anything, so switching back to a kernel you already have is
+  offline and instant, and `remove` refuses to take away the running or the default
+  kernel. A kernel change now also raises the "reboot needed" badge in the bar.
+
+- **Your SSH agent is now something you choose: `w-ssh`.** W still ships
+  gcr-ssh-agent and still defaults to it, so nothing changes unless you ask. What
+  changed is that the session no longer hardcodes that one agent's socket:
+  `SSH_AUTH_SOCK` is a fixed path — `$XDG_RUNTIME_DIR/w/ssh-agent.sock` — with a
+  symlink behind it pointing at whichever agent is active. A password manager that
+  carries SSH keys takes the slot in one command:
+
+  ```
+  w-ssh list
+  w-ssh use bitwarden
+  w-ssh status
+  ```
+
+  Bitwarden, 1Password, a plain `ssh-agent` on a fixed path and gcr are known out of
+  the box; any other agent is one `SOCKET_<name>=` line in `~/.config/w/ssh.conf` (or
+  `/etc/w/ssh.conf` for the whole machine) and it appears in `w-ssh list` with no code
+  change — `w-conf cat ssh` shows the catalogue. `w-ssh use none` leaves the session
+  with no agent at all. The stable path is exported by the session, so it is in place
+  after your next login.
+
+  One thing to know before switching: an agent holding a full vault offers every key
+  it has, and sshd gives up after five (`MaxAuthTries`), so a large vault can fail to
+  log in anywhere. `w-ssh sync` fixes that by generating per-host
+  `IdentityFile`/`IdentitiesOnly` selectors from the keys in the agent, reading each
+  key's name in the vault as the list of hosts it belongs to. They live in a generated
+  file included from `~/.ssh/config`; `w-ssh include` adds that include line, which
+  has to sit at the very top of the file to apply to more than one host — `w-ssh
+  status` says so if it does not.
+
+- **A Bitwarden bundle, installed only if you ask for it.** `w-pack install bitwarden`
+  — it is not offered during installation and nothing is pulled in by default. W ships
+  no password manager and takes no position on which one you should use; what it ships
+  are the slots one plugs into — the polkit prompt that biometric unlock speaks to,
+  the Secret Service that stores the unlock key, the clipboard filter that keeps
+  copied passwords out of history, and now the SSH agent above. The bundle is just the
+  wiring: the app from the Arch repository (that package ships the polkit action, so
+  biometric unlock works without the app's own setup step), its SSH agent socket
+  agreed with `w-ssh`, and tray autostart.
+
+- **A fingerprint prompt now looks like one.** While the reader is being waited on,
+  the authentication card shows a fingerprint glyph and no password field — there was
+  nothing you could usefully type into it — and turns itself into the password card
+  the moment fprintd gives up. "Use password" is now immediate, where previously
+  pam_fprintd held the conversation for its full 30-second timeout and a password
+  typed in the meantime simply sat in a queue. This needs a reader with an enrolled
+  finger (`fprintd-enroll`); a machine without one sees exactly what it saw before.
+  One rough edge remains: after you switch to the password, the reader itself stays
+  busy for the rest of its 30 seconds. It no longer holds anything up.
+
+- **The W mark is the same size in the boot splash, on the login screen and on the
+  desktop.** On a HiDPI panel it was three different sizes: Plymouth drew it at double
+  size and blurry (it applied GNOME's device-scale heuristic and then bilinearly
+  upscaled every sprite), the greeter at a fractional scale such as 1.5 picked a 4K
+  wallpaper master for a 2K screen, and only the desktop had it right. All three now
+  derive it from the panel they are actually drawing on, and the splash logo is
+  rasterised from the theme's vector at the exact pixel size (this adds `librsvg`).
+  Ordinary 1x monitors were already consistent and look unchanged. A side effect worth
+  having: on a multi-monitor setup, a head with a different DPI is no longer forced to
+  share another head's scale.
+
+- **`sudo w-reset` no longer breaks the thing it restores.** Two defects, both present
+  in released versions, both invisible to any static check because they only happen at
+  runtime. Restoring a single file lost its executable bit — the real damage being
+  `w-reset updatesys`, which left `/usr/bin/w-sync` unable to run, so the update client
+  could no longer deliver its own fix. And the vendor copy of `/etc/w/update.conf` had
+  `CHANNEL=stable` hardcoded even though the channel is detected from the checkout, so
+  restoring it quietly took the machine off edge. The mode now comes from the pristine
+  copy, and the vendor copy is built from the same detection a fresh install uses.
+
+  If you ran `sudo w-reset updatesys` on a machine before this release, it needs one
+  command by hand before it can update at all, and a look at the channel afterwards:
+
+  ```
+  sudo chmod 755 /usr/bin/w-sync
+  w-sync status
+  ```
+
+- **The assistant's desktop knowledge is split into three skills.** `w-desktop` had
+  grown to carry five subsystems and fourteen tools and sat one byte under the size
+  limit skills are held to, which meant new knowledge about one subsystem was being
+  paid for by dropping knowledge about another. It now covers the compositor, windows,
+  key bindings, the shell UI and screenshots; `w-displays` covers monitors, the
+  greeter's screen and night light; `w-session` covers session memory and named
+  layouts. Every tool is still there under the same name. Asking what your resolution
+  is no longer drags layouts and compositor configuration into the answer.
+
+- Smaller things. A first boot no longer logs `Failed to start Ghostty`: the vendor
+  unit was the only one under the graphical session target without a "needs a display"
+  condition, and W has a path on which that target comes up without one — the terminal
+  warm-up itself was never affected. Limine's snapshot manager now says when it evicts
+  old snapshot boot entries to stay inside the EFI partition, instead of doing it
+  silently — which matters more now that a machine may carry three kernels.
+
 ## v0.4.0
 
 - **W now refuses an update it cannot verify.** Until this release, trusting an update

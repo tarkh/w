@@ -96,7 +96,7 @@ WCONF_VENDOR_DIR="${WCONF_VENDOR_DIR:-/usr/share/w/defaults}"
 
 # Subsystems that ship a config today — used to enumerate, never to restrict:
 # an unknown name resolves through the same layer convention.
-WCONF_SUBSYS=(ai crypt dns kbdlight logs mirrors nightlight power terminal time update)
+WCONF_SUBSYS=(ai crypt dns kbdlight logs mirrors nightlight power ssh terminal time update)
 
 # ── Whose user layer are we acting on? ───────────────────────────────────────
 # Every W subsystem that renders into a home has to answer this, and until now

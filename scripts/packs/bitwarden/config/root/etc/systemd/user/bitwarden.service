@@ -1,0 +1,31 @@
+# bitwarden bundle — start the desktop app with the graphical session.
+#
+# Why a unit rather than an autostart .desktop: W has no XDG-autostart runner (the
+# session's own daemons are started from hyprland.lua's hyprland.start hook, and
+# packaged ones — hypridle, hyprpaper, hyprsunset — are systemd user units bound to
+# graphical-session.target). This follows the packaged pattern, which also gets us
+# the right slice, ordering and a restart policy for free.
+#
+# Why it must start at all: the SSH agent lives INSIDE this app. No app running →
+# no agent socket → every ssh, git push and VS Code sync fails with nothing to
+# suggest the cause. The vault stays locked until the master password is entered
+# once, which is the intended security posture; the agent still answers key LIST
+# requests while locked, so `w-ssh sync` works before the first unlock.
+
+[Unit]
+Description=Bitwarden desktop (vault + SSH agent)
+PartOf=graphical-session.target
+After=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+Type=simple
+# --hidden keeps it in the tray instead of stealing focus at login; the app is
+# started for the agent and the browser bridge, not to be looked at.
+ExecStart=/usr/bin/bitwarden-desktop --hidden
+Restart=on-failure
+RestartSec=5s
+Slice=app-graphical.slice
+
+[Install]
+WantedBy=graphical-session.target

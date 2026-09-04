@@ -31,6 +31,12 @@ setup() {
   # A PATH without hyprctl: `outputs` must fall back to the config + the primary
   # mirror, which is also the headless case (a TTY, the AI over ssh).
   export PATH="/usr/bin:/bin"
+  # jq is w-bar's whole implementation, and a shipped W package — on a W box it
+  # is always there. Elsewhere its absence is the environment's answer, not the
+  # code's: skip rather than paint 23 cases red (checks.md: a missing tool skips
+  # with a hint). Checked against the PATH above, the one the cases actually
+  # run under. CI installs it and runs --strict, where this skip is a failure.
+  command -v jq >/dev/null || skip "jq not installed"
   source "$W_BAR"
   # The script sets -euo pipefail on source. Drop -u and pipefail, but LEAVE -e ON:
   # bats reports a failed assertion through errexit, so a suite that clears it in

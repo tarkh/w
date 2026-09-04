@@ -24,7 +24,7 @@ reports = sl.lint_shipped_tree('$REPO/rootfs/usr/share/w/ai', is_user_root=False
 bad = {k: v for k, v in reports.items() if v['errors']}
 print(len(reports), len(bad), bad)
 ")"
-  [[ "$result" == "20 0 {}" ]]
+  [[ "$result" == "22 0 {}" ]]
 }
 
 @test "lint_skill: rejects an invalid name" {

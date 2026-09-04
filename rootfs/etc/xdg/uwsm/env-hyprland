@@ -57,6 +57,23 @@ if [ -d /etc/w/env.d ]; then
   unset _wenv
 fi
 
+# SSH agent — one stable path for the whole session, whichever agent is behind it.
+#
+# W ships gcr-ssh-agent, but the agent is a slot: a user who keeps SSH keys in a
+# password manager (Bitwarden, 1Password) switches with `w-ssh use <name>`. The
+# variable must therefore NOT name a vendor's socket, or every switch would mean
+# editing a dotfile and logging out — and a dotfile only reaches interactive
+# shells anyway, so a git client started from the launcher would still see the
+# wrong agent (or none). Instead the value is constant and the SYMLINK behind it
+# moves; `w-ssh link` points it at the active backend before anything can connect.
+#
+# Set here rather than left to gcr-ssh-agent.socket's own ExecStartPost export:
+# that one hardcodes gcr's path into the systemd user environment, which is
+# exactly the coupling this indirection removes (`w-ssh use` masks the unit when
+# another agent takes over, so the two never disagree about who owns SSH).
+export SSH_AUTH_SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/w/ssh-agent.sock"
+w-ssh link 2>&1 | systemd-cat -t w-ssh || true
+
 # Rescue a monitor layout that would come up with nothing drawing on it. `w-monitor
 # disable` refuses to turn off the last ACTIVE output, but that check is
 # point-in-time: turn the laptop panel off while an external is attached (allowed —

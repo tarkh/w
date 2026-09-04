@@ -30,12 +30,16 @@
 #
 # Wire protocol (one JSON object per line):
 #   daemon → shell:
-#     {type:"begin",  id, kind, message, icon, action, choice, user, users}
+#     {type:"begin",  id, kind, message, icon, action, choice, user, users, fp}
 #                                                  prompt opened (re-sent verbatim when
 #                                                  the identity changes — see below)
 #         kind:   "password" | "confirm"   choice: checkbox label ("" = none)
 #         user:   login name the password is asked FOR ("" = unknown, e.g. gcr prompts)
 #         users:  other identities the caller may authenticate as ([] = no choice)
+#         fp:     PAM will really try a fingerprint first, so the card can open in
+#                 fingerprint mode instead of flashing a password field it is about
+#                 to hide (see the Fingerprint class). `request` is what ends that
+#                 mode: PAM only asks for a password once pam_fprintd has given up.
 #     {type:"request",id, prompt, echo}            PAM asks for input (password)
 #     {type:"info",   id, text}                    PAM info (e.g. "Place finger")
 #     {type:"error",  id, text}                    a try failed (agent will retry)
@@ -43,6 +47,9 @@
 #   shell → daemon:
 #     {type:"response",id, password, choice}       user submitted (choice = checkbox)
 #     {type:"select",  id, user}                   authenticate as a different identity
+#     {type:"skipfp",  id}                         give up on the reader, ask for the
+#                                                  password NOW (restarts the PAM
+#                                                  session with pam_fprintd skipped)
 #     {type:"cancel",  id}                         user dismissed
 #
 # Runs as the ordinary user, a systemd --user service (w-authd.service).
@@ -108,6 +115,164 @@ def sock_path():
     return os.path.join(d, "authd.sock")
 
 
+class Fingerprint:
+    """Will PAM actually try a fingerprint for this identity?
+
+    /etc/pam.d/polkit-1 opens with `auth sufficient pam_fprintd.so`, which is a
+    silent no-op when there is no reader or the identity enrolled no finger: PAM
+    goes straight to the password request. The card has to know WHICH of the two
+    will happen at `begin` time — a card that opens with a password field and then
+    swaps itself for a fingerprint prompt (or the reverse) flickers on every single
+    polkit action, which is worse than either mode alone.
+
+    fprintd answers both halves over D-Bus and needs no polkit prompt to do it:
+    ListEnrolledFingers is gated by net.reactivated.fprint.device.verify, whose
+    shipped default is allow_active=yes (verified on real hardware — `fprintd-list`
+    from a session raises no dialog).
+
+    Everything here is ASYNC and cached. A prompt must never wait on fprintd:
+    the D-Bus name is activatable, so a cold call can take a moment, and the
+    password path — by far the common one — may not pay for that. The cache is
+    consulted synchronously, seeded at daemon start for our own uid (login happens
+    long before the first prompt) and refreshed in the background when stale. An
+    answer that is missing or out of date therefore costs only the OLD behaviour:
+    a password card, which a successful swipe still closes on its own.
+    """
+
+    BUS_NAME = "net.reactivated.Fprint"
+    MANAGER_PATH = "/net/reactivated/Fprint/Manager"
+    IFACE_MANAGER = "net.reactivated.Fprint.Manager"
+    IFACE_DEVICE = "net.reactivated.Fprint.Device"
+    TIMEOUT_MS = 3000
+    TTL_US = 30 * 1000 * 1000     # re-probe at most every 30s (enrolment is rare)
+
+    def __init__(self):
+        self.bus = None
+        self.device = None            # object path of the default reader, "" = none
+        self._enrolled = {}           # uid -> bool
+        self._stamp = {}              # uid -> monotonic microseconds of last answer
+        self._busy = set()            # uids with a probe in flight
+        Gio.bus_get(Gio.BusType.SYSTEM, None, self._on_bus, None)
+
+    # ── sync surface (what a prompt calls) ───────────────────────────────────
+    def enrolled(self, uid):
+        """Last known answer for uid, refreshing in the background when stale."""
+        if uid is None:
+            return False
+        age = GLib.get_monotonic_time() - self._stamp.get(uid, 0)
+        if age > self.TTL_US:
+            self.refresh(uid)
+        return self._enrolled.get(uid, False)
+
+    def refresh(self, uid):
+        if uid is None or uid in self._busy:
+            return
+        # ⚠️ OUR OWN uid ONLY. fprintd gates any request naming a DIFFERENT user
+        # behind net.reactivated.fprint.device.setusername, whose default is
+        # auth_admin_keep — so probing another identity would make polkitd raise a
+        # second authentication, i.e. this daemon prompting itself, recursively,
+        # from inside the handler of the first prompt. The case that would reach it
+        # is an auth_admin action on a non-admin's session (identity = some other
+        # administrator); there we simply report False and the card opens in
+        # password mode, which is exactly what it did before fingerprint mode
+        # existed. Nothing is lost: a successful swipe still closes that card.
+        if uid != os.getuid():
+            self._settle(uid, False)
+            return
+        try:
+            name = pwd.getpwuid(uid).pw_name
+        except KeyError:
+            return
+        self._busy.add(uid)
+        if self.bus is None:          # bus_get still in flight; _on_bus will retry
+            return
+        if self.device is None:
+            self._get_device(uid, name)
+        else:
+            self._list_fingers(uid, name)
+
+    # ── async plumbing ───────────────────────────────────────────────────────
+    def _settle(self, uid, value):
+        self._enrolled[uid] = value
+        self._stamp[uid] = GLib.get_monotonic_time()
+        self._busy.discard(uid)
+
+    def _on_bus(self, _src, res, _data):
+        try:
+            self.bus = Gio.bus_get_finish(res)
+        except GLib.Error:
+            self.bus = None
+            for uid in list(self._busy):
+                self._settle(uid, False)
+            return
+        for uid in list(self._busy):  # anything that asked before the bus was up
+            self._busy.discard(uid)
+            self.refresh(uid)
+
+    def _call(self, path, iface, method, args, done, uid, name):
+        self.bus.call(
+            self.BUS_NAME, path, iface, method, args, None,
+            Gio.DBusCallFlags.NONE, self.TIMEOUT_MS, None, done, (uid, name),
+        )
+
+    def _get_device(self, uid, name):
+        def done(bus, res, data):
+            u, n = data
+            try:
+                self.device = bus.call_finish(res).unpack()[0]
+            except GLib.Error:
+                # No fprintd, no reader, or it refused us: no fingerprint step.
+                self.device = None
+                self._settle(u, False)
+                return
+            self._list_fingers(u, n)
+        self._call(self.MANAGER_PATH, self.IFACE_MANAGER, "GetDefaultDevice",
+                   None, done, uid, name)
+
+    # ── the "skip the reader this time" flag ─────────────────────────────────
+    # Read by /usr/lib/w/w-fp-gate, the pam_exec module that fronts pam_fprintd in
+    # /etc/pam.d/polkit-1. Why a file and not something in-process: the decision has
+    # to reach the PAM conversation, which runs in a separate setuid helper we do
+    # not control the environment of. The gate runs as the same real uid we do, so
+    # our own $XDG_RUNTIME_DIR (0700) is a channel only this user can write.
+    @staticmethod
+    def _skip_path():
+        base = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+        return os.path.join(base, "w", "fp-skip")
+
+    @classmethod
+    def set_skip(cls, on):
+        p = cls._skip_path()
+        try:
+            if on:
+                os.makedirs(os.path.dirname(p), exist_ok=True)
+                with open(p, "w"):
+                    pass
+            else:
+                os.unlink(p)
+        except OSError:
+            # Best effort by design: failing to SET it costs the old behaviour (the
+            # user waits out the reader), and failing to CLEAR it is repaired by the
+            # next daemon start, which clears unconditionally.
+            pass
+
+    def _list_fingers(self, uid, name):
+        def done(bus, res, data):
+            u, _n = data
+            try:
+                fingers = bus.call_finish(res).unpack()[0]
+            except GLib.Error:
+                # NoEnrolledPrints is an ERROR here, not an empty list — and a
+                # device that vanished (unplugged reader) must invalidate the
+                # cached path so the next probe re-resolves it.
+                self.device = None
+                self._settle(u, False)
+                return
+            self._settle(u, bool(fingers))
+        self._call(self.device, self.IFACE_DEVICE, "ListEnrolledFingers",
+                   GLib.Variant("(s)", (name,)), done, uid, name)
+
+
 class AuthUI:
     """Owns the unix socket to the shell and routes messages to/from requests."""
 
@@ -117,6 +282,7 @@ class AuthUI:
         self.requests = {}         # id -> the ONE active AuthRequest (shell-visible)
         self.queue = []            # AuthRequests awaiting their turn (FIFO)
         self.active = None         # the request currently shown to the user
+        self.fp = Fingerprint()    # shared cache: does PAM have a finger to try?
         self._seq = 0
 
     def next_id(self):
@@ -206,6 +372,10 @@ class AuthUI:
             # Only polkit requests offer a choice of identity; gcr ones have none.
             if hasattr(req, "select_identity"):
                 req.select_identity(msg.get("user", ""))
+        elif t == "skipfp":
+            # Only polkit requests ever run PAM, so only they have a reader to skip.
+            if hasattr(req, "skip_fingerprint"):
+                req.skip_fingerprint()
         elif t == "cancel":
             req.cancel()
 
@@ -255,6 +425,7 @@ class AuthRequest:
         self.saw_error = False      # PAM emitted a show-error this try (don't clobber)
         self.cancelled = False
         self.done = False
+        self.fp_skipped = False     # user chose the password over the reader
 
     @staticmethod
     def _user_choices(identities):
@@ -303,6 +474,11 @@ class AuthRequest:
             "message": self.message, "icon": self.icon, "action": self.action_id,
             "user": self._current_name(),
             "users": [c["name"] for c in self.choices] if self.selectable else [],
+            # Asked for the identity we are about to authenticate AS, not for the
+            # person at the keyboard: pam_fprintd verifies the target account's
+            # finger, so switching identity can change the answer (and does re-send
+            # this message, which is what makes the card follow along).
+            "fp": self.ui.fp.enrolled(self.identity_uid),
         }
 
     def start(self):
@@ -404,10 +580,42 @@ class AuthRequest:
         self.identity_uid = target["uid"]
         self.identity = Polkit.UnixUser.new(self.identity_uid)
         self.tries = 0
+        # A different account is a fresh decision about how to authenticate: the
+        # card resets its own opt-out on the re-sent `begin`, so the PAM-side flag
+        # has to come back with it or the two would disagree about what the next
+        # session does.
+        self.fp_skipped = False
+        Fingerprint.set_skip(False)
         # Re-send `begin` (same id): the card already treats it as a fresh prompt —
         # clears the field, the error and the failure count — so no new message type
         # is needed, and it now carries the new name.
         self.ui.send(self.begin_msg())
+        self._new_session()
+
+    def skip_fingerprint(self):
+        """The user asked for the password while the reader was still being waited on.
+
+        Nothing can interrupt pam_fprintd from outside — it owns the conversation
+        until its own max-tries/timeout run out — so the only way to make this
+        immediate is to run the stack AGAIN with the fingerprint module skipped.
+        The flag below is what /usr/lib/w/w-fp-gate reads to do that, and the
+        session restart is the same stale-guard tactic select_identity uses: drop
+        the old session and spin a new one, rather than waiting on `completed`,
+        which the retry path owns and which would otherwise count this as a failed
+        attempt. `tries` is deliberately untouched — the user changed method, they
+        did not get anything wrong.
+        """
+        if self.done or self.fp_skipped:
+            return
+        self.fp_skipped = True
+        Fingerprint.set_skip(True)
+        old = self.session
+        self.session = None
+        if old is not None:
+            try:
+                old.cancel()          # SIGTERMs the helper → pam_fprintd aborts
+            except GLib.Error:
+                pass
         self._new_session()
 
     def submit(self, password, choice=False):
@@ -436,6 +644,11 @@ class AuthRequest:
         if self.done:
             return
         self.done = True
+        # The skip is scoped to ONE prompt. Leaving it behind would silently disable
+        # the reader for every later polkit action in this session — the one failure
+        # of this design that would look like "fingerprint stopped working".
+        if self.fp_skipped:
+            Fingerprint.set_skip(False)
         self.ui.send({"type": "end", "id": self.id, "result": result})
         self.ui.finish(self)           # clears active + promotes the next queued prompt
         self.agent.forget(self.cookie)
@@ -569,6 +782,9 @@ class GcrRequest:
         return {
             "type": "begin", "id": self.id, "kind": self.kind,
             "message": self.message, "icon": "", "action": "", "choice": self.choice,
+            # gcr prompts never run PAM: a keyring/SSH passphrase is the secret
+            # itself, not a credential a reader could stand in for.
+            "fp": False,
         }
 
     def start(self):
@@ -702,6 +918,14 @@ class GcrPrompter:
 def main():
     ui = AuthUI(sock_path())
     ui.start()
+    # Warm the fingerprint cache for the session's own user right away: the daemon
+    # starts at login, the first prompt comes seconds-to-minutes later, so the
+    # answer is already there when it matters and no prompt ever waits on fprintd.
+    ui.fp.refresh(os.getuid())
+    # A crash (or a kill) mid-prompt could have left the skip flag behind, which
+    # would disable the reader for the whole session with nothing to point at.
+    # Clearing it unconditionally at start makes that unrecoverable state impossible.
+    Fingerprint.set_skip(False)
 
     agent = Agent(ui)
     try:

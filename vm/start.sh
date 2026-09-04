@@ -24,6 +24,16 @@ OVMF_VARS="$SCRIPT_DIR/OVMF_VARS.fd"
 #            grabbed (Wi-Fi phy0 is a separate PCIe function, untouched); the host btusb
 #            driver detaches while the VM runs and re-binds on exit. No host reboot / VFIO.
 #            For visually testing the blueman tray applet (see quickshell-bar.md).
+# --fp:         pass the host's USB fingerprint reader (05ba:000a, DigitalPersona
+#            U.are.U 4000B — libfprint's uru4000 driver) into the guest, same
+#            usb-host mechanism as --bt and fully independent of it: passing one
+#            device never touches the other. The ONLY way to exercise the auth
+#            card's fingerprint mode (quickshell-auth.md), since no VM has a
+#            reader and the test laptop has no sensor. Note the guest takes the
+#            device exclusively — while the VM runs, the HOST has no reader, so
+#            sudo/polkit there falls back to a password. Fingerprints live on the
+#            machine they were enrolled on, so the guest needs its own one-time
+#            `fprintd-enroll`; it survives guest reboots, not a reinstall.
 # --secureboot: use the SMM/Secure-Boot OVMF build on a q35+smm machine with a
 #            dedicated NVRAM file (OVMF_VARS.secboot.fd, Setup Mode → guest enrolls
 #            its own keys via `w-secureboot setup`). Needed to test the Limine SB stack.
@@ -46,6 +56,7 @@ OVMF_VARS="$SCRIPT_DIR/OVMF_VARS.fd"
 # --display=sdl|gtk: force the display backend instead of letting --extra-mon pick it.
 INSTALL_MODE=0
 BT_MODE=0
+FP_MODE=0
 SECBOOT_MODE=0
 TPM_MODE=0
 HEADLESS_MODE=0
@@ -58,6 +69,7 @@ for arg in "$@"; do
   [[ "$arg" == "--install" ]] && INSTALL_MODE=1
   [[ "$arg" == "--force-iso" ]] && FORCE_ISO_MODE=1
   [[ "$arg" == "--bt" ]] && BT_MODE=1
+  [[ "$arg" == "--fp" ]] && FP_MODE=1
   [[ "$arg" == "--secureboot" ]] && SECBOOT_MODE=1
   [[ "$arg" == "--tpm" ]] && TPM_MODE=1
   [[ "$arg" == "--headless" ]] && HEADLESS_MODE=1
@@ -88,20 +100,28 @@ fi
 BT_VENDOR_ID="0x0489"
 BT_PRODUCT_ID="0xe10a"
 
-# Resolve the /dev/bus/usb/BUS/DEV node for the BT radio by vid:pid. The bus/dev numbers
+# Host USB fingerprint reader (--fp). Independent of the BT ids above: each flag
+# passes its own device and neither implies the other.
+FP_VENDOR_ID="0x05ba"
+FP_PRODUCT_ID="0x000a"    # DigitalPersona U.are.U 4000B (libfprint uru4000)
+
+# Resolve the /dev/bus/usb/BUS/DEV node for a device by vid:pid. The bus/dev numbers
 # are NOT stable across replug, so we look them up from sysfs each run (vid:pid is stable).
-bt_usb_node() {
+usb_node() { # <0xVID> <0xPID>
   local d v p
   for d in /sys/bus/usb/devices/*; do
     [[ -r "$d/idVendor" && -r "$d/idProduct" ]] || continue
     v="0x$(<"$d/idVendor")"; p="0x$(<"$d/idProduct")"
-    if [[ "$v" == "$BT_VENDOR_ID" && "$p" == "$BT_PRODUCT_ID" ]]; then
+    if [[ "$v" == "$1" && "$p" == "$2" ]]; then
       printf '/dev/bus/usb/%03d/%03d' "$(<"$d/busnum")" "$(<"$d/devnum")"
       return 0
     fi
   done
   return 1
 }
+
+bt_usb_node() { usb_node "$BT_VENDOR_ID" "$BT_PRODUCT_ID"; }
+fp_usb_node() { usb_node "$FP_VENDOR_ID" "$FP_PRODUCT_ID"; }
 
 if [[ $INSTALL_MODE -eq 1 ]]; then
   DISK="$SCRIPT_DIR/w-base.qcow2"
@@ -275,27 +295,53 @@ else
   QEMU_ARGS+=(-boot order=c)
 fi
 
-# --bt: attach a USB controller + the host BT radio. usb-host auto-detaches the host
-# kernel driver on grab and restores it when QEMU exits. QEMU needs rw on the device node
-# (/dev/bus/usb/...), which is root-owned, so we chown it to the invoking user before
-# launch (sudo) and restore root ownership on exit/Ctrl+C via a trap. The node is
+# --bt / --fp: attach a USB controller + the named host device(s). usb-host auto-detaches
+# the host kernel driver on grab and restores it when QEMU exits. QEMU needs rw on the
+# device node (/dev/bus/usb/...), which is root-owned, so we chown it to the invoking user
+# before launch (sudo) and restore root ownership on exit/Ctrl+C via a trap. The node is
 # ephemeral (devtmpfs recreates it root-owned on replug/reboot), so the restore is just
 # tidiness, not a hard requirement.
-if [[ $BT_MODE -eq 1 ]]; then
-  echo "Passing host Bluetooth ($BT_VENDOR_ID:$BT_PRODUCT_ID) to the VM."
-  echo "Host BT is unavailable while the VM runs; it returns on exit."
-  BT_NODE="$(bt_usb_node || true)"
-  if [[ -n "$BT_NODE" ]]; then
-    echo "Granting $USER rw on $BT_NODE (sudo chown)..."
-    sudo chown "$USER" "$BT_NODE"
-    # Restore root ownership when QEMU exits or the script is interrupted. May re-prompt
-    # for sudo (fingerprint) at shutdown if the auth timestamp has expired.
-    trap 'echo "Restoring root ownership of $BT_NODE..."; sudo chown root "$BT_NODE" 2>/dev/null || true' EXIT INT TERM
+#
+# The two flags are independent — either, both, or neither — but they SHARE the controller
+# and the trap, and must: a second `-device qemu-xhci,id=xhci` is a duplicate-id error, and
+# a second `trap ... EXIT` REPLACES the first, silently leaving one node user-owned. Hence
+# one node list built here rather than a self-contained block per device.
+USB_NODES=()
+usb_passthrough() { # <label> <0xVID> <0xPID> <resolver-fn>
+  local label="$1" vid="$2" pid="$3" node
+  echo "Passing host $label ($vid:$pid) to the VM."
+  echo "The host loses $label while the VM runs; it returns on exit."
+  node="$("$4" || true)"
+  if [[ -n "$node" ]]; then
+    echo "Granting $USER rw on $node (sudo chown)..."
+    sudo chown "$USER" "$node"
+    USB_NODES+=("$node")
   else
-    echo "WARN: BT radio $BT_VENDOR_ID:$BT_PRODUCT_ID not found on host — passthrough will be skipped."
+    echo "WARN: $label $vid:$pid not found on host — passthrough will be skipped."
   fi
-  QEMU_ARGS+=(-device qemu-xhci,id=xhci
-              -device usb-host,vendorid="$BT_VENDOR_ID",productid="$BT_PRODUCT_ID")
+  QEMU_ARGS+=(-device usb-host,vendorid="$vid",productid="$pid")
+}
+
+if [[ $BT_MODE -eq 1 || $FP_MODE -eq 1 ]]; then
+  QEMU_ARGS+=(-device qemu-xhci,id=xhci)
+  [[ $BT_MODE -eq 1 ]] && usb_passthrough Bluetooth "$BT_VENDOR_ID" "$BT_PRODUCT_ID" bt_usb_node
+  [[ $FP_MODE -eq 1 ]] && usb_passthrough "fingerprint reader" "$FP_VENDOR_ID" "$FP_PRODUCT_ID" fp_usb_node
+  # Restore root ownership when QEMU exits or the script is interrupted. May re-prompt
+  # for sudo at shutdown if the auth timestamp has expired — and with --fp it will be a
+  # PASSWORD prompt, because the reader is inside the guest until QEMU is gone.
+  restore_usb_nodes() {
+    local n
+    for n in "${USB_NODES[@]}"; do
+      echo "Restoring root ownership of $n..."
+      sudo chown root "$n" 2>/dev/null || true
+    done
+  }
+  # Explicit `if`, not `(( … )) && trap`: a trailing && that evaluates false makes
+  # the block return 1, and under `set -e` that kills the script right before QEMU
+  # launches — for the entirely normal case of "the device was not plugged in".
+  if (( ${#USB_NODES[@]} )); then
+    trap restore_usb_nodes EXIT INT TERM
+  fi
 fi
 
 if [[ $TPM_MODE -eq 1 ]]; then
@@ -304,6 +350,6 @@ if [[ $TPM_MODE -eq 1 ]]; then
               -device tpm-tis,tpmdev=tpm0)
 fi
 
-# Not `exec`: the script must stay alive past QEMU so the --bt EXIT trap can restore the
+# Not `exec`: the script must stay alive past QEMU so the --bt/--fp EXIT trap can restore the
 # USB node ownership (exec would replace the shell and drop the trap).
 qemu-system-x86_64 "${QEMU_ARGS[@]}"

@@ -1,0 +1,18 @@
+# bitwarden bundle — config ownership (deploy.sh SDK + w-reset).
+# TSV: <path>	<class>. Absolute path → config/root<path> (always managed);
+# home-relative → config/skel/<path>. class: user = seed-if-absent, managed =
+# overwrite (W owns it).
+#
+# Session env: pins BITWARDEN_SSH_AUTH_SOCK to the path W's agent catalog names,
+# so the app and `w-ssh` cannot drift apart on where the socket lives. Sourced by
+# env-hyprland at graphical-session-pre → active from the next login.
+/etc/w/env.d/bitwarden.sh	managed
+
+# Autostart unit. Enabled PER ACCOUNT by setup-user.sh, not `--global`: whether
+# your password manager launches at login is a personal decision, and a second
+# account on the same machine may not use Bitwarden at all.
+/etc/systemd/user/bitwarden.service	managed
+
+# NOT listed, deliberately: ~/.config/w/ssh.conf (the agent selection) is a wconf
+# user-layer file owned by the keyring module's manifest — one path, one owner.
+# The app's own state (~/.config/Bitwarden) is the vault client's, never W's.

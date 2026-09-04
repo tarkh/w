@@ -38,8 +38,10 @@ the task.
 - `w-software` — installing software (pacman/yay, Flatpak/Bazaar).
 - `w-apps` — everyday apps: file managers, media viewers, editors, mounting drives/shares, printing/scanning.
 - `w-packs` — optional software bundles by direction (`w-pack list/install/status`).
-- `w-security` — hardening, secrets, firmware, disk encryption/Secure Boot.
+- `w-security` — hardening, secrets, the SSH agent slot (`w-ssh`), firmware, disk encryption/Secure Boot.
 - `w-desktop` — Hyprland, the Quickshell UI, keybindings, screenshots.
+- `w-displays` — monitors: resolution/scale/rotation/placement (`w-monitor`), the login-screen scope, the night light (`w-nightlight`).
+- `w-session` — session memory: reopening windows at login (`w-session`), and named layouts.
 - `w-audio` — sound: the PipeWire/WirePlumber stack, volume/devices, diagnosing "no sound".
 - `w-power` — battery, idle/suspend (hypridle), the power menu (lock/logout/suspend/reboot/shutdown).
 - `w-input` — keybindings (`w-hotkeys`), keyboard layouts (`w-keyboard`), system locale (`w-locale`).

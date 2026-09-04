@@ -1,0 +1,20 @@
+# ssh.schema — which layer may decide each key of the `ssh` subsystem.
+#
+# Read by /usr/lib/w/w-conf-lib.sh (and its Python twin) during the load pass; a
+# user-layer assignment to a `system` key is dropped with a warning, and
+# `wconf_set` refuses to write it in the first place. See w-conf.md.
+#
+# Format: <KEY>	<scope>       scope: system | user | both
+#
+# Both keys are `both`, and deliberately so. An SSH agent is not machine policy:
+# it holds ONE person's keys, unlocks with THAT person's vault, and runs inside
+# their session — two users on the same laptop can honestly want different ones.
+# What the admin still gets is the default a fresh account starts on, and a fleet
+# that must pin the choice has policy.d above every layer, which is the mechanism
+# for exactly that.
+#
+# The catalog is a glob: SOCKET_<name> entries are data, and a user adding a
+# backend for an agent only they use is the intended use of the user layer.
+
+AGENT	both
+SOCKET_*	both

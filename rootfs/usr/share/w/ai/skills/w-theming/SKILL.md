@@ -14,7 +14,7 @@ sources:
   - path: .claude/library/w-style.md
     sha256: 7350147300f509e5f4d1f89b8ee03506f48061a96b72011dc63135275ef2717d
   - path: .claude/library/w-wallpaper.md
-    sha256: 45b1a08562402a6645afeeff8e2bc26b93cd4a4560cb376eea175694831509f7
+    sha256: 7cdb354e1eb86ed817b8bb5356db0a35b05a7fa05020e2c126217c83b65b7b68
   - path: .claude/library/w-appearance.md
     sha256: ed3e2ae1e0ad035ec8100dc379d0fae7fe99a0a4751cb29060f856d77fa3a62c
 tools:
@@ -194,6 +194,12 @@ theme. It is multi-monitor and picks a per-resolution tier (1920 / 2560 / 3840 /
 with **bidirectional fallback**: it steps down to a smaller master if needed, otherwise up
 to a larger one — so a theme need not ship every size. Wallpapers are `webp` (preferred)
 or `png`.
+
+`w-wallpaper cover <WIDTHxHEIGHT>` reports how far the displayed master is stretched to
+fill a panel of that size. The boot splash uses it so the brand mark keeps one size
+across the splash, the login screen and the desktop: the logo is rendered for the panel
+when the initramfs is built, so **a monitor swap or a resolution change wants a
+`sudo w-style apply plymouth`** to re-render it (a theme switch does this anyway).
 
 ## `w-appearance` — per-user overrides that beat the theme
 

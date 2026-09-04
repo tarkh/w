@@ -1,0 +1,7 @@
+# bitwarden bundle — packages (repo names; w-pack installs via yay → pacman).
+#
+# The Arch `bitwarden` package matters over the Flatpak/Snap builds for one
+# concrete reason: it ships /usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy
+# already, so biometric unlock works without the app's own pkexec-based setup step
+# (which chains a `chcon` and therefore fails on a distro with no SELinux).
+bitwarden

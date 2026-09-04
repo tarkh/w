@@ -1,0 +1,27 @@
+# keyring.manifest — config owned by mod_keyring (secrets + the SSH agent slot).
+#
+# Layered (update-system.md phase 3):
+#   • /usr/share/w/defaults/ssh.conf   — W's SSH agent catalog + the default
+#     backend. Class managed: every update overwrites it, which is how a newly
+#     supported agent reaches an installed machine. Catalog entries MERGE per key,
+#     so a SOCKET_<name> added in /etc/w/ssh.conf coexists with these.
+#   • /usr/share/w/defaults/ssh.schema — who may set each key (both layers may:
+#     an agent holds ONE person's keys, so it is not machine policy).
+#
+# The user's selection lands in ~/.config/w/ssh.conf via `w-ssh use` — a wconf
+# user-layer file with no vendor default, hence class user-conf (restored by
+# deleting it, which drops the account back to the vendor default).
+#
+# NOT tracked here, deliberately: ~/.ssh/config.d/50-w-agent.conf and
+# ~/.ssh/agent-keys/. They are `w-ssh sync` OUTPUT — a function of what the
+# agent currently holds, like the w-style render artifacts — so seeding or
+# resetting them from a pristine tree would be meaningless. ~/.ssh/config itself
+# is the user's own file and W never owns it.
+#
+# The greetd PAM stack is a static W-owned system file (not admin state), so it
+# is not listed either — apply_rootfs owns it wholesale.
+#
+# Format: <path>	<class>   class: managed | user-conf
+/usr/share/w/defaults/ssh.conf	managed
+/usr/share/w/defaults/ssh.schema	managed
+.config/w/ssh.conf	user-conf

@@ -7,7 +7,7 @@ description: >-
   before answering questions about how W is organized or which command to use.
 sources:
   - path: .claude/library/essentials.md
-    sha256: c250e702e4528e41885f19a1cac2e33597cf41069fd3e29e44d8fc0f31f3fd5d
+    sha256: b248edb27bc8a0889ae3930b0ee77eb8b0d29266d44e12c716f3d7bf51c6f41d
 ---
 
 # W Overview
@@ -86,8 +86,9 @@ commands — they encode W's conventions and keep the system consistent. Most su
   for themselves with `w-pack setup <bundle>` — no root, no prompt. So "installed"
   is machine-wide while the tools may still be missing for the person asking; the
   listing distinguishes the two. See **w-packs**.
-- `w-kernel` — select the active kernel (`linux-zen` default vs vanilla `linux`)
-  and toggle the sysctl/cmdline hardening profile.
+- `w-kernel` — select the active kernel (`linux-zen` default, vanilla `linux`, or
+  `linux-lts`) and toggle the sysctl/cmdline hardening profile. Switching never removes
+  a kernel, so every installed one stays bootable. See the w-security skill.
 - `w-kbdlight` — keyboard backlight: `status`, `up`/`down`/`set`/`toggle`, and
   `boot <N|off>` for the level at the disk-password prompt. Use it rather than
   `brightnessctl` for the keyboard (see **w-power** for why, and for the
@@ -97,6 +98,10 @@ commands — they encode W's conventions and keep the system consistent. Most su
 - `w-dns provider <name>` / `w-dns on|strict|off` / `w-dns status` — DNS-over-TLS
   via systemd-resolved (default provider Quad9).
 - `w-firewall public|home` — switch the firewalld zone; `w-firewall status`.
+- `w-ssh status|list|use <agent>|sync|include` — which SSH agent the session
+  uses (gcr by default; a password manager's agent replaces it) and the
+  per-host key selectors that keep an agent full of keys usable. `w-ssh status`
+  is the first stop for any SSH or `git push` failure — see **w-security**.
 - `w-crypt status|enroll-tpm|recovery-add` — LUKS2 disk-encryption management (only
   on encrypted installs).
 - `w-secureboot enable|disable|status` — Secure Boot via sbctl (encrypted/Limine
@@ -114,14 +119,14 @@ commands — they encode W's conventions and keep the system consistent. Most su
   `$mod+Shift+D` Do Not Disturb, `$mod+Shift+N` night light. `$mod` is the Super key.
 - **Night light** (blue-light filter, `w-nightlight`): off / on a schedule / always,
   with a night temperature and a night window. Off by default. Details: the
-  **w-desktop** skill.
+  **w-displays** skill.
 - **Session memory** (`w-session`): remembers which windows were open, on which
   workspace, and how the workspace was split between them, and reopens them at the
   next login — including the programs running inside terminals. Off by default;
   `w-session status` says whether it is on and what is stored. The same machinery
   also keeps **named layouts** the user saves on purpose (`Super+O`, or
   `w-session layout`), which work whether or not the automatic memory is on.
-  Details: the **w-desktop** skill.
+  Details: the **w-session** skill.
 - The Quickshell bar has data-driven blocks (workspaces, clock, volume, battery,
   network, updates, notifications/DND, system monitors, tray); its live config is
   `~/.config/quickshell/w/config/bar.json`. Which of them are shown is chosen **per

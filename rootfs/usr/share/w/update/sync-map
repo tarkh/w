@@ -95,6 +95,9 @@ scripts/packs/*			--packs
 
 # ── rootfs config → owning module (needs reload/seed, not just a file drop) ─────
 rootfs/usr/share/plymouth/*		--plymouth
+# plymouthd reads this from inside the initramfs (the mkinitcpio plymouth hook
+# bundles it), so a file drop alone would change nothing about the next boot.
+rootfs/etc/plymouth/*			--plymouth
 # The copy that matters lives INSIDE the initramfs: this drop-in brackets the LUKS
 # passphrase prompt, which only ever happens there. The catch-all --rootfs would put
 # the file in /etc and never rebuild, leaving the boot that needs it on the old one.
@@ -155,6 +158,10 @@ rootfs/usr/share/w/defaults/session-terminal.list	--session
 rootfs/usr/bin/w-session		--session
 rootfs/etc/systemd/user/w-session-*	--session
 rootfs/usr/share/w/defaults/dns.*	--dns
+# The SSH agent catalog is deployed by mod_keyring (which also owns the greetd PAM
+# stack and the gcr socket's global enable). w-ssh itself is a plain /usr/bin script
+# and rides --rootfs like the rest; only the vendor layer needs the module's step.
+rootfs/usr/share/w/defaults/ssh.*	--keyring
 rootfs/usr/share/w/defaults/logs.*	--logs
 rootfs/usr/share/w/defaults/time.*	--time
 # Mirrors render nothing, so the config alone would be fine on --rootfs — but the

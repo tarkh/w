@@ -283,6 +283,17 @@ assert "firstboot flag cleared" 'test ! -e /var/lib/w/.firstboot-pending'
 # apply.sh itself doesn't die on it). e2e guarantees network, so any CRITICAL
 # here is a real regression, not an expected offline branch — gate on it.
 assert "no CRITICAL apply warnings" '! grep -q "CRITICAL:" /var/log/w/apply.log'
+# Hardening asserted on the OUTCOME (/proc/cmdline), not on the config file that was
+# supposed to produce it — because the config file was green for the whole time the
+# feature was broken. mod_harden wrote GRUB_CMDLINE_LINUX_DEFAULT and ran grub-mkconfig
+# unconditionally; on the encrypted path Limine boots /etc/kernel/cmdline and reads
+# neither, and since grub is installed on both paths (base.txt) nothing ever failed —
+# the tokens simply never reached a kernel. Only the booted cmdline can tell those apart,
+# and it does so identically on both bootloaders.
+assert "kernel hardening reached the running kernel" \
+  'for t in init_on_alloc=1 init_on_free=1 slab_nomerge randomize_kstack_offset=1 page_alloc.shuffle=1 vsyscall=none debugfs=off; do grep -qw -- "$t" /proc/cmdline || { echo "missing from /proc/cmdline: $t"; exit 1; }; done'
+assert "hardening sysctl drop-ins active" \
+  'test -f /etc/sysctl.d/90-w-kernel.conf && test -f /etc/sysctl.d/90-w-fs.conf && test -f /etc/sysctl.d/90-w-net.conf'
 assert "goose (AI host) installed" 'command -v goose'
 
 if (( FAULT )); then
@@ -371,6 +382,17 @@ assert "a user-owned config file survives the same re-apply, for every account" 
   'for u in w admin2 plain; do grep -q _e2e /home/$u/.config/quickshell/w/config/bar.json || exit 1; done'
 assert "a user-owned file absent from a home is seeded there, for every account" \
   'for u in w admin2 plain; do test -s /home/$u/.config/quickshell/w/config/volume.json || exit 1; done'
+
+# Which kernel boots next is a Hub row, and the Hub asks for it as the desktop user —
+# but BOTH bootloaders keep that answer in a root-only file (the ESP is mounted
+# dmask=0077, and grub-mkconfig writes grub.cfg under `umask 077` unconditionally), so
+# a fresh install of either kind rendered "—" while `w-kernel list` as root looked
+# perfect. That is why this runs as the NON-ADMIN account: asserting it as root is
+# exactly the check that stayed green through the whole bug. The mirror that fixes it
+# is written where the default is pinned (refresh_boot / 50-w-default-entry).
+assert "the desktop user can see which kernel boots (the Hub's kernel row)" \
+  'cd /; runuser -u plain -- w-kernel list --porcelain |
+     awk -F"\t" "NR>1 && \$5==\"yes\" {n++} END {exit !(n==1)}"'
 
 if (( ENCRYPTED )); then
   # The very fact S2/S3 booted headless already proves the TPM2 unlock worked —
@@ -493,6 +515,27 @@ if (( ENCRYPTED )); then
      out=$(w-sync update --yes 2>&1) && { echo "$out"; echo "the update was NOT refused"; exit 1; }
      grep -qE "REFUSING TO UPDATE|no release tag" <<< "$out" || { echo "$out"; exit 1; }
      [[ "$(g rev-parse HEAD)" == "$R" ]] || { echo "the checkout moved despite the refusal"; exit 1; }'
+  # Recovery must not cost more than it repairs. Both halves were broken at once and
+  # both were reachable from the refusal message above: restoring any managed system
+  # file put it back mode 644, so `w-reset updatesys` left /usr/bin/w-sync unexecutable
+  # (exit 126 — no way left to update at all), and the module's vendor default said
+  # CHANNEL=stable, so the same command took the machine off the edge channel. Found
+  # live 2026-09-03, fixed the day after; asserted here because nothing static sees it.
+  # The narrow form is what w-sync now prints, so it is the one proven to work.
+  assert "the per-file form restores just the anchor" \
+    'set -u; A=/usr/share/w/update/w-release.allowed_signers; C=$(cat /etc/w/update.conf)
+     cp -a "$A" "$A.e2e-bak"
+     trap "[[ -s $A ]] || mv -f $A.e2e-bak $A; rm -f $A.e2e-bak" EXIT
+     rm -f "$A"
+     w-reset updatesys w-release.allowed_signers >/dev/null
+     test -s "$A" || { echo "the anchor was not restored"; exit 1; }
+     [[ "$(cat /etc/w/update.conf)" == "$C" ]] || { echo "update.conf changed under a per-file reset"; exit 1; }'
+  assert "a full module reset keeps the client runnable and the channel intact" \
+    'set -u; C=$(grep ^CHANNEL /etc/w/update.conf)
+     w-reset updatesys >/dev/null
+     test -x /usr/bin/w-sync || { echo "w-sync came back without its executable bit"; exit 1; }
+     w-sync status >/dev/null || { echo "w-sync no longer runs after its own module reset"; exit 1; }
+     [[ "$(grep ^CHANNEL /etc/w/update.conf)" == "$C" ]] || { echo "the update channel changed: $C -> $(grep ^CHANNEL /etc/w/update.conf)"; exit 1; }'
 fi
 
 # Drop the fixture before the diagnostics bundle, so the archived system state is

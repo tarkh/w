@@ -76,10 +76,12 @@ Item {
 
     // Secure Boot only exists on the encrypted+Limine install path (sbctl/tpm2-tools are
     // installed there and nowhere else, see package-limine.md) — a plain GRUB system has
-    // no w-secureboot backend to front at all, so the whole TAB is absent rather than
-    // shown empty. This gate used to hide the root grid's Security tile and moved here
-    // with the panel; it is a structural absence, not a firmware limitation (that case
-    // the section itself grays out).
+    // no w-secureboot backend to front at all. This gate used to hide the whole Security
+    // TAB, which was wrong once the tab stopped being about Secure Boot alone: kernel
+    // hardening is bootloader-independent and would have been unreachable on every plain
+    // install. So the tab is unconditional now and the flag is handed to the section,
+    // which drops just the one row it governs. It is a structural absence, not a
+    // firmware limitation (that case the section grays out instead).
     property bool limineAvailable: false
     FileView {
         path: "/etc/default/limine"
@@ -87,12 +89,8 @@ Item {
         onLoadFailed: root.limineAvailable = false
     }
 
-    readonly property var tabs: root.limineAvailable ? ["general", "datetime", "security"]
-                                                     : ["general", "datetime"]
+    readonly property var tabs: ["general", "datetime", "security"]
     readonly property int tabIdx: Math.max(0, root.tabs.indexOf(root.tab))
-    // The limine probe resolves after this panel is built, so `tabs` grows once on open.
-    // Never leave the current tab pointing outside the list.
-    onTabsChanged: if (root.tabs.indexOf(root.tab) < 0) root.setTab("general")
     function setTab(name) {
         if (root.tab === name) return;
         root.tab = name;
@@ -110,7 +108,8 @@ Item {
     property string focusRegion: "tab"      // "tab" | "content"
     property int focusIdx: 0
 
-    readonly property var focusables: [verRow, channelRow, localeRow, updRow, syncRow, vacuumRow, retRow,
+    readonly property var focusables: [verRow, channelRow, kernelRow, kernelRebootRow,
+                                      localeRow, updRow, syncRow, vacuumRow, retRow,
                                       sessModeRow, sessLayoutsRow, sessAutoRow]
     readonly property var visFocusables: root.focusables.filter((f) => f.visible)
 
@@ -248,6 +247,48 @@ Item {
         onLoaded: {
             const m = (text() || "").match(/^CHANNEL=([^\s#]+)/m);
             root.channel = m ? m[1] : "stable";
+        }
+    }
+
+    // ── Kernel (w-kernel list --porcelain) ───────────────────────────────────────────
+    // Read once on open (a one-shot Process, like the logs and session readers): the
+    // only thing that changes this while the panel is up is the switch itself, and that
+    // closes the Hub. `default` is what boots next, `running` is what is loaded now —
+    // they disagree exactly between a switch and its reboot, which is the one state the
+    // panel must not render as simply "LTS" and leave at that.
+    property string kernelDefault: ""
+    property string kernelRunning: ""
+    property var    kernelRows: []       // [{ id, installed }] in the tool's own order
+    readonly property bool kernelRebootOwed: root.kernelDefault !== "" && root.kernelRunning !== ""
+                                             && root.kernelDefault !== root.kernelRunning
+    function kernelLabel(id) { return id ? Strings.t("hub.kernel." + id) : "—"; }
+    // A kernel that is not installed yet is still offered — choosing it is how you
+    // install it — but it says so, because that choice costs a download and a DKMS
+    // rebuild while an installed one is an instant, offline repin of the boot default.
+    readonly property var kernelOptions: root.kernelRows.map((k) => ({
+        id: k.id,
+        label: k.installed ? root.kernelLabel(k.id)
+                           : root.kernelLabel(k.id) + " — " + Strings.t("hub.kernelNotInstalled")
+    }))
+    Process {
+        id: kernelStat
+        running: true
+        command: ["w-kernel", "list", "--porcelain"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                // Header row + one row per kernel: name pkg version installed default running
+                const rows = [];
+                let def = "", run = "";
+                const lines = (this.text || "").split("\n").filter((l) => l.length > 0);
+                for (let i = 1; i < lines.length; i++) {
+                    const f = lines[i].split("\t");
+                    if (f.length < 6) continue;
+                    rows.push({ id: f[0], installed: f[3] === "yes" });
+                    if (f[4] === "yes") def = f[0];
+                    if (f[5] === "yes") run = f[0];
+                }
+                root.kernelRows = rows; root.kernelDefault = def; root.kernelRunning = run;
+            }
         }
     }
 
@@ -428,9 +469,7 @@ Item {
                 focused: root.focusRegion === "tab" && root.tabIdx === 1
                 onClicked: { root.focusRegion = "tab"; root.setTab("datetime"); }
             }
-            // Only where the backend exists — see limineAvailable.
             Pill {
-                visible: root.limineAvailable
                 label: Strings.t("hub.security"); active: root.tab === "security"
                 focused: root.focusRegion === "tab" && root.tabIdx === 2
                 onClicked: { root.focusRegion = "tab"; root.setTab("security"); }
@@ -495,6 +534,66 @@ Item {
                     label: Strings.t("hub.channel")
                     value: Strings.t("hub.channel." + (root.isEdge ? "edge" : "stable"))
                     focused: root.focusedRow === channelRow
+                }
+
+                // Kernel. Switching INSTALLS the chosen kernel and its paired headers and
+                // every DKMS module rebuilds behind them — long, network-bound, and its
+                // output is where a DKMS module with no patch for the new series says so.
+                // That is a terminal operation (Ф4's hybrid model), not a runPrivileged
+                // one, and the Hub closes behind it exactly as it does for Sync.
+                // Nothing is ever uninstalled: every installed kernel stays a bootable
+                // menu entry, which is what makes a bad kernel one reboot away from being
+                // escaped — offline, with no download, on a machine whose network driver
+                // is the thing that broke. `w-kernel remove` is the deliberate way back
+                // and is CLI-only on purpose; reclaiming space is not a settings-screen
+                // gesture, and the ESP it would reclaim is self-limiting anyway.
+                HubSection { width: parent.width; text: Strings.t("hub.kernel") }
+                SelectRow {
+                    id: kernelRow
+                    width: parent.width
+                    icon: "computer"; glyph: String.fromCodePoint(0xf035b)   // nf-md-memory
+                    label: Strings.t("hub.kernelLabel")
+                    enabled: root.kernelRows.length > 0
+                    currentId: root.kernelDefault
+                    options: root.kernelOptions
+                    value: root.kernelLabel(root.kernelDefault)
+                    focused: root.focusedRow === kernelRow
+                    onActivated: menuLayer.openMenu(kernelRow, root.kernelOptions, root.kernelDefault, (id) => {
+                        if (id === root.kernelDefault) return;
+                        root.runTerm(Term.exec(["pkexec", "/usr/lib/w/w-hub-actuate", "kernel-set", id]));
+                    })
+                }
+                Text {
+                    width: parent.width
+                    text: Strings.t("hub.kernelHint")
+                    color: Colors.muted
+                    font.family: Fonts.family; font.pixelSize: 11
+                    wrapMode: Text.WordWrap
+                }
+                // The switch is a boot-time choice: it is complete only after a reboot,
+                // and until then the row above would otherwise read "LTS" on a machine
+                // still running Zen. The bar says the same thing with its reboot glyph
+                // (w-update's reboot_pending now covers a pending kernel switch too);
+                // this is the place that can also act on it. Rebooting is unprivileged
+                // and belongs to the user's own session — w-session-exit asks every
+                // window to close first, so an editor with unsaved work still gets a
+                // reachable dialog (and cancelling one calls the reboot off). That is
+                // why it is not a prompt at the end of the root-owned terminal: under
+                // pkexec there is no user session to hand the graceful path to.
+                HubRow {
+                    id: kernelRebootRow
+                    width: parent.width
+                    visible: root.kernelRebootOwed
+                    icon: "view-refresh"; glyph: String.fromCodePoint(0xf0450)   // nf-md-restart
+                    label: Strings.t("hub.kernelRebootTitle")
+                    sublabel: Strings.t("hub.kernelRunningNow") + ": " + root.kernelLabel(root.kernelRunning)
+                    actionText: Strings.t("hub.rebootNow")
+                    focused: root.focusedRow === kernelRebootRow
+                    onActivated: {
+                        Session.exiting = true;
+                        Quickshell.execDetached(["w-session-exit", "reboot"]);
+                        Overlays.close("hub");
+                    }
                 }
 
                 // System language (locale). The switch is privileged (w-locale via the
@@ -801,7 +900,8 @@ Item {
             }
 
             // ── Tab: Security ───────────────────────────────────────────────────
-            // Emits nothing: enrolling opens a terminal and closes the Hub on its own.
+            // Secure Boot enrolling opens a terminal and closes the Hub on its own; the
+            // hardening toggle is instant actuation and comes back up as runPrivileged.
             Loader {
                 id: secLoader
                 width: col.width
@@ -815,6 +915,19 @@ Item {
                 property: "focusedField"
                 value: root.focusedField
                 when: secLoader.status === Loader.Ready
+            }
+            // Pushed rather than probed a second time inside the section: the FileView
+            // resolves asynchronously, and this way the tab that owns the flag stays the
+            // one place that decides what "this machine has a Limine backend" means.
+            Binding {
+                target: secLoader.item
+                property: "limineAvailable"
+                value: root.limineAvailable
+                when: secLoader.status === Loader.Ready
+            }
+            Connections {
+                target: secLoader.item
+                function onRunPrivileged(cmd, onDone) { root.runPrivileged(cmd, onDone); }
             }
         }
     }

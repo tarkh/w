@@ -27,7 +27,7 @@ setup_file() {
 
 @test "contract.py: discovers every domain module" {
   out="$(cat "$BATS_FILE_TMPDIR/contract-output.txt")"
-  [[ "$out" == *"modules loaded (20)"* ]]
+  [[ "$out" == *"modules loaded (22)"* ]]
   [[ "$out" == *"knowledge"* ]]
   [[ "$out" == *"web"* ]]
 }
