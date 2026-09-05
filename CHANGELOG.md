@@ -8,6 +8,58 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.5.1
+
+- **Cancelling an authentication prompt no longer counts against you.** Dismissing the
+  auth card — or pressing "Use password" — was recorded by `pam_faillock` as a failed
+  login. Three cancels and the password prompt refused you for ten minutes
+  ("Authentication token manipulation error"), while a fingerprint still let you
+  straight in. On current polkit the PAM helper is a socket-activated system unit, so
+  cancelling only closes the socket: the helper lives on, reaches `pam_unix` with a
+  dead conversation, and every abandoned window was tallied. `/etc/pam.d/polkit-1` now
+  carries its own copy of the password chain, in which a dead conversation fails on the
+  spot without touching the counter. Wrong passwords are still counted and the lockout
+  still works — only cancelling stopped being an attempt. If a machine is locked out
+  right now, it clears by itself after ten minutes, or at once with:
+
+  ```
+  sudo faillock --user "$USER" --reset
+  ```
+
+- **"Use password" during a fingerprint prompt now actually switches to the password.**
+  v0.5.0 announced this, but it never worked on any machine: the button dropped its
+  flag into `$XDG_RUNTIME_DIR`, while the stack that reads it runs inside a unit with
+  `ProtectHome=yes`, where `/run/user` does not exist. The flag was invisible, so the
+  password you typed simply sat in the queue until the reader's 30-second timeout —
+  exactly the behaviour that release said was gone. The channel moved to `/run/w/fp/`,
+  and the button takes effect immediately.
+
+- **Cancelling a fingerprint prompt frees the reader instead of holding it for half a
+  minute.** The rough edge named in v0.5.0 — the reader staying busy for the rest of
+  its 30 seconds after you switch to the password — is gone, and on readers with a lamp
+  it no longer stays lit. W now ends an abandoned verification the only way
+  `pam_fprintd` accepts, by restarting `fprintd` through a rule scoped to that one
+  unit, that one verb and your own active session: 83 ms to the password prompt,
+  against 27 seconds before. The card also stops offering the finger while the reader
+  is still busy, rather than asking you to touch a device that cannot answer.
+
+- **The card no longer says whose password it wants when there is nobody else it could
+  be.** "Password for user X" is shown only when the account is not the one you are
+  logged in as, or when there is a choice to make.
+
+  Updating deploys all of the above, but the running session keeps the auth agent it
+  started with. Restart it — or just log out and back in:
+
+  ```
+  systemctl --user restart w-authd
+  ```
+
+- **Under the hood.** The nightly image build now initialises pacman's keyring before
+  upgrading it, so a build can no longer finish green while the image quietly distrusts
+  the new master keys. The issues the nightly canary opens are prefixed `[canary]` and
+  name the stage that actually failed, instead of reading "Edge image fails to install"
+  over a run in which the image installed, booted and passed every check.
+
 ## v0.5.0
 
 - **Choosing a kernel and switching hardening on now work on encrypted installs, where

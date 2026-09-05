@@ -7,9 +7,16 @@
 # visible to anyone looking at the repository and says, plainly, that the tree is
 # currently broken. So each workflow keeps exactly ONE thread: the first red run
 # opens it, later red runs comment on it rather than filing duplicates, and the
-# first green run closes it. A closed thread is never reopened — a new outage is
-# a new issue, because the interesting question about a recurrence is when it
-# came back, and an endlessly reopened thread destroys that.
+# first green run closes and locks it. A closed thread is never reopened — a new
+# outage is a new issue, because the interesting question about a recurrence is
+# when it came back, and an endlessly reopened thread destroys that.
+#
+# The threads stay in the tracker after they close, alongside what the people
+# running W file there. They are not deleted: a closed thread is the record of an
+# outage — when it started, what each retry said, when it came back — which is the
+# most useful thing a canary produces, and the API cannot delete an issue with the
+# workflow's own token anyway. Telling the two apart is the title's job (every one
+# of them is prefixed `[canary]`) and the label's.
 #
 #   ci/report-canary.sh <label> <title> <job>=<result> [<job>=<result> …]
 #
@@ -80,6 +87,12 @@ if ((${#failed[@]} == 0)); then
   [[ -n "$num" ]] || { echo "green, and no open issue — nothing to report."; exit 0; }
   gh issue comment "$num" --body "Green again — $RUN_URL"
   gh issue close "$num"
+  # Locked once it is closed, because this thread is a machine's record of one
+  # outage and not a place to report anything. The tracker is shared with the
+  # people running W, and a resolved canary is exactly the sort of thread someone
+  # adds "I have this too" to — where no one is listening. Best-effort on purpose:
+  # losing the lock is cosmetic, and it must never turn a green run red.
+  gh issue lock "$num" --reason resolved >/dev/null 2>&1 || true
   echo "green: closed #$num"
   exit 0
 fi
@@ -100,8 +113,9 @@ $(stage_meaning "$stage")
 
 Run: $RUN_URL
 
-This issue is updated by each subsequent failure and closed automatically by the
-first green run.
+This issue is updated by each subsequent failure, and closed and locked by the
+first green run. It is filed by CI, not by a person — if you are seeing this as a
+user of W and have something to add, please open your own issue instead.
 EOF
 )"
 echo "red: opened a new issue"

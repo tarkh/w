@@ -40,7 +40,10 @@ Bitwarden implements Linux biometrics as a polkit check on the action
 `com.bitwarden.Bitwarden.unlock` (`auth_self`), NOT as its own fingerprint code.
 On W that check is answered by **`w-authd`**, so the prompt the user sees is the
 W auth card, and the PAM stack behind it is `/etc/pam.d/polkit-1`:
-`pam_fprintd.so sufficient`, then `system-auth`. Consequences worth knowing:
+`pam_fprintd.so sufficient`, then a pinned copy of `system-auth`'s password
+chain (deliberately NOT an include — a cancelled card must not count as a
+failed login; see the W library's quickshell-auth notes). Consequences worth
+knowing:
 
 - With a finger enrolled (`fprintd-enroll`), the card opens in **fingerprint
   mode** — glyph, no input. After pam_fprintd gives up it converts in place into

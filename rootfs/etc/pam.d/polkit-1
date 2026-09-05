@@ -2,7 +2,7 @@
 # W Linux — polkit authentication stack (see quickshell-auth.md).
 #
 # Fingerprint first (a no-op if fprintd is not configured or no finger is
-# enrolled), then fall through to password via system-auth.
+# enrolled), then the password.
 #
 # The first line exists so the SECOND one can be skipped on demand. While the W
 # auth card waits on the reader it offers "Use password"; pam_fprintd owns the
@@ -13,13 +13,58 @@
 # "polkit-1", so the choice has to be made inside this single stack.
 #
 #   gate exit 0     → success=ignore → continue here, pam_fprintd runs as always
-#   gate exit != 0  → default=1      → jump over pam_fprintd → system-auth
+#   gate exit != 0  → default=1      → jump over pam_fprintd → the password chain
 #
 # Every failure of the gate (missing, unreadable, not executable) also lands on
 # `default`, i.e. on "ask for the password" — it can never skip authentication.
-# See /usr/lib/w/w-fp-gate for the flag it reads and why it is safe.
+#
+# ⚠️ The gate does NOT run as the user, and cannot see their runtime directory.
+# Since polkit 126 this stack runs inside polkit-agent-helper@.service — a
+# socket-activated ROOT unit with ProtectHome=yes, which hides /home, /root and
+# /run/user. The flag therefore lives in /run/w/fp (sticky, tmpfiles.d/w.conf)
+# and the account is taken from $PAM_USER. See /usr/lib/w/w-fp-gate for the flag
+# it reads and why it is safe.
+#
+# ── The password chain below is a COPY of system-auth's auth section, not an
+# include. Since polkit 126/127, cancelling the agent's card does not kill the
+# helper: the socket-activated polkit-agent-helper-1 only learns of the cancel
+# when pam_unix next talks to a dead socket. Upstream system-auth maps that to
+# `default=bad`, so pam_faillock authfail tallied every dismissed card (measured
+# on a live reader: one entry per cancel, TWO per "Use password" then Cancel —
+# three dismissals locked the password prompt for ten minutes while the
+# fingerprint kept working). A dismissal is not an attempt: the user presented
+# nothing. Hence exactly ONE deliberate delta from the pinned upstream snapshot
+# (scripts/check/pam.sh + tests/fixtures/system-auth.auth):
+#
+#   pam_unix:  [success=1 default=bad]
+#           →  [success=1 authtok_err=die conv_err=die default=bad]
+#
+# The code a dead conversation actually arrives as is PAM_AUTHTOK_ERR, not
+# PAM_CONV_ERR: pam_unix reads the token via pam_get_authtok(), which maps a
+# failed prompt to PAM_AUTHTOK_ERR ("Authentication token manipulation error" —
+# the measured final rc of every tallied cancel). `authtok_err=die` therefore
+# fails the stack on the spot: authfail never runs (no tally), authsucc never
+# runs (no reset), pam_authenticate returns an error at once. `conv_err=die` is
+# kept as a belt for paths that propagate the raw code. `die` rather than a jump
+# because for pam_authenticate a jump counts as `ignore` (pam.conf(5)) and the
+# stack could then complete successfully with no credential presented at all.
+# Everything else in the copied block must stay byte-identical to the snapshot —
+# that is what `scripts/check.sh --pam` enforces, including a live drift sensor
+# against the host's own pambase.
+#
+# No `timeout=` override here on purpose: 30s is the honest window for someone
+# reaching for the sensor. The stale-reader problem it used to paper over is
+# handled where it belongs — w-authd ends the abandoned verification outright by
+# restarting fprintd (50-w-fprintd-abort.rules), which pam_fprintd treats as an
+# immediate give-up without spending a try.
 auth       [success=ignore default=1]   pam_exec.so quiet /usr/lib/w/w-fp-gate
 auth       sufficient   pam_fprintd.so
-auth       include      system-auth
+auth       required                    pam_faillock.so      preauth
+-auth      [success=2 default=ignore]  pam_systemd_home.so
+auth       [success=1 authtok_err=die conv_err=die default=bad]  pam_unix.so  try_first_pass nullok
+auth       [default=die]               pam_faillock.so      authfail
+auth       optional                    pam_permit.so
+auth       required                    pam_env.so
+auth       required                    pam_faillock.so      authsucc
 account    include      system-auth
 session    include      system-auth

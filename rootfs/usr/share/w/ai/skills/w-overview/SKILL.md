@@ -7,7 +7,7 @@ description: >-
   before answering questions about how W is organized or which command to use.
 sources:
   - path: .claude/library/essentials.md
-    sha256: b248edb27bc8a0889ae3930b0ee77eb8b0d29266d44e12c716f3d7bf51c6f41d
+    sha256: 8366339ada79335845c94e96a5dedf382c5d8ce7b0e384b9012ef6ac70233ae9
 ---
 
 # W Overview
@@ -33,7 +33,7 @@ W keeps its own state and configuration under predictable roots:
 | `/etc/w/themes/<name>/` | A theme: `theme.conf` (color/geometry/effect tokens), `wallpaper/`, optional `logo/`, `motion.conf`, `font.conf`. |
 | `~/.config/w/` | Per-user overrides: user themes and the user's active-theme pointer (no root needed). |
 | `~/.config/quickshell/w/` | The Quickshell UI config tree, live. Split by ownership: `shell.qml`, `core/`, `modules/` are W's (refreshed by every update, in EVERY account's home); `config/*.json` (bar, launcher, notifications, …) are the user's — written once, never overwritten. |
-| `/run/w/` | Runtime state, e.g. the resolved wallpaper manifest under `/run/w/wallpaper/`. |
+| `/run/w/` | Runtime state: the resolved wallpaper manifest under `/run/w/wallpaper/`, and `/run/w/fp/` where the auth dialog parks its per-user "ask me for the password, not my fingerprint" flag. |
 | `/usr/share/w/ai/` | This AI knowledge base (read-only, shipped). |
 | `/usr/bin/w-*` | The first-party W command-line tools — everything a person, a unit or a config calls by name. |
 | `/usr/lib/w/` | W's internals: sourced shell libraries, the polkit dispatchers, the `w-mcp` Python package, the `w-style` rendering axes. Not on `PATH`, and not meant to be run by hand. |

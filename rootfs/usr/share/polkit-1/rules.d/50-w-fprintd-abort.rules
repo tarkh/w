@@ -1,0 +1,32 @@
+// W Linux — let an active local session abort a fingerprint verification.
+//
+// The W auth card's "Cancel" and "Use password" must stop the reader NOW. Nothing
+// can interrupt pam_fprintd from outside: since polkit 126 the PAM conversation
+// runs in polkit-agent-helper@.service — a socket-activated ROOT unit — so
+// PolkitAgent.Session.cancel() has no child process left to signal, and the module
+// keeps the sensor claimed until its own timeout (30s) runs out. Measured on real
+// hardware: the card closed in 1 ms, the reader stayed lit for the remaining 27 s,
+// and the next prompt could not use a fingerprint at all because the device was
+// still claimed by the abandoned conversation.
+//
+// The one abort path pam_fprintd itself honours is fprintd leaving the bus: its
+// NameOwnerChanged handler returns PAM_AUTHINFO_UNAVAIL immediately, without
+// spending one of max-tries ("give up as we might start listening to events from a
+// new name owner otherwise"). So w-authd restarts fprintd.service, and this rule is
+// what lets it do so — without raising a second authentication from inside the
+// handler of the first one. w-authd calls RestartUnit non-interactively, so if this
+// rule is ever missing or broken, polkitd simply refuses instead of prompting.
+//
+// Scope: this ONE unit, this ONE verb, and only for a session that is local and
+// active. It grants no new power over the reader — any local user can already
+// occupy it with a plain Claim (that is what a fingerprint login does), so denying
+// the scanner to others was always possible; this only makes RELEASING it possible
+// too. See quickshell-auth.md.
+polkit.addRule(function (action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") == "fprintd.service" &&
+        action.lookup("verb") == "restart" &&
+        subject.local && subject.active) {
+        return polkit.Result.YES;
+    }
+});

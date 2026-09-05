@@ -81,8 +81,16 @@ Scope {
     // an administrator standing right there had no way to authenticate at all. `users`
     // is empty whenever the session's own user is among the identities (the ordinary
     // case, nothing to choose) and for gcr/keyring prompts, which carry no identity.
+    //
+    // `authSelf` is what keeps that label from becoming noise: on the ordinary prompt
+    // the account IS the person at the keyboard, and "Password for user w" tells them
+    // something they cannot not know. The line earns its space only when the identity
+    // is somebody else, or when it heads a picker. Default false — an older daemon
+    // that does not send the flag keeps the old, more talkative behaviour rather than
+    // silently hiding a name that mattered.
     property string authUser: ""
     property var authUsers: []
+    property bool authSelf: false
     property bool pickerOpen: false
 
     readonly property bool active: root.curId >= 0
@@ -134,6 +142,7 @@ Scope {
             root.choiceChecked = false;
             root.authUser = m.user || "";
             root.authUsers = m.users || [];
+            root.authSelf = m.self === true;
             root.pickerOpen = false;
             root.promptText = "";
             root.infoText = "";
@@ -440,15 +449,20 @@ Scope {
                     }
 
                     // ── whose password ────────────────────────────────────────
-                    // Always named when we know the account (polkit prompts): "the
-                    // password" is only unambiguous on a single-user machine. When the
-                    // daemon also sent alternatives, the line becomes a picker that
-                    // expands in place — the card's height follows its content, so no
-                    // overlay/positioning machinery is needed for a list this small.
+                    // Named only when the name answers a question the user actually
+                    // has. Authenticating as yourself — the overwhelmingly common
+                    // prompt — is not one: the card is session-modal, there is exactly
+                    // one person in front of it, and a line spelling out their own
+                    // login is pure furniture. It appears when the identity is somebody
+                    // else (an auth_admin action on a non-admin's session), and when the
+                    // daemon sent alternatives, where it doubles as the picker header
+                    // that expands in place — the card's height follows its content, so
+                    // no overlay/positioning machinery is needed for a list this small.
                     Column {
                         width: parent.width
                         spacing: 6
                         visible: root.authUser.length > 0 && root.promptKind !== "confirm"
+                                 && (!root.authSelf || root.authUsers.length > 1)
 
                         MouseArea {
                             width: parent.width

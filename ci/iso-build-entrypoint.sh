@@ -24,7 +24,18 @@ info() { echo -e "\033[1;35m==>\033[0m $*"; }
 # packages it has to verify makes every later signature check fail. Refresh the
 # keyring on its own first, then the rest.
 info "Refreshing pacman database and keyring..."
+# The keyring package's own post-upgrade hook re-populates the trust store, and that
+# step needs a LOCAL signing key to lsign the master keys with. The container image
+# does not always carry one, and when it does not, the hook prints "there is no secret
+# key available to sign with" and pacman still exits 0 — so `set -e` never sees it and
+# the master keys added by the upgrade stay untrusted. That surfaces much later, as a
+# signature failure on some package whose chain reaches a new key, which reads like a
+# broken mirror. `--init` is idempotent and creates the key only if it is missing;
+# `--populate` afterwards does the hook's work again, this time where a failure is
+# loud rather than swallowed.
+pacman-key --init
 pacman -Sy --noconfirm --needed archlinux-keyring
+pacman-key --populate
 pacman -Su --noconfirm
 
 # archiso + base-devel are the build itself. The rest is what scripts/check.sh

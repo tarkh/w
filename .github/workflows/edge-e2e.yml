@@ -100,7 +100,7 @@ jobs:
       # that makes the next red one readable.
       - name: Collect the logs from inside the VM
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: e2e-logs-encrypted
           path: vm/logs/
@@ -128,7 +128,7 @@ jobs:
         run: bash ci/e2e-container.sh
       - name: Collect the logs from inside the VM
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: e2e-logs-plain
           path: vm/logs/
@@ -156,6 +156,6 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           bash ci/report-canary.sh edge-e2e-failure \
-            "Edge image fails to install" \
+            "[canary] edge-e2e: install or post-install checks are failing" \
             "e2e-encrypted=${{ needs.e2e-encrypted.result }}" \
             "e2e-plain=${{ needs.e2e-plain.result }}"

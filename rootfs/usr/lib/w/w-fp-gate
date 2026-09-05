@@ -25,6 +25,19 @@
 # once. The flag is removed when the prompt ends (and on daemon start, so a crash
 # cannot leave fingerprint disabled).
 #
+# ── Where the flag lives, and why NOT in $XDG_RUNTIME_DIR ─────────────────────
+# ⚠️ Since polkit 126 the PAM conversation does not run in a setuid helper forked
+# by the agent. It runs in polkit-agent-helper@.service — a socket-activated
+# system unit, as ROOT, hardened with ProtectHome=yes, PrivateTmp=yes and
+# ProtectSystem=strict. ProtectHome hides /home, /root AND /run/user, so a flag
+# under the user's own runtime dir is invisible here no matter who we run as:
+# measured on a live reader, the gate saw nothing and the reader ran anyway.
+# /run/w/fp (tmpfiles.d/w.conf, sticky 1777) is outside that mask and readable.
+#
+# For the same reason the caller's uid tells us nothing — we ARE root now — so the
+# account being authenticated comes from PAM itself via $PAM_USER, which pam_exec
+# exports.
+#
 # ── Why this is safe ─────────────────────────────────────────────────────────
 # The flag can only ever REMOVE an authentication method, never add or bypass
 # one: its single effect is that the password is demanded. Every failure mode
@@ -32,14 +45,22 @@
 # pam_exec return an error, which `default=1` also turns into "skip the reader,
 # ask for the password".
 #
-# pam_exec runs this with the REAL uid of the calling process, i.e. the user whose
-# w-authd forked the polkit helper — exactly the person at the keyboard, and the
-# only one who can write into their own $XDG_RUNTIME_DIR (mode 0700). No name
-# lookup and no root access are needed, so this script never runs privileged.
+# Two guards keep the sticky directory from becoming a way to poke at root:
+# symlinks are refused outright (so the flag can never redirect a root stat into
+# a path the user cannot reach), and the flag counts only if its owner is the
+# account being authenticated (so a second local user cannot switch off someone
+# else's reader — the worst they could do is disable their own).
 #
-# Keep it trivial: one stat, no network, no D-Bus, no loops. It sits in front of
-# every privileged action on the machine, and a gate that blocks is a machine
-# that cannot authenticate.
+# Keep it trivial: a couple of stats, no network, no D-Bus, no loops. It sits in
+# front of every privileged action on the machine, and a gate that blocks is a
+# machine that cannot authenticate.
 
-[ -e "/run/user/$(id -ru)/w/fp-skip" ] && exit 1
-exit 0
+u=$(id -u "${PAM_USER:-}" 2>/dev/null) || exit 0
+[ -n "$u" ] || exit 0
+
+f="/run/w/fp/fp-skip-$u"
+[ -h "$f" ] && exit 0
+[ -f "$f" ] || exit 0
+[ "$(stat -c %u "$f" 2>/dev/null)" = "$u" ] || exit 0
+
+exit 1

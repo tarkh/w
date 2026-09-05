@@ -487,8 +487,21 @@ if (( ENCRYPTED )); then
   # strict on the official repository, open on anything else (a fork, or the dev
   # repo, where there are no release tags to find). Asserted as that relationship
   # rather than as a fixed value, because both kinds of preset exist.
+  #
+  # git runs as the checkout OWNER, never as the root this assertion is executed by.
+  # /var/lib/w/src is user-owned by design, so git's ownership guard (CVE-2022-24765)
+  # refuses it for everyone else — root's only exemption is a repo owned by $SUDO_UID,
+  # which a root ssh session does not have. `w-sync` itself is built on exactly this
+  # rule (git_c), and the neighbouring assertions already follow it; this one did not,
+  # and read an empty URL. Which was invisible, because an unreadable remote fell into
+  # the `*)` branch and was answered as "some other remote" — green on a dev preset,
+  # where that branch is also the correct one. So the read is now a hard failure of
+  # its own: an origin this assertion cannot determine proves nothing either way.
   assert "signature checking is armed to match the tracked remote" \
-    'o=$(git -C /var/lib/w/src remote get-url origin 2>/dev/null); s=$(w-sync status | sed -n "s/^Signed : //p");
+    'u=$(stat -c %U /var/lib/w/src) && h=$(getent passwd "$u" | cut -d: -f6) || exit 1
+     o=$(cd / && runuser -u "$u" -- env -u XDG_CONFIG_HOME HOME="$h" git -C /var/lib/w/src remote get-url origin) || exit 1
+     [[ -n "$o" ]] || { echo "the tracked remote could not be read — nothing to match against"; exit 1; }
+     s=$(w-sync status | sed -n "s/^Signed : //p")
      case "${o%.git}" in
        https://github.com/tarkh/w) [[ "$s" == required* ]] ;;
        *)                          [[ "$s" == "NOT required"* ]] ;;

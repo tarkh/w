@@ -97,5 +97,5 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           bash ci/report-canary.sh edge-iso-failure \
-            "Edge ISO build is failing" \
+            "[canary] edge-iso: static checks or the image build are failing" \
             "check=${{ needs.check.result }}" "iso=${{ needs.iso.result }}"

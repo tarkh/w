@@ -1,0 +1,35 @@
+# PINNED SNAPSHOT of pambase's /etc/pam.d/system-auth — AUTH section, module
+# lines only (the two upstream comment lines inside the section are dropped).
+#
+#   source package : pambase 20260616-1
+#   full-file sha256 (the whole system-auth, for the live drift sensor):
+#     2bb19ead55a7b9014d107eec63cc015426c39d93ddc8af3322649ff5f8b45d5b
+#   pinned         : 2026-09-05 — quickshell-auth.md, "cancel must not tally"
+#
+# rootfs/etc/pam.d/polkit-1 copies this section instead of `include system-auth`
+# because cancelling the W auth card must not count as a failed login attempt
+# (polkit ≥126 keeps the socket-activated helper alive past the cancel, and
+# pam_unix answers the dead socket with PAM_CONV_ERR, which upstream system-auth
+# maps to `default=bad` → pam_faillock authfail tallies it). The copy carries
+# exactly ONE delta — pam_unix's control gains `conv_err=die` — and
+# scripts/check/pam.sh enforces both directions: our copy matches this snapshot
+# modulo that one token, and (where a live system-auth exists) the snapshot
+# matches the running pambase, so a pambase update turns the gate red instead of
+# silently diverging.
+#
+# REFRESH PROCEDURE — when check.sh --pam goes red on the live hash:
+#   1. Diff the live /etc/pam.d/system-auth auth section against this fixture.
+#   2. Port every upstream change into BOTH this fixture AND the copied block in
+#      rootfs/etc/pam.d/polkit-1 (keeping the conv_err=die delta on pam_unix).
+#   3. Update the full-file sha256 and package version in this header.
+#   4. Re-run `scripts/check.sh --pam`, then re-run the characterization battery
+#      on the fp VM (devtools/usr/local/bin/w-auth-cancel-probe; see
+#      quickshell-auth.md) — the cancel/wrong-password/lockout branches must all
+#      behave exactly as documented there.
+auth       required                    pam_faillock.so      preauth
+-auth      [success=2 default=ignore]  pam_systemd_home.so
+auth       [success=1 default=bad]     pam_unix.so          try_first_pass nullok
+auth       [default=die]               pam_faillock.so      authfail
+auth       optional                    pam_permit.so
+auth       required                    pam_env.so
+auth       required                    pam_faillock.so      authsucc

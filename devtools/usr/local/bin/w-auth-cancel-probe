@@ -1,0 +1,505 @@
+#!/usr/bin/env python3
+# w-auth-cancel-probe — characterization harness for "card cancel tallies a
+# faillock attempt" (quickshell-auth.md, the open "⏳" section). Dev-only tool
+# in devtools/: it MEASURES, it never ships and never fixes anything.
+#
+#   trigger — inside the graphical session, spawned by `series` through
+#             `hyprctl dispatch hl.dsp.exec_cmd(...)`. A ONE-SHOT second
+#             client on $XDG_RUNTIME_DIR/w/authd.sock: the daemon re-sends
+#             `begin` of the active prompt to every new client, so the probe
+#             sees the card open without owning it, performs the mode-specific
+#             choreography and exits at once (a lingering socket client
+#             receives every later begin and poisons measurements).
+#   series  — as root over SSH: N cycles of one mode; per cycle faillock
+#             --reset, guards (no helper processes, reader free, /run/w/fp
+#             clean), in-session trigger, helper-lifetime sampling, journal
+#             slice, tally count → one JSONL row.
+#   report  — measurement table over one or more JSONL files.
+#
+# Modes (what the user-visible cancel is performed ON):
+#   fp      — cancel `--delay` ms after `begin` (fp stage; delay 0 races the
+#             helper's own startup: systemd accept, read_cookie, pam_start)
+#   fpwait  — let pam_fprintd run out its timeout naturally, cancel 1 s after
+#             the password `request` (password stage, no skipfp involved)
+#   skipfp  — send `skipfp` on begin, cancel 1 s after the `request` (password
+#             stage via "Use password"; TWO abandoned sessions per cycle)
+#   nofp    — series pre-sets /run/w/fp/fp-skip-<uid>, so PAM never enters
+#             pam_fprintd; delay 0 = cancel at once, else 1 s after `request`
+#   gcr     — ssh to the VM sshd with a locked ~/.ssh key (the gcr agent
+#             auto-loads it and prompts on the sign request), cancel 1 s after
+#             `begin` (control:
+#             gcr prompts run no PAM, must never tally)
+#
+# Helper discovery is a /proc comm scan ("polkit-agent-he" — comm is cut at
+# 15 chars by the kernel), NOT pgrep -f: a -f pattern can self-match the ssh
+# command line and kill the whole session (a landmine already stepped on).
+#
+# Exit codes: 0 ok · 1 hard error.
+
+import argparse
+import glob
+import json
+import os
+import pwd
+import re
+import shlex
+import socket
+import subprocess
+import sys
+import time
+
+PROBE = "/usr/local/bin/w-auth-cancel-probe"
+USER = "w"
+UID_W = 1000
+BASE = "/tmp/w-probe"
+HELPER_COMM = "polkit-agent-he"  # /proc/<pid>/comm, 15-char kernel limit
+TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
+JOURNAL_RE = re.compile(
+    r"polkit-agent-helper|polkit-1|polkitd|fprintd|Fingerprint|pkexec|gcr|ssh-add")
+FPRINT_DEV = ("net.reactivated.Fprint", "/net/reactivated/Fprint/Device/0",
+              "net.reactivated.Fprint.Device", "finger-needed")
+DRIVER_DEADLINE = {"fpwait": 170.0}  # seconds to wait for the out file; default 60
+
+
+def sh(cmd, timeout=90):
+    return subprocess.run(cmd, capture_output=True, text=True,
+                          cwd="/tmp", timeout=timeout, check=False)
+
+
+def helpers_alive():
+    pids = []
+    for d in glob.glob("/proc/[0-9]*"):
+        try:
+            with open(os.path.join(d, "comm")) as f:
+                if f.read().strip() != HELPER_COMM:
+                    continue
+            pids.append(int(d.rsplit("/", 1)[1]))
+        except OSError:
+            continue
+    return sorted(pids)
+
+
+def sigign_of(pid):
+    try:
+        with open(f"/proc/{pid}/status") as f:
+            for line in f:
+                if line.startswith("SigIgn:"):
+                    return line.split()[1]
+    except OSError:
+        pass
+    return None
+
+
+def finger_needed():
+    r = sh(["busctl", "get-property", *FPRINT_DEV], timeout=15)
+    return "b true" in r.stdout
+
+
+def flag_path():
+    return f"/run/w/fp/fp-skip-{UID_W}"
+
+
+def flag_set(on):
+    verb = "touch" if on else "rm"
+    args = ["-f"] if not on else []
+    sh(["runuser", "-u", USER, "--", verb, *args, flag_path()])
+    return os.path.exists(flag_path()) == on
+
+
+def tally_lines():
+    r = sh(["faillock", "--user", USER])
+    return [ln for ln in r.stdout.splitlines() if TS_RE.match(ln.strip())]
+
+
+def hypr_exec(cmd):
+    sig = os.listdir(f"/run/user/{UID_W}/hypr")[0]
+    r = sh(["runuser", "-u", USER, "--", "env",
+            f"XDG_RUNTIME_DIR=/run/user/{UID_W}",
+            f"HYPRLAND_INSTANCE_SIGNATURE={sig}",
+            "hyprctl", "dispatch", f"hl.dsp.exec_cmd('{cmd}')"])
+    return r.returncode == 0 and "ok" in (r.stdout or "")
+
+
+# ── trigger: the in-session one-shot probe client ─────────────────────────────
+
+def do_trigger(args):
+    if args.mode == "pw" and not args.password:
+        print("pw mode needs --password", file=sys.stderr)
+        return 1
+    t0 = time.monotonic()
+    events = []
+
+    def log(name, **kw):
+        events.append({"t": round((time.monotonic() - t0) * 1000, 1),
+                       "ev": name, **kw})
+
+    base = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(os.path.join(base, "w", "authd.sock"))
+    sock.settimeout(0.05)
+    log("connected")
+
+    if args.mode == "gcr":
+        # The gcr flow: the agent auto-loads keys from ~/.ssh and only prompts
+        # (through the SystemPrompter → the card) when an ssh SIGN request
+        # arrives for a locked one. ssh-add is useless here — it reads the
+        # passphrase itself, before the agent is ever involved. So the caller
+        # is an ssh to the VM's own sshd, which challenges the probe key.
+        name = pwd.getpwuid(os.getuid()).pw_name
+        cmd = ["ssh", "-o", "StrictHostKeyChecking=no",
+               "-o", "UserKnownHostsFile=/dev/null",
+               "-o", "PasswordAuthentication=no",
+               "-o", "KbdInteractiveAuthentication=no",
+               "-o", "BatchMode=no", f"{name}@127.0.0.1", "true"]
+    else:
+        cmd = ["pkexec", "/usr/bin/true"]
+    child = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.PIPE, text=True)
+    log("child", pid=child.pid)
+
+    def send(obj):
+        sock.sendall((json.dumps(obj) + "\n").encode())
+
+    overall = {"fpwait": 150.0, "gcr": 20.0, "pw": 30.0}.get(args.mode, 35.0)
+    request_by = {"fpwait": 125.0, "skipfp": 15.0, "nofp": 15.0,
+                  "pw": 15.0}.get(args.mode)
+    pw_sent = 0
+    buf = b""
+    begin_id = None
+    begin_fp = None
+    cancel_at = None
+    skipfp_at = None
+    ended = False
+
+    while True:
+        now = time.monotonic()
+        if skipfp_at is not None and now >= skipfp_at:
+            skipfp_at = None
+            send({"type": "skipfp", "id": begin_id})
+            log("skipfp_sent", id=begin_id)
+        if cancel_at is not None and now >= cancel_at:
+            cancel_at = None
+            send({"type": "cancel", "id": begin_id})
+            log("cancel_sent", id=begin_id)
+        if (request_by is not None and begin_id is not None and cancel_at is None
+                and now - t0 > request_by):
+            # the password request never came — cancel anyway and say so
+            send({"type": "cancel", "id": begin_id})
+            log("cancel_sent_no_request", id=begin_id)
+            request_by = None
+        if begin_id is None and child.poll() is not None:
+            log("no_begin_child_exit", rc=child.returncode)
+            break
+        if ended:
+            break
+        if now - t0 > overall:
+            # never leave the card open behind us
+            if begin_id is not None and not ended:
+                try:
+                    send({"type": "cancel", "id": begin_id})
+                    log("cancel_sent_overall_timeout", id=begin_id)
+                except OSError:
+                    pass
+            log("overall_timeout")
+            break
+        try:
+            chunk = sock.recv(4096)
+        except TimeoutError:
+            continue
+        if not chunk:
+            log("socket_eof")
+            break
+        buf += chunk
+        while b"\n" in buf:
+            line, buf = buf.split(b"\n", 1)
+            if not line.strip():
+                continue
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            mtype = msg.get("type")
+            if mtype == "begin":
+                begin_id = msg.get("id")
+                begin_fp = msg.get("fp")
+                log("begin", id=begin_id, fp=begin_fp, kind=msg.get("kind"),
+                    user=msg.get("user"))
+                if args.mode == "fp" and args.delay <= 0:
+                    send({"type": "cancel", "id": begin_id})
+                    log("cancel_sent", id=begin_id)
+                elif args.mode == "fp":
+                    cancel_at = time.monotonic() + args.delay / 1000.0
+                elif args.mode == "gcr":
+                    cancel_at = time.monotonic() + 1.0
+                elif args.mode == "skipfp" and args.delay <= 0:
+                    send({"type": "skipfp", "id": begin_id})
+                    log("skipfp_sent", id=begin_id)
+                elif args.mode == "skipfp":
+                    # paced variant: let helper #1 get deep into pam_fprintd
+                    # first, so the abort path is what ends it
+                    skipfp_at = time.monotonic() + args.delay / 1000.0
+                elif args.mode == "nofp" and args.delay <= 0:
+                    send({"type": "cancel", "id": begin_id})
+                    log("cancel_sent", id=begin_id)
+            elif mtype == "request":
+                log("request", id=msg.get("id"), prompt=msg.get("prompt"))
+                if args.mode == "pw":
+                    # answer requests with the password; optionally stop
+                    # answering after N submissions and cancel instead —
+                    # that combination measures "wrong password tallies,
+                    # the following cancel does not" in one cycle
+                    if args.cancel_after is not None and pw_sent >= args.cancel_after:
+                        send({"type": "cancel", "id": begin_id})
+                        log("cancel_sent_after_pw", id=begin_id, pw_sent=pw_sent)
+                    else:
+                        pw_sent += 1
+                        send({"type": "response", "id": begin_id,
+                              "password": args.password})
+                        log("pw_sent", n=pw_sent)
+                elif args.mode in ("fpwait", "skipfp", "nofp") and cancel_at is None:
+                    cancel_at = time.monotonic() + 1.0
+            elif mtype == "info":
+                log("info", text=msg.get("text"))
+            elif mtype == "error":
+                log("error", text=msg.get("text"))
+            elif mtype == "end":
+                log("end", id=msg.get("id"), result=msg.get("result"))
+                ended = True
+                break
+
+    try:
+        _out, err = child.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        _out, err = child.communicate()
+        log("child_killed")
+    log("child_exit", rc=child.returncode, err=(err or "").strip()[-300:])
+    sock.close()
+
+    with open(args.out, "w") as f:
+        json.dump({"mode": args.mode, "delay": args.delay,
+                   "wall0": time.time() - (time.monotonic() - t0),
+                   "begin_fp": begin_fp, "ended": ended, "events": events}, f)
+    return 0
+
+
+# ── series: the root-side cycle driver ────────────────────────────────────────
+
+def ensure_gcr_key():
+    """Passphrase key in ~/.ssh + its pubkey in authorized_keys.
+
+    The gcr agent auto-loads ~/.ssh keys and prompts on the first sign request;
+    the VM's sshd must accept the key so the challenge (and thus the sign
+    request) actually happens.
+    """
+    home = f"/home/{USER}"
+    key = f"{home}/.ssh/w-probe-key"
+    if not os.path.exists(key):
+        sh(["runuser", "-u", USER, "--", "env", f"HOME={home}",
+            "ssh-keygen", "-t", "ed25519", "-N", "w-probe-pass",
+            "-f", key, "-q"])
+        sh(["runuser", "-u", USER, "--", "env", f"HOME={home}",
+            "bash", "-c",
+            (f"cat {key}.pub >> {home}/.ssh/authorized_keys && "
+             f"chmod 600 {home}/.ssh/authorized_keys")])
+    return key
+
+
+def run_cycle(mode, delay, i, tag, reset=True, key="", cancel_after=None):
+    cyc = {"tag": tag, "i": i, "mode": mode, "delay": delay,
+           "anomalies": []}
+    if reset:
+        sh(["faillock", "--user", USER, "--reset"])
+        cyc["tally_before"] = 0
+    else:
+        # lockout probe: let entries accumulate toward deny=3
+        cyc["tally_before"] = len(tally_lines())
+    if helpers_alive():
+        # wait them out: a live abandoned helper holds the reader and turns the
+        # next begin into a password card
+        t0 = time.monotonic()
+        while helpers_alive() and time.monotonic() - t0 < 60:
+            time.sleep(0.3)
+        if helpers_alive():
+            cyc["anomalies"].append("helpers_alive_at_start")
+    if finger_needed():
+        t0 = time.monotonic()
+        while finger_needed() and time.monotonic() - t0 < 20:
+            time.sleep(0.3)
+        cyc["reader_free_start"] = not finger_needed()
+    else:
+        cyc["reader_free_start"] = True
+    if not flag_set(False):
+        cyc["anomalies"].append("flag_cleanup_failed")
+    if mode in ("nofp", "pw"):
+        # pw mode presets the skip flag too: it makes the password request
+        # deterministic and fast (pam_fprintd would otherwise eat its 30 s
+        # timeout first), while exercising the very same password chain.
+        flag_set(True)
+
+    start = time.time()
+    cyc["start_wall"] = round(start, 3)
+    out = f"{BASE}/{tag}-{i:02d}.json"
+    if os.path.exists(out):
+        os.unlink(out)
+    cmd = f"{PROBE} trigger --mode {mode} --delay {delay} --out {out}"
+    if mode == "pw":
+        cmd += f" --password {shlex.quote(key)}"
+        if cancel_after is not None:
+            cmd += f" --cancel-after {cancel_after}"
+    cyc["dispatch_ok"] = hypr_exec(cmd)
+
+    # wait for the driver result, sampling helper pids on the same clock
+    samples = []
+    deadline = time.monotonic() + DRIVER_DEADLINE.get(mode, 60.0)
+    drv = None
+    while time.monotonic() < deadline:
+        samples.append({"t": round(time.time(), 3), "pids": helpers_alive()})
+        if os.path.exists(out):
+            try:
+                with open(out) as f:
+                    drv = json.load(f)
+            except ValueError:
+                drv = None
+        if drv:
+            break
+        time.sleep(0.25)
+    # tail: follow the abandoned helper until it dies (or 45 s)
+    tail0 = time.monotonic()
+    while helpers_alive() and time.monotonic() - tail0 < 45:
+        samples.append({"t": round(time.time(), 3), "pids": helpers_alive()})
+        time.sleep(0.15)
+    samples.append({"t": round(time.time(), 3), "pids": helpers_alive()})
+    seen = [s for s in samples if s["pids"]]
+    cyc["helper_first_ms"] = (round((seen[0]["t"] - start) * 1000)
+                              if seen else None)
+    cyc["helper_last_ms"] = (round((seen[-1]["t"] - start) * 1000)
+                             if seen else None)
+    if seen:
+        cyc["helper_sigign"] = sigign_of(seen[-1]["pids"][0])
+    cyc["helper_alive_end"] = bool(helpers_alive())
+    cyc["driver"] = drv
+    if drv is None:
+        cyc["anomalies"].append("no_driver_result")
+
+    r = subprocess.run(["journalctl", "--since", f"@{start:.6f}",
+                        "-o", "short-precise", "--no-pager", "-q"],
+                       capture_output=True, text=True, check=False)
+    jlines = [ln for ln in r.stdout.splitlines() if JOURNAL_RE.search(ln)]
+    with open(f"{BASE}/{tag}-{i:02d}.journal", "w") as f:
+        f.write("\n".join(jlines) + "\n")
+    cyc["pam_lines"] = [ln for ln in jlines if " pam_" in ln or ln.startswith("pam_")]
+    cyc["helper_unit_lines"] = [ln for ln in jlines if "polkit-agent-helper@" in ln]
+    cyc["conv_fail"] = any("conversation failed" in ln for ln in jlines)
+
+    cyc["tally"] = tally_lines()
+    cyc["finger_after"] = finger_needed()
+    if mode in ("nofp", "pw"):
+        flag_set(False)
+    return cyc
+
+
+def do_series(args):
+    os.makedirs(BASE, exist_ok=True)
+    os.chmod(BASE, 0o777)
+    if args.mode == "gcr":
+        ensure_gcr_key()
+    if args.mode == "pw" and not args.password:
+        print("pw mode needs --password", file=sys.stderr)
+        return 1
+    path = f"{BASE}/{args.tag}.jsonl"
+    for i in range(1, args.n + 1):
+        cyc = run_cycle(args.mode, args.delay, i, args.tag,
+                        reset=not args.no_reset, key=args.password,
+                        cancel_after=args.cancel_after)
+        with open(path, "a") as f:
+            f.write(json.dumps(cyc) + "\n")
+        drv = cyc.get("driver") or {}
+        cancel = next((e for e in drv.get("events", [])
+                       if e["ev"].startswith("cancel_sent")), None)
+        cancel_note = f"@{cancel['t']}ms" if cancel else "NONE"
+        print(f"[{args.tag}] cycle {i}/{args.n}: "
+              f"begin_fp={drv.get('begin_fp')} "
+              f"cancel={cancel_note} "
+              f"tally={len(cyc['tally'])} conv_fail={cyc['conv_fail']} "
+              f"helper={cyc['helper_first_ms']}..{cyc['helper_last_ms']}ms "
+              f"alive_end={cyc['helper_alive_end']} "
+              f"anomalies={cyc['anomalies'] or '-'}", flush=True)
+        time.sleep(1.0)
+    return 0
+
+
+# ── report ────────────────────────────────────────────────────────────────────
+
+def do_report(args):
+    rows = []
+    for tag in args.tags:
+        try:
+            with open(f"{BASE}/{tag}.jsonl") as f:
+                rows += [json.loads(ln) for ln in f if ln.strip()]
+        except FileNotFoundError:
+            print(f"!! no such series: {tag}", file=sys.stderr)
+    for r in sorted(rows, key=lambda x: (x["tag"], x["i"])):
+        drv = r.get("driver") or {}
+        evs = drv.get("events", [])
+        cancel = next((e for e in evs if e["ev"].startswith("cancel_sent")), None)
+        req = next((e for e in evs if e["ev"] == "request"), None)
+        cancel_wall = drv.get("wall0", 0) + cancel["t"] / 1000.0 if cancel else None
+        after_cancel = None
+        if cancel_wall and r.get("helper_last_ms") is not None:
+            after_cancel = round(
+                (r["start_wall"] + r["helper_last_ms"] / 1000.0 - cancel_wall)
+                * 1000)
+        after_note = f"{after_cancel}ms" if after_cancel is not None else "-"
+        tally_at = [ln.split()[0] + " " + ln.split()[1] for ln in r.get("tally", [])]
+        print(f"{r['tag']:12} #{r['i']} {r['mode']:6} d={r['delay']:<5} "
+              f"fp={str(drv.get('begin_fp'))[:5]:5} "
+              f"req={'Y' if req else 'N'} "
+              f"tally={len(r.get('tally', []))} "
+              f"conv_fail={'Y' if r.get('conv_fail') else 'N'} "
+              f"helper_last_after_cancel={after_note} "
+              f"alive_end={r.get('helper_alive_end')}")
+        if tally_at:
+            print(f"{'':14} tally_at={tally_at} sigign={r.get('helper_sigign')}")
+    return 0
+
+
+def main():
+    p = argparse.ArgumentParser(
+        description="characterization harness for the faillock-on-cancel bug")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    t = sub.add_parser("trigger", help="in-session one-shot probe (internal)")
+    t.add_argument("--mode", required=True,
+                   choices=["fp", "fpwait", "skipfp", "nofp", "pw", "gcr"])
+    t.add_argument("--delay", type=int, default=0, help="ms before cancel (fp/nofp)")
+    t.add_argument("--out", required=True)
+    t.add_argument("--password", default="", help="pw mode: the password to submit")
+    t.add_argument("--cancel-after", type=int, default=None,
+                   help="pw mode: cancel instead of answering request N+1")
+    t.set_defaults(fn=do_trigger)
+
+    s = sub.add_parser("series", help="run N cycles of one mode (root)")
+    s.add_argument("--mode", required=True,
+                   choices=["fp", "fpwait", "skipfp", "nofp", "pw", "gcr"])
+    s.add_argument("--delay", type=int, default=0)
+    s.add_argument("--n", type=int, default=5)
+    s.add_argument("--tag", required=True)
+    s.add_argument("--password", default="", help="pw mode: passed to trigger")
+    s.add_argument("--cancel-after", type=int, default=None,
+                   help="pw mode: passed to trigger")
+    s.add_argument("--no-reset", action="store_true",
+                   help="keep tallies across cycles (lockout probe)")
+    s.set_defaults(fn=do_series)
+
+    r = sub.add_parser("report", help="table over JSONL series")
+    r.add_argument("--tags", nargs="+", required=True)
+    r.set_defaults(fn=do_report)
+
+    args = p.parse_args()
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
