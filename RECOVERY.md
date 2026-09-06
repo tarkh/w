@@ -1,5 +1,10 @@
 # Recovery — when W will not boot, or boots wrong
 
+**English** · [Русский](https://github.com/tarkh/w/blob/main/docs/ru/RECOVERY.md)
+— on the machine itself, `/usr/share/doc/w/RECOVERY.ru.md`. The links here are
+absolute because this page also ships offline, where a relative one would lead
+nowhere.
+
 W takes a filesystem snapshot before every package transaction and before every
 `w-sync update`, and it keeps one permanent snapshot, `W initial state`, from the
 day the machine was installed. Those snapshots are bootable. This page is how you

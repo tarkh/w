@@ -1,5 +1,9 @@
 # W Linux
 
+![W Linux — the default wallpaper of theme `w`](rootfs/etc/w/themes/w/wallpaper/wallpaper-1920x1080.webp)
+
+**English** · [Русский](docs/ru/README.md)
+
 **W** is a personal Arch Linux distribution: a reproducible install of Arch with a
 fixed configuration and a curated set of software, driven by a TUI installer.
 Every install pulls fresh packages, but the configuration it lands on is always

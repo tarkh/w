@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# w-fingerprint — W Linux fingerprint enrollment and management.
+#
+# The fprintd clients are deliberately kept behind this CLI: it gives people and
+# the Hub one stable interface, validates finger names before touching the reader,
+# and turns fprintd-enroll's English diagnostic stream into small machine events.
+#
+# All operations concern the invoking account. fprintd's own policy permits an
+# active user to manage their prints but keeps another user's prints out of scope.
+#
+# `enroll` streams one `event=<name>` line per state change, plus a `reason=` line
+# under the two that carry one. It always yields EXACTLY ONE terminal verdict —
+# complete, error or cancelled — so a UI reading the stream can never be left
+# waiting: ready · stage · retry+reason · complete · done (clean exit, after
+# complete) · error+reason (busy | unavailable | failed | an fprintd enroll-*
+# verdict such as enroll-duplicate) · cancelled (SIGTERM, exit 130).
+
+set -euo pipefail
+
+FPRINTD_LIST="${W_FPRINT_LIST:-/usr/bin/fprintd-list}"
+FPRINTD_ENROLL="${W_FPRINT_ENROLL:-/usr/bin/fprintd-enroll}"
+FPRINTD_DELETE="${W_FPRINT_DELETE:-/usr/bin/fprintd-delete}"
+
+FINGERS=(
+  left-thumb left-index-finger left-middle-finger left-ring-finger left-little-finger
+  right-thumb right-index-finger right-middle-finger right-ring-finger right-little-finger
+)
+
+err() { echo "w-fingerprint: $*" >&2; }
+
+usage() {
+  cat <<EOF
+Usage: w-fingerprint <command> [args]
+
+Info: Enrol, list and delete the fingerprints of the current user.
+
+Commands:
+  status [--porcelain]  Show reader availability and all ten finger slots
+  enroll <finger>       Enroll one finger; emits event=<name> lines while running
+  delete <finger>       Delete one enrolled finger
+  fingers               List accepted finger names
+  help                  Show this help
+
+Exit codes: 0 success · 1 runtime error · 2 usage
+EOF
+}
+
+valid_finger() {
+  local finger="$1" known
+  for known in "${FINGERS[@]}"; do [[ "$known" == "$finger" ]] && return 0; done
+  return 1
+}
+
+need_finger() {
+  local finger="${1:-}"
+  [[ -n "$finger" ]] || { err "finger required (see: w-fingerprint fingers)"; exit 2; }
+  valid_finger "$finger" || { err "invalid finger: $finger"; exit 2; }
+  printf '%s\n' "$finger"
+}
+
+# fprintd-list distinguishes a real empty fingerprint store from no reader in its
+# output, but returns non-zero for the former. Keep its locale fixed: parsing UI
+# state must not depend on the desktop language.
+reader_status() { # prints fprintd-list output; returns its exit code
+  LC_ALL=C "$FPRINTD_LIST" "$(id -un)" 2>&1
+}
+
+cmd_status() {
+  local porcelain="${1:-}" out finger
+  [[ -z "$porcelain" || "$porcelain" == "--porcelain" ]] || {
+    err "status: expected --porcelain"; exit 2;
+  }
+
+  out="$(reader_status)" || true
+  # "Available" means "this account can manage prints here", not "a device exists".
+  # fprintd gates the listing on polkit's allow_active, so a reader physically present
+  # but reached from outside an active session is correctly unavailable — enrolling
+  # would be denied too. The two cases are still told apart, because "no device" and
+  # "not authorized" send a person looking in completely different places.
+  local available=no reason=no-device
+  if [[ "$out" == *"User "*" has no fingers enrolled"* || "$out" == *"Fingerprints for user "* ]]; then
+    available=yes; reason=""
+  elif [[ "$out" == *"PermissionDenied"* || "$out" == *"Not Authorized"* ]]; then
+    reason=unauthorized
+  fi
+
+  if [[ "$porcelain" == "--porcelain" ]]; then
+    echo "available=$available"
+    [[ -n "$reason" ]] && echo "reason=$reason"
+    for finger in "${FINGERS[@]}"; do
+      if [[ "$out" == *": $finger"* ]]; then echo "finger.$finger=enrolled"
+      else echo "finger.$finger=empty"; fi
+    done
+    return 0
+  fi
+
+  if [[ "$available" == no ]]; then
+    if [[ "$reason" == unauthorized ]]; then
+      echo "Fingerprint reader: unavailable (not authorized — fprintd only answers an active session)"
+    else
+      echo "Fingerprint reader: unavailable (no device)"
+    fi
+    [[ -n "$out" ]] && printf '  %s\n' "$out"
+    return 0
+  fi
+
+  echo "Fingerprint reader: available"
+  for finger in "${FINGERS[@]}"; do
+    if [[ "$out" == *": $finger"* ]]; then printf '  %-20s enrolled\n' "$finger"
+    else printf '  %-20s empty\n' "$finger"; fi
+  done
+  # A populated reader must be usable even though fprintd-list's no-print path is
+  # non-zero. Any other non-zero is represented as unavailable above.
+  return 0
+}
+
+# Set once a terminal event has been emitted, so the exit-code fallback below does
+# not append a second, vaguer one on top of a diagnosis fprintd already gave.
+SAW_TERMINAL=0
+
+emit_error() { # <reason>
+  echo "event=error"
+  echo "reason=$1"
+  SAW_TERMINAL=1
+}
+
+emit_enroll_line() { # <fprintd line>
+  case "$1" in
+    "Enroll result: enroll-stage-passed") echo "event=stage" ;;
+    "Enroll result: enroll-completed")    echo "event=complete"; SAW_TERMINAL=1 ;;
+    "Enroll result: enroll-retry-"*)
+      echo "event=retry"
+      echo "reason=${1#Enroll result: }"
+      ;;
+    # Every other enroll result is a failure verdict, and its own name is the most
+    # precise reason we will get (enroll-duplicate, enroll-disconnected, …) — the
+    # Hub shows a known one by name and falls back to the raw token otherwise.
+    "Enroll result: "*) emit_error "${1#Enroll result: }" ;;
+    "Enrolling "*) echo "event=ready" ;;
+    *"failed to claim device"*|*"AlreadyInUse"*) emit_error busy ;;
+    *"No devices available"*|*"NoSuchDevice"*)   emit_error unavailable ;;
+  esac
+}
+
+cmd_enroll() {
+  local finger child_pid child_fd line rc=0 work fifo
+  finger="$(need_finger "${1:-}")"
+  (($# == 1)) || { err "enroll: expected one finger"; exit 2; }
+
+  # A FIFO keeps the output FD valid even when a very fast fprintd-enroll exits
+  # before the reader finishes draining it. Bash's coproc array is unset at that
+  # point, losing later status lines precisely when the enrolment succeeded.
+  work="$(mktemp -d "${W_FPRINT_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-/tmp}}/w-fingerprint.XXXXXX")"
+  fifo="$work/events"
+  mkfifo "$fifo"
+  # exec makes child_pid the real fprintd-enroll process. Therefore SIGTERM from a
+  # Hub Cancel also closes fprintd's client connection and releases the reader.
+  env LC_ALL=C "$FPRINTD_ENROLL" -f "$finger" "$(id -un)" > "$fifo" 2>&1 &
+  child_pid=$!
+  exec {child_fd}< "$fifo"
+  trap 'kill -TERM "$child_pid" 2>/dev/null || true; wait "$child_pid" 2>/dev/null || true; exec {child_fd}<&-; rm -rf "$work"; echo "event=cancelled"; exit 130' TERM INT
+
+  while IFS= read -r -u "$child_fd" line; do
+    emit_enroll_line "$line"
+  done
+  exec {child_fd}<&-
+  wait "$child_pid" || rc=$?
+  rm -rf "$work"
+  trap - TERM INT
+
+  if (( rc == 0 )); then
+    echo "event=done"
+    return 0
+  fi
+  # A non-zero exit whose cause never reached stdout in a recognisable form: the
+  # stream still has to end in exactly one terminal event, or the Hub would sit on
+  # "enrolling…" forever.
+  (( SAW_TERMINAL )) || emit_error failed
+  return "$rc"
+}
+
+cmd_delete() {
+  local finger
+  finger="$(need_finger "${1:-}")"
+  (($# == 1)) || { err "delete: expected one finger"; exit 2; }
+  LC_ALL=C "$FPRINTD_DELETE" "$(id -un)" -f "$finger"
+}
+
+case "${1:-}" in
+  status)  shift; cmd_status "$@" ;;
+  enroll)  shift; cmd_enroll "$@" ;;
+  delete)  shift; cmd_delete "$@" ;;
+  fingers) printf '%s\n' "${FINGERS[@]}" ;;
+  help|-h|--help) usage ;;
+  "") usage; exit 2 ;;
+  *) err "unknown command: $1"; usage; exit 2 ;;
+esac

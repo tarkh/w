@@ -8,6 +8,37 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.6.0
+
+- **Fingerprints can be enrolled from the desktop.** Until now the authentication
+  card and the lock screen could only use a finger enrolled by typing
+  `fprintd-enroll` into a terminal. **Hub → Input → Fingerprint** now lists all ten
+  slots and adds or removes any of them. There is a CLI behind it — `w-fingerprint`
+  (`status`, `enroll <finger>`, `delete <finger>`, `fingers`) — and it is the only
+  supported way to talk to the reader; the Hub calls nothing else. Neither needs root
+  or a password prompt: fprintd lets you manage your own prints. The tab appears only
+  on a machine that has a reader. One thing that surprises people: fprintd answers an
+  active desktop session only, so `w-fingerprint status` over SSH reports the reader
+  as unavailable (`reason=unauthorized`) while it sits right there — run it from your
+  session. The on-box assistant knows the command too.
+
+- **Two 12-hour clock formats in the bar.** The clock cycles through its formats when
+  clicked; `hh:mm A` and `hh:mm:ss A` now sit beside `HH:mm` and `HH:mm:ss`. This is a
+  default, and `bar.json` is yours once it exists, so the new presets reach new
+  installs and newly created accounts only. To take them on a machine you already run
+  — this discards your own bar settings:
+
+  ```
+  w-reset quickshell config/bar.json
+  ```
+
+- **Russian documentation.** README, SECURITY, CONTRIBUTING and RECOVERY now have
+  Russian versions under `docs/ru/`, with a language line under the heading of every
+  page. English stays the default. RECOVERY is the page that also ships to disk —
+  whoever reads it is offline by definition — so an installed machine now carries
+  both `/usr/share/doc/w/RECOVERY.md` and `/usr/share/doc/w/RECOVERY.ru.md`, and the
+  on-box assistant points a Russian-speaking user at the second one.
+
 ## v0.5.1
 
 - **Cancelling an authentication prompt no longer counts against you.** Dismissing the

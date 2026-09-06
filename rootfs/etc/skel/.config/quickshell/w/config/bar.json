@@ -94,7 +94,9 @@
       { "type": "clock", "id": "clock", "enabled": true, "settings": {
         "format": [
           "HH:mm",
-          "HH:mm:ss"
+          "HH:mm:ss",
+          "hh:mm A",
+          "hh:mm:ss A"
         ],
         "showIcon": true,
         "icon": "",

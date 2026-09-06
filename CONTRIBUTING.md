@@ -1,5 +1,7 @@
 # Contributing to W Linux
 
+**English** · [Русский](docs/ru/CONTRIBUTING.md)
+
 Thanks for looking. Bug reports, questions and patches are all welcome.
 
 Before anything else, one thing about this repository is unusual and worth two

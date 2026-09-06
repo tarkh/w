@@ -16,7 +16,7 @@ sources:
   - path: .claude/library/update-system.md
     sha256: abcb62f7c888b819407672b86f94795cbd1b716c26ca6c25998d7db240399a50
   - path: .claude/library/w-rollback.md
-    sha256: 95fe918c6339f5e6aa423b77857f702c0ceb21783b059c4c4bbf78bdebd7ab73
+    sha256: 544b0784484d83d091b2b9115deee05b4d4854db3e852048a7dc6d100716e6cb
 tools:
   - w_snapshot_list
   - w_snapshot_rollback_plan
@@ -393,7 +393,8 @@ existed. Starting a conversation the user finishes is the honest shape here.
 
 If the machine no longer boots at all, none of this reaches it: the snapshot is chosen
 in the boot menu first, and the whole procedure — including the live-USB case — is in
-`/usr/share/doc/w/RECOVERY.md`.
+`/usr/share/doc/w/RECOVERY.md`, with a Russian translation of the same page beside it
+at `/usr/share/doc/w/RECOVERY.ru.md`. Point a Russian-speaking user at that one.
 
 ## Rules of engagement
 

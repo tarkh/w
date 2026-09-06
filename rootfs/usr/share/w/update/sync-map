@@ -37,6 +37,10 @@ scripts/packs/*.md		--packs
 
 # ── skip: no effect on an already-installed target ──────────────────────────────
 .claude/*			--skip
+# .agents/skills is a symlink into .claude/skills (the universal-skills entry point
+# some agent hosts look for). Unlisted it falls through to the catch-all, and a
+# library edit would force a full apply on every edge machine.
+.agents/*			--skip
 vm/*				--skip
 archiso/*			--skip
 docs/*				--skip

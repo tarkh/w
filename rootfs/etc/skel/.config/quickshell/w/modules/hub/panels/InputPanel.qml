@@ -20,9 +20,18 @@
 // runs `w-pointer detect` once when the segment is first opened without one, and hides
 // those three rows while the name is still unknown.
 //
+// Fingerprint segment: the ten fprintd finger slots, one plain Hub row each, over
+// `w-fingerprint`. Like Touchpad it is a CONDITIONAL segment — it exists only while
+// `status --porcelain` says a reader is available, and disappears again if the reader
+// does. The panel never talks to fprintd or D-Bus itself: the CLI is the single
+// integration point, and its normalized `event=` stream is what the enrolment view
+// renders (event-driven, with no invented percentage — fprintd promises no fixed
+// number of stages per device).
+//
 // Neither backend is privileged — the Hyprland session is the user's own, so there is
 // no polkit anywhere here. (The system language / locale lives in the System panel: it
-// is system-wide and relogin-gated.)
+// is system-wide and relogin-gated.) Fingerprints are the user's own too: fprintd lets
+// an active user manage their prints, and only someone else's are out of scope.
 //
 // Loaded by the Hub via HubRegistry (Loader{source:"panels/InputPanel.qml"}); as a
 // subdir file it is not a module type, so the shared hub components come in through
@@ -49,7 +58,7 @@ Item {
     component Pill: WPill { borderWidth: HubConfig.border }
 
     // ── Backing state ────────────────────────────────────────────────────────────
-    property string scope: "keyboard"          // keyboard | mouse | touchpad
+    property string scope: "keyboard"          // keyboard | mouse | touchpad | fingerprint
 
     // Keyboard ring (authoritative: w-keyboard status)
     property var    codes: []                  // ordered layout codes, e.g. ["us","ru"]
@@ -70,6 +79,20 @@ Item {
     readonly property bool padsKnown: root.touchpadDevices.length > 0
     function pv(key, fallback) { const v = root.ptr[key]; return v === undefined ? fallback : v; }
     function pnum(key, fallback) { const v = parseFloat(root.pv(key, "")); return isNaN(v) ? fallback : v; }
+
+    // Fingerprint (authoritative: w-fingerprint status --porcelain). The order is
+    // fprintd's own finger names, which are also the `enroll`/`delete` arguments and
+    // the i18n key suffixes — one list, no translation table.
+    readonly property var fingers: [
+        "left-thumb", "left-index-finger", "left-middle-finger", "left-ring-finger", "left-little-finger",
+        "right-thumb", "right-index-finger", "right-middle-finger", "right-ring-finger", "right-little-finger"
+    ]
+    property bool fpAvailable: false
+    property var  fpState: ({})                // finger → "enrolled" | "empty"
+    property string fpEnrolling: ""            // non-empty → the enrolment view is up
+    property string fpStatusText: ""           // live line under the enrolling finger
+    property string fpNotice: ""               // why the last attempt ended badly
+    function fpEnrolled(finger) { return root.fpState[finger] === "enrolled"; }
 
     // Display order is alphabetical and STABLE across a default change — `codes[0]`
     // (the ring order w-keyboard persists) still names the default, but its row doesn't
@@ -201,10 +224,52 @@ Item {
     property int scopeIdx: 0
     property string focusKey: ""
 
-    readonly property var scopes: root.touchpadPresent ? ["keyboard", "mouse", "touchpad"] : ["keyboard", "mouse"]
+    // Two of the four segments are conditional, so a segment's index is DERIVED, never
+    // written down: with a fingerprint reader but no touchpad, "fingerprint" is index 2.
+    readonly property var scopes: {
+        const a = ["keyboard", "mouse"];
+        if (root.touchpadPresent) a.push("touchpad");
+        if (root.fpAvailable) a.push("fingerprint");
+        return a;
+    }
+    // Both label maps are written out longhand rather than composing a key string:
+    // `check.sh --i18n` can only verify LITERAL Strings.t() calls, and the tree keeps
+    // its dynamic-key sites down to the two it already documents.
+    function scopeLabel(name) {
+        switch (name) {
+        case "keyboard":    return Strings.t("ptr.tab.keyboard");
+        case "mouse":       return Strings.t("ptr.tab.mouse");
+        case "touchpad":    return Strings.t("ptr.tab.touchpad");
+        case "fingerprint": return Strings.t("fp.tab");
+        }
+        return name;
+    }
+    function fingerLabel(finger) {
+        switch (finger) {
+        case "left-thumb":          return Strings.t("fp.left-thumb");
+        case "left-index-finger":   return Strings.t("fp.left-index-finger");
+        case "left-middle-finger":  return Strings.t("fp.left-middle-finger");
+        case "left-ring-finger":    return Strings.t("fp.left-ring-finger");
+        case "left-little-finger":  return Strings.t("fp.left-little-finger");
+        case "right-thumb":         return Strings.t("fp.right-thumb");
+        case "right-index-finger":  return Strings.t("fp.right-index-finger");
+        case "right-middle-finger": return Strings.t("fp.right-middle-finger");
+        case "right-ring-finger":   return Strings.t("fp.right-ring-finger");
+        case "right-little-finger": return Strings.t("fp.right-little-finger");
+        }
+        return finger;
+    }
 
     function buildContent() {
         const arr = [];
+        if (root.scope === "fingerprint") {
+            // While enrolling, Cancel is the only thing there is to move to — the list
+            // is not on screen, so it must not stay in the roving list either.
+            if (root.fpEnrolling !== "") return [{ kind: "fpCancel", key: "fp.cancel" }];
+            for (let i = 0; i < root.fingers.length; i++)
+                arr.push({ kind: "finger", key: "fp." + root.fingers[i], idx: i, finger: root.fingers[i] });
+            return arr;
+        }
         if (root.scope === "keyboard") {
             for (let i = 0; i < root.sortedCodes.length; i++)
                 arr.push({ kind: "layout", key: "kbd.layout:" + root.sortedCodes[i], idx: i, code: root.sortedCodes[i] });
@@ -245,6 +310,8 @@ Item {
     function focusItem(d) {
         if (!d) return null;
         if (d.kind === "layout") return layoutRepeater.itemAt(d.idx);
+        if (d.kind === "finger") return fingerRepeater.itemAt(d.idx);
+        if (d.kind === "fpCancel") return fpCancelBtn;
         switch (d.key) {
         case "kbd.add":     return addRow;
         case "kbd.toggle":  return toggleRow;
@@ -274,9 +341,13 @@ Item {
     }
     function setScope(name) {
         if (root.scope === name) return;
+        // Leaving the segment must not leave the reader claimed by an enrolment
+        // nobody can see any more.
+        root.cancelEnroll();
         root.scope = name;
         root.scopeIdx = Math.max(0, root.scopes.indexOf(name));
         root.focusKey = "";
+        root.fpNotice = "";
         flick.contentY = 0;
         if (name === "touchpad") root.ensureDetected();
     }
@@ -316,6 +387,14 @@ Item {
         // text editing instead of stealing the roving cursor mid-edit (same guard
         // as PowerPanel's IdleRow / SystemPanel's retRow).
         if (root.editingText) return;
+        // Back during an enrolment belongs to the enrolment: letting it bubble up to
+        // the Hub would close the panel with the reader still claimed. Backspace is
+        // caught too — Hub.qml keeps it as a fixed `back` alias whatever the profile.
+        if (root.fpEnrolling !== "" && (e.key === HubNavKeys.back || e.key === Qt.Key_Backspace)) {
+            root.cancelEnroll();
+            e.accepted = true;
+            return;
+        }
         switch (e.key) {
         case HubNavKeys.down:  root.moveDown(); e.accepted = true; return;
         case HubNavKeys.up:    root.moveUp();   e.accepted = true; return;
@@ -329,6 +408,10 @@ Item {
             if (d) {
                 if (d.kind === "layout") {
                     if (d.code !== root.codes[0]) root.setDefault(d.code);   // mirrors row click
+                } else if (d.kind === "finger") {
+                    root.fingerAction(d.finger);        // mirrors the row's own button
+                } else if (d.kind === "fpCancel") {
+                    root.cancelEnroll();
                 } else if (d.kind === "nav") {
                     root.navigate("input.kbd");
                 } else if (d.kind === "select") {
@@ -483,6 +566,129 @@ Item {
         if (setProc.running) root.setQueue = root.setQueue.concat([cmd]);
         else { setProc.command = cmd; setProc.running = true; }
     }
+
+    // ── Backend: fingerprint ─────────────────────────────────────────────────────
+    function probeFingerprints() { fpProc.running = false; fpProc.running = true; }
+
+    Process {
+        id: fpProc
+        running: true
+        command: ["w-fingerprint", "status", "--porcelain"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const map = {};
+                let available = false;
+                for (const line of (this.text || "").split("\n")) {
+                    const i = line.indexOf("=");
+                    if (i <= 0) continue;
+                    const k = line.slice(0, i), v = line.slice(i + 1);
+                    if (k === "available") available = (v === "yes");
+                    else if (k.startsWith("finger.")) map[k.slice(7)] = v;
+                }
+                root.fpState = map;
+                root.fpAvailable = available;
+                // The reader can go away under us (an unplugged USB scanner), exactly
+                // like the touchpad segment above.
+                if (!available && root.scope === "fingerprint") root.setScope("mouse");
+            }
+        }
+    }
+
+    // Turns the CLI's normalized stream into one live line. A `reason=` always follows
+    // its own `event=`, so remembering the last event is enough to pair them.
+    property string fpLastEvent: ""
+    function fpEventText(event, reason) {
+        switch (event) {
+        case "ready":     return Strings.t("fp.ev.ready");
+        case "stage":     return Strings.t("fp.ev.stage");
+        case "complete":  return Strings.t("fp.ev.complete");
+        case "cancelled": return Strings.t("fp.ev.cancelled");
+        case "retry":
+            switch (reason) {
+            case "enroll-retry-center-finger": return Strings.t("fp.retry.center");
+            case "enroll-retry-remove-finger": return Strings.t("fp.retry.remove");
+            case "enroll-retry-scan-too-short":
+            case "enroll-retry-swipe-too-short": return Strings.t("fp.retry.short");
+            case "enroll-retry-too-fast":      return Strings.t("fp.retry.fast");
+            }
+            return Strings.t("fp.ev.retry");
+        case "error":
+            switch (reason) {
+            case "busy":             return Strings.t("fp.ev.busy");
+            case "unavailable":      return Strings.t("fp.ev.unavailable");
+            case "enroll-duplicate": return Strings.t("fp.ev.duplicate");
+            }
+            return Strings.t("fp.ev.error");
+        }
+        return "";
+    }
+    function onEnrollLine(line) {
+        const i = line.indexOf("=");
+        if (i <= 0) return;
+        const k = line.slice(0, i), v = line.slice(i + 1);
+        if (k === "event") {
+            root.fpLastEvent = v;
+            if (v === "done") return;             // clean exit, already spoken for
+            const text = root.fpEventText(v, "");
+            if (text !== "") root.fpStatusText = text;
+            // A verdict has to outlive the view it was shown in: the enrolment closes
+            // the moment the process exits, so the notice under the list is where the
+            // user actually gets to read why it ended.
+            if (v === "error" || v === "cancelled") root.fpNotice = text;
+        } else if (k === "reason" && root.fpLastEvent !== "") {
+            const text = root.fpEventText(root.fpLastEvent, v);
+            if (text === "") return;
+            root.fpStatusText = text;
+            if (root.fpLastEvent === "error") root.fpNotice = text;
+        }
+    }
+
+    Process {
+        id: fpEnrollProc
+        stdout: SplitParser { onRead: (line) => root.onEnrollLine(line) }
+        // Whatever the outcome, the reader is free again and the store may have
+        // changed — leave the enrolment view and re-read the authoritative state.
+        onExited: {
+            const finger = root.fpEnrolling;
+            root.fpEnrolling = "";
+            root.fpLastEvent = "";
+            // Clearing fpEnrolling rebuilds the roving list, whose fallback would drop
+            // the cursor on the first finger; put it back on the one just worked on,
+            // which is also the row whose state changed.
+            if (root.focusRegion === "content") root.focusKey = "fp." + finger;
+            root.probeFingerprints();
+        }
+    }
+    Process { id: fpDelProc; onExited: root.probeFingerprints() }
+
+    function startEnroll(finger) {
+        if (root.fpEnrolling !== "") return;
+        root.fpNotice = "";
+        root.fpStatusText = Strings.t("fp.ev.ready");
+        root.fpLastEvent = "";
+        root.fpEnrolling = finger;
+        fpEnrollProc.command = ["w-fingerprint", "enroll", finger];
+        fpEnrollProc.running = true;
+    }
+    // SIGTERM, which w-fingerprint turns into killing the real fprintd-enroll child —
+    // that is what actually releases the reader, and it answers with event=cancelled.
+    function cancelEnroll() {
+        if (root.fpEnrolling === "") return;
+        fpEnrollProc.running = false;
+    }
+    function deleteFinger(finger) {
+        fpDelProc.command = ["w-fingerprint", "delete", finger];
+        fpDelProc.running = true;
+    }
+    // The row carries exactly one verb, because the two states are exclusive.
+    function fingerAction(finger) {
+        if (root.fpEnrolling !== "") return;
+        if (root.fpEnrolled(finger)) root.deleteFinger(finger);
+        else root.startEnroll(finger);
+    }
+    // Closing the Hub or navigating away destroys this panel mid-enrolment; the reader
+    // must not stay claimed by an orphan.
+    Component.onDestruction: fpEnrollProc.running = false
 
     // ── Row components ───────────────────────────────────────────────────────────
     // A slider row: label, slider, value readout. Shared by the pointer segments and
@@ -645,25 +851,25 @@ Item {
         anchors { top: parent.top; left: parent.left; right: parent.right }
         spacing: 12
 
+        // One pill per entry of `scopes`, so a conditional segment appearing or going
+        // away can never leave a hand-written index pointing at the wrong tab.
         Row {
             spacing: 8
-            Pill {
-                label: Strings.t("ptr.tab.keyboard"); active: root.scope === "keyboard"
-                focused: root.focusRegion === "scope" && root.scopeIdx === 0
-                onClicked: { root.focusRegion = "scope"; root.scopeIdx = 0; root.setScope("keyboard"); }
-            }
-            Pill {
-                label: Strings.t("ptr.tab.mouse"); active: root.scope === "mouse"
-                focused: root.focusRegion === "scope" && root.scopeIdx === 1
-                onClicked: { root.focusRegion = "scope"; root.scopeIdx = 1; root.setScope("mouse"); }
-            }
-            // Only on a machine that has one — udev answers this even before Hyprland
-            // knows the device by name.
-            Pill {
-                visible: root.touchpadPresent
-                label: Strings.t("ptr.tab.touchpad"); active: root.scope === "touchpad"
-                focused: root.focusRegion === "scope" && root.scopeIdx === 2
-                onClicked: { root.focusRegion = "scope"; root.scopeIdx = 2; root.setScope("touchpad"); }
+            Repeater {
+                model: root.scopes
+                Pill {
+                    id: scopePill
+                    required property string modelData
+                    required property int index
+                    label: root.scopeLabel(scopePill.modelData)
+                    active: root.scope === scopePill.modelData
+                    focused: root.focusRegion === "scope" && root.scopeIdx === scopePill.index
+                    onClicked: {
+                        root.focusRegion = "scope";
+                        root.scopeIdx = scopePill.index;
+                        root.setScope(scopePill.modelData);
+                    }
+                }
             }
         }
     }
@@ -880,6 +1086,93 @@ Item {
                     value: root.labelOf(root.onOff, root.numlock ? "true" : "false")
                     onActivated: menuLayer.openMenu(numlockRow, root.onOff, root.numlock ? "true" : "false",
                                                     (id) => root.setNumlock(id))
+                }
+            }
+
+            // ── Fingerprint segment ───────────────────────────────────────────────
+            // The list and the enrolment view are the same region, swapped: while a
+            // finger is being enrolled the reader belongs to it, so offering the other
+            // nine rows would only offer a second claim that must fail.
+            Column {
+                visible: root.scope === "fingerprint" && root.fpEnrolling === ""
+                width: parent.width
+                spacing: 12
+
+                HubSection { width: parent.width; text: Strings.t("fp.section") }
+
+                Repeater {
+                    id: fingerRepeater
+                    model: root.scope === "fingerprint" ? root.fingers : []
+                    HubRow {
+                        id: frow
+                        required property string modelData
+                        // Per-row state is read through the explicit path, never a bare
+                        // name — a bare one resolved to the same row for everybody once
+                        // already (quickshell-hub.md gotcha 16).
+                        readonly property bool isEnrolled: root.fpEnrolled(frow.modelData)
+                        width: col.width
+                        icon: "fingerprint"; glyph: String.fromCodePoint(0xf0237)   // nf-md-fingerprint
+                        label: root.fingerLabel(frow.modelData)
+                        value: frow.isEnrolled ? Strings.t("fp.enrolled") : Strings.t("fp.empty")
+                        valueColor: frow.isEnrolled ? Colors.accentInk : Colors.muted
+                        // One verb per row: the two states are exclusive, so a second,
+                        // permanently disabled button would be furniture.
+                        actionText: frow.isEnrolled ? Strings.t("hub.remove") : Strings.t("fp.add")
+                        focused: root.focusRegion === "content" && root.focusKey === "fp." + frow.modelData
+                        onActivated: root.fingerAction(frow.modelData)
+                    }
+                }
+
+                // Why this list is worth anything: the reader only reaches the password
+                // dialog once something is enrolled here.
+                Text {
+                    width: parent.width
+                    text: Strings.t("fp.hint")
+                    color: Colors.muted
+                    font.family: Fonts.family; font.pixelSize: 11
+                    wrapMode: Text.WordWrap
+                }
+
+                // How the last attempt ended, when it ended badly — the enrolment view
+                // is gone by then, so the verdict has to land somewhere the user can
+                // still read it.
+                Text {
+                    width: parent.width
+                    visible: root.fpNotice !== ""
+                    text: root.fpNotice
+                    color: Colors.dangerBorder
+                    font.family: Fonts.family; font.pixelSize: 11
+                    wrapMode: Text.WordWrap
+                }
+            }
+
+            // Enrolment in progress: which finger, what the reader just said, and the
+            // way out. The progress is event-driven — fprintd guarantees no fixed
+            // number of stages per device, so a percentage would be invented.
+            Column {
+                visible: root.scope === "fingerprint" && root.fpEnrolling !== ""
+                width: parent.width
+                spacing: 12
+
+                HubSection {
+                    width: parent.width
+                    text: Strings.t("fp.enrolling").replace("%1", root.fingerLabel(root.fpEnrolling))
+                }
+
+                Text {
+                    width: parent.width
+                    text: root.fpStatusText
+                    color: Colors.text
+                    font.family: Fonts.family; font.pixelSize: 14
+                    wrapMode: Text.WordWrap
+                }
+
+                WButton {
+                    id: fpCancelBtn
+                    label: Strings.t("hub.cancel")
+                    borderWidth: HubConfig.border
+                    focused: root.focusRegion === "content" && root.focusKey === "fp.cancel"
+                    onClicked: root.cancelEnroll()
                 }
             }
 

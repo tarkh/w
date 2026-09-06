@@ -4,12 +4,15 @@ description: >-
   W Linux security model and tools: kernel/sysctl hardening (w-kernel), privileges
   (sudo-rs, run0), the secrets keyring (gnome-keyring, seahorse), the SSH agent slot (w-ssh:
   switching agents, per-host key selectors, "too many authentication failures"),
+  fingerprints (w-fingerprint: enrolling, listing and deleting fingers, the reader),
   firmware updates (fwupdmgr), and disk encryption / Secure Boot (w-crypt,
   w-secureboot) on encrypted installs. Load this for hardening, secrets/SSH keys,
-  firmware, or LUKS/TPM2/Secure Boot questions.
+  fingerprints, firmware, or LUKS/TPM2/Secure Boot questions.
 sources:
   - path: .claude/library/security.md
     sha256: f406324ae9e0c67ff4c0e72a0439ad46f79368a92ae7ad58b928e69db0f3f486
+  - path: .claude/library/w-fingerprint.md
+    sha256: b90c064967fe921e5caa2992fbf049f310fc1820cba8eec937e25306171a8f69
   - path: .claude/library/w-ssh.md
     sha256: 34bbf5becbefc07d81b82f475b37fa1e32b8ed0e969f0d88ab07ec9e6208ab79
   - path: .claude/library/package-limine.md
@@ -80,6 +83,35 @@ Two decoupled layers:
 - **Caveat:** logging in with fingerprint only does **not** auto-unlock the keyring (a PAM
   limitation) — the login password does. W's greeter has no fingerprint step, so in
   practice the keyring is unlocked; this matters only if that ever changes.
+
+## Fingerprints — `w-fingerprint`
+
+The reader is what the password dialog and the lock screen offer instead of typing.
+Enrolling is the user's own business — no root, no polkit prompt: fprintd lets an active
+user manage **their own** prints. GUI: **Hub → Input → Fingerprint**. Never call
+`fprintd-enroll` / `fprintd-list` directly — `w-fingerprint` is the one interface, and it
+is what the Hub uses too.
+
+- `w-fingerprint status` — the reader plus all ten named slots. `--porcelain` adds
+  `available=yes|no` and, when unavailable, `reason=no-device|unauthorized`.
+- `w-fingerprint enroll <finger>` — enrol one finger; it prints a live `event=` stream
+  (`ready`, `stage`, `retry`, `complete`, `error`, `cancelled`) and ends in exactly one
+  verdict. Ctrl-C cancels cleanly and releases the reader.
+- `w-fingerprint delete <finger>` · `w-fingerprint fingers` (the ten accepted names:
+  `left-thumb`, `left-index-finger`, … `right-little-finger`).
+
+Three things worth knowing before you diagnose anything:
+
+- **`available=no` does not mean the device is missing.** fprintd answers only an
+  **active session**, so a fingerprint command run over SSH or from another VT reports
+  `reason=unauthorized` while the reader is sitting right there. Tell the user to run it
+  from their desktop session; `reason=no-device` is the one that means "check the hardware".
+- **The reader takes a single claim.** While an enrolment is running, authentication by
+  finger is unavailable — and vice versa, an enrolment started while the password dialog
+  is asking for a finger fails with `busy`. That is not a bug; wait and retry.
+- **The first enrolled finger turns the fingerprint mode on**, and deleting the last one
+  turns it off: the password dialog offers the reader only when there is something to
+  match. So "why does it ask for my finger now?" and "why did it stop?" are usually this.
 
 ## The SSH agent slot — `w-ssh`
 

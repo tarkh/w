@@ -14,7 +14,7 @@ sources:
   - path: .claude/library/quickshell-bar.md
     sha256: 172fcf47c0789b0b684968235fb741ff9c0de3cd09887d2a0648c5ba66c335ed
   - path: .claude/library/w-bar.md
-    sha256: 6888e3edff28e8ee62198014579587888eccf481c218320a9993afd759238591
+    sha256: 32f85bd9637a23ce14e911d48ab0586ac0c569cc27f750bcdca25e3fdf5c75f6
   - path: .claude/library/quickshell-assistant.md
     sha256: 4d3098dde3047c6d5b7057911ca6393be05627792968b4f46a3542b69f18bb33
   - path: .claude/library/quickshell-keyboard.md

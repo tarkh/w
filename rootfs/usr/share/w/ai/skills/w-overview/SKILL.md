@@ -7,7 +7,7 @@ description: >-
   before answering questions about how W is organized or which command to use.
 sources:
   - path: .claude/library/essentials.md
-    sha256: 8366339ada79335845c94e96a5dedf382c5d8ce7b0e384b9012ef6ac70233ae9
+    sha256: d09b3287e81937acb2d7ffd757367290817ca465a6c40128ea0f48fe38351820
 ---
 
 # W Overview
@@ -141,6 +141,9 @@ commands — they encode W's conventions and keep the system consistent. Most su
   is open, and stops it highlighting menu entries for as long as it is hidden)
   (`w-pointer status`, `w-pointer keys`). `w-keyboard` covers
   layouts plus key auto-repeat and NumLock. Details: the **w-input** skill.
+- `w-fingerprint` — enrol, list and delete the ten fingerprint slots on a machine with a
+  reader (GUI: Hub → Input → Fingerprint). It is the only interface to fprintd; never
+  call `fprintd-enroll` directly. Details: the **w-security** skill.
 
 ## Diagnostics quick start
 

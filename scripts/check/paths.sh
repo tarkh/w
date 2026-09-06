@@ -182,22 +182,33 @@ chk_paths() {
     fi
   fi
 
-  # 6. RECOVERY.md exists twice on purpose and must stay one document. The copy at
-  #    the repo root is what a user finds on GitHub next to README/SECURITY; the copy
-  #    under rootfs/ is the one on the machine, which is where it is actually needed,
-  #    since a machine that will not boot has no browser. Two files, one text: a
-  #    silent divergence would ship a recovery procedure nobody verified.
-  local doc_root="RECOVERY.md" doc_box="rootfs/usr/share/doc/w/RECOVERY.md"
-  if [[ ! -f "$doc_root" || ! -f "$doc_box" ]]; then
-    echo "  missing recovery doc: both $doc_root and $doc_box must exist"
-    rc=1
-  elif ! cmp -s "$doc_root" "$doc_box"; then
-    echo "  $doc_root and $doc_box have diverged"
-    echo "  → they are one document; copy the edited one over the other."
-    rc=1
-  else
-    echo "  paths: RECOVERY.md identical at repo root and on-box"
-  fi
+  # 6. RECOVERY exists twice per language on purpose and must stay one document.
+  #    The copy in the repo is what a user finds on GitHub next to README/SECURITY;
+  #    the copy under rootfs/ is the one on the machine, which is where it is
+  #    actually needed, since a machine that will not boot has no browser. Two
+  #    files, one text: a silent divergence would ship a recovery procedure nobody
+  #    verified. The Russian pair is not decoration either — the reader who needs
+  #    this page is offline by definition, so the translation has to be on the disk
+  #    and not only on GitHub. Its repo-side source lives under docs/ru/ (see
+  #    .claude/library/docs.md for why the English originals stay in the root).
+  local -a doc_pairs=(
+    "RECOVERY.md|rootfs/usr/share/doc/w/RECOVERY.md"
+    "docs/ru/RECOVERY.md|rootfs/usr/share/doc/w/RECOVERY.ru.md"
+  )
+  local pair doc_repo doc_box
+  for pair in "${doc_pairs[@]}"; do
+    doc_repo="${pair%%|*}"; doc_box="${pair##*|}"
+    if [[ ! -f "$doc_repo" || ! -f "$doc_box" ]]; then
+      echo "  missing recovery doc: both $doc_repo and $doc_box must exist"
+      rc=1
+    elif ! cmp -s "$doc_repo" "$doc_box"; then
+      echo "  $doc_repo and $doc_box have diverged"
+      echo "  → they are one document; copy the edited one over the other."
+      rc=1
+    else
+      echo "  paths: $doc_repo identical to its on-box copy"
+    fi
+  done
 
   return $rc
 }
