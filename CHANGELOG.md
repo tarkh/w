@@ -8,6 +8,19 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.6.1
+
+- **Nothing on your machine changes in this one.** It repairs W's own nightly
+  install test, not the system that test installs. The check used to start asking
+  questions the moment the freshly installed machine answered on the network — which
+  is a second or two before the machine has finished starting up. So it called the
+  lock screen "not running" a fraction of a second before it started, and turned a
+  perfectly good build red; on another night, with the same code, it would have
+  reported a clean system without ever having looked at the end of the boot. It now
+  waits for startup to finish before it asserts anything. No file that runs on an
+  installed machine was touched, so this update costs you nothing but the version
+  number.
+
 ## v0.6.0
 
 - **Fingerprints can be enrolled from the desktop.** Until now the authentication

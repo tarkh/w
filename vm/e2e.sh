@@ -258,6 +258,47 @@ until "${SSH[@]}" true 2>/dev/null; do
   sleep 5
 done
 
+# ── The boot barrier ──────────────────────────────────────────────────────────
+# "SSH answers" is not "the system booted", and asserting through that gap makes
+# the whole S3 battery measure a half-booted machine. sshd is up before
+# multi-user.target; greetd starts after it AND after plymouth-quit-wait, so there
+# is a one-to-two second window in which `systemctl is-active greetd` honestly
+# answers "inactive".
+#
+# Measured on the 2026-09-07 nightly: the SSH probe landed in the same second sshd
+# started listening, the first three assertions ran inside that window, and
+# `greetd is active` failed a fraction of a second before `Started Greeter daemon.`
+# — a red run about nothing. The night before was green because the probe happened
+# to land four seconds later on the same five-second grid; nothing else differed.
+#
+# The flake is the smaller half. In that same window `0 failed system units` and
+# `0 coredumps` are falsely GREEN: a unit that dies on the last second of boot is
+# not there yet when they look. Same rule as an assertion that cannot read its own
+# input — it must fail, never report on a system it did not measure.
+#
+# Gate on "left the starting state", not on "reached running": `degraded` is a
+# legitimate outcome, and it belongs to the `0 failed system units` assertion
+# below. A barrier that waited for `running` would swallow the very signal it
+# exists to make honest.
+#
+# Only an explicit terminal state ends the wait. An unreadable answer — a dropped
+# connection, an empty string, `unknown` — keeps waiting until the deadline rather
+# than falling through to the assertions, for the same reason: not knowing is not
+# permission to proceed. `is-system-running --wait` blocks with no ceiling of its
+# own, hence both the per-call `timeout` and the shared T_S3 deadline.
+boot_state() {
+  "${SSH[@]}" 'timeout 20 systemctl is-system-running --wait >/dev/null 2>&1
+               systemctl is-system-running' 2>/dev/null | tail -1
+}
+
+info "S3: waiting for the boot to finish..."
+until [[ "$(boot_state)" =~ ^(running|degraded)$ ]]; do
+  (( SECONDS < deadline )) || die "S3: the system never left 'starting' within $((T_S3 / 60)) min.
+$("${SSH[@]}" 'systemctl is-system-running; systemctl list-jobs' 2>&1 || true)"
+  kill -0 "$QPID" 2>/dev/null || die "S3: QEMU exited while the boot was still coming up."
+  sleep 3
+done
+
 FAILED=0
 assert() {
   local desc="$1"; shift
