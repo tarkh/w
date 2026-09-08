@@ -34,7 +34,8 @@ Info: Roll the system back to a btrfs snapshot, on either boot path.
 
 Commands:
   status [--porcelain]  Where the system is booted from and what a rollback would do
-  list                  Snapshots available to roll back to
+  list [--porcelain]    Snapshots available to roll back to (--porcelain: number,
+                        type, paired pre-ID, ISO date and description, one TSV line each)
   run [<number>]        Perform the rollback (interactive; asks before it changes anything)
   launch [<number>]     Open 'run' in a terminal window, asking for your password there
   help                  Show this help
@@ -101,9 +102,32 @@ cmd_status() {
 }
 
 # ── list ───────────────────────────────────────────────────────────────────────
+# The human table comes straight from snapper. --porcelain is the machine
+# format a GUI front-end (the Hub's Rollback tab) parses instead: snapper
+# renders table dates per locale, so the porcelain path reads the JSON output
+# (--iso keeps timestamps unambiguous) and prints
+#   number <TAB> type <TAB> paired-pre <TAB> date <TAB> description
+# one line per snapshot. The type (single/pre/post) and the pre-ID a post
+# snapshot belongs to are how one finds "the snapshot taken right before that
+# update" — the most common thing to look for. Snapshot #0 ("current") is left
+# out: it is not a rollback target, it is where the system is now.
 cmd_list() {
+  local porcelain=0
+  [[ "${1:-}" == "--porcelain" ]] && porcelain=1
   command -v snapper >/dev/null || { err "snapper is not installed"; exit 1; }
-  snapper -c "$SNAPPER_CONFIG" list
+  if ((porcelain)); then
+    command -v jq >/dev/null || { err "jq is not installed"; exit 1; }
+    local json rows
+    json=$(snapper --machine-readable json --iso -c "$SNAPPER_CONFIG" list) \
+      || { err "snapper list failed"; exit 1; }
+    rows=$(jq -r --arg c "$SNAPPER_CONFIG" \
+      '.[$c][] | select(.number != 0)
+               | [.number, .type, (.["pre-number"] // ""), .date, .description] | @tsv' \
+      <<<"$json") || { err "could not parse snapper output"; exit 1; }
+    if [[ -n "$rows" ]]; then printf '%s\n' "$rows"; fi
+  else
+    snapper -c "$SNAPPER_CONFIG" list
+  fi
 }
 
 # ── run: Limine ────────────────────────────────────────────────────────────────
@@ -214,8 +238,9 @@ cmd_run() {
 # ── launch ─────────────────────────────────────────────────────────────────────
 # Open `run` in a terminal, escalating there rather than here. This is the single
 # definition of "start a rollback from a graphical surface", and it exists so that
-# there is exactly one: the snapshot notice's button and the AI's rollback tool both
-# call it, and neither carries its own copy of the escalation to drift out of step.
+# there is exactly one: the snapshot notice's button, the Hub's Rollback tab and
+# the AI's rollback tool all call it, and none carries its own copy of the
+# escalation to drift out of step.
 #
 # Deliberately NOT root itself. The escalation belongs in front of the person who has
 # to live with the result: pkexec raises w-authd's window, the terminal gives `run`

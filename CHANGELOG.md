@@ -8,6 +8,49 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.7.0
+
+- **W's documentation now ships with the system and opens on the desktop.** Press
+  `SUPER + F1`, or pick **Documentation** in **Hub → System**, for a start page, an
+  FAQ, four guides (desktop, updates, theming, security) and a reference page for
+  every `w-*` command. It lives on disk at `/usr/share/doc/w/`, so it works with no
+  network — including the times you need it most. Some Hub tabs now carry a **?** in
+  their header that opens straight to the matching page. The reference pages are
+  generated from each command's own help text, so they cannot drift from what the
+  commands actually do.
+
+- **Rollback has a place in the Hub.** **Hub → System → Rollback** lists your
+  snapshots — which one you are running, when each was taken and what it was taken
+  for — with a **Restore** button on each. It drives the same `w-rollback` the
+  terminal does, so nothing can happen here that could not happen there. Opening the
+  tab asks for your password every time: reading the snapshot list is a privileged
+  call, and W does not hold that grant open between uses.
+
+- **Fixed: a rollback could fail halfway through on an encrypted install.** `snapper`
+  always creates its `.snapshots` as a btrfs subvolume; W keeps its snapshots
+  elsewhere and mounts them over that path, so the empty leftover sat nested inside
+  the system root. On a rollback, Limine's restore tool moves every subvolume nested
+  in the outgoing root — and that one is a live mount point, which the kernel refuses
+  to move. The restore stopped at "Moving child subvolumes", left `/var/lib/machines`
+  and `/var/lib/portables` in the old system, and the system it kept could not be
+  removed afterwards with `snapper delete`. Every encrypted install made so far
+  carries the leftover; this update clears it, on existing machines as well as new
+  ones. If W reports that it left a non-empty `.snapshots` alone, nothing is wrong —
+  it found files there and will not touch them. Unencrypted (GRUB) installs were
+  never affected.
+
+- **A rollback no longer finishes on a red error line.** "kernel.default: Read-only
+  file system" appeared right after "Restore complete". A rollback registers the
+  system it replaces as a snapshot, which makes the running system read-only on the
+  spot, so a small bookkeeping write failed — by design, harmlessly, and it was never
+  meant to be shown.
+
+- **RECOVERY explains the read-only system after a rollback.** The recovery page that
+  ships to disk now says why the machine you are on becomes read-only the moment a
+  rollback runs, and that the answer is simply to reboot. Its cleanup instructions
+  also no longer list `/.snapshots` among the nested subvolumes — after the fix above,
+  it is not one.
+
 ## v0.6.1
 
 - **Nothing on your machine changes in this one.** It repairs W's own nightly

@@ -14,20 +14,26 @@ pragma Singleton
 // Security and Date & Time are NOT here: they are tabs of the System panel, rendered by
 // panels/SecuritySection.qml and panels/DateTimeSection.qml, which are loaded by that
 // panel rather than routed to.
+//
+// `help` — the panel's user documentation: { page, anchor } into the docs tree
+// (/usr/share/doc/w, resolved by core/DocsViewer). The header's "?" button uses
+// it; a panel without a `help` entry simply gets no button yet.
 import QtQuick
 
 QtObject {
     id: root
 
     readonly property var panels: [
-        { route: "appearance",  title: "hub.appearance",  source: "panels/AppearancePanel.qml" },
+        { route: "appearance",  title: "hub.appearance",  source: "panels/AppearancePanel.qml",
+          help: { page: "guide/theming.md", anchor: "the-appearance-panel" } },
         { route: "displays",    title: "hub.displays",    source: "panels/DisplaysPanel.qml" },
         { route: "notifications", title: "hub.notifications", source: "panels/NotificationsPanel.qml" },
         { route: "input",       title: "hub.input",       source: "panels/InputPanel.qml" },
         { route: "hotkeys",     title: "hub.hotkeys",     source: "panels/HotkeysPanel.qml" },
         { route: "network",     title: "hub.network",     source: "panels/NetworkPanel.qml" },
         { route: "power",       title: "hub.energy",      source: "panels/PowerPanel.qml" },
-        { route: "system",      title: "hub.system",      source: "panels/SystemPanel.qml" },
+        { route: "system",      title: "hub.system",      source: "panels/SystemPanel.qml",
+          help: { page: "guide/updates.md", anchor: "where-you-see-updates" } },
         { route: "ai",          title: "hub.ai",          source: "panels/AIProfilesPanel.qml" },
         { route: "packs",       title: "hub.packs",       source: "panels/PacksPanel.qml" },
         // Deeper drill-ins (not shown in the root grid): the theme builder from

@@ -25,6 +25,12 @@ ROLES="WindowText Button Light Midlight Dark Mid Text BrightText ButtonText Base
        NoRole ToolTipBase ToolTipText PlaceholderText"
 
 setup() {
+  # The module reads its colours from $W_* in THIS shell, so an inherited token
+  # (a live W session exports the active theme) would silently stand in for one
+  # the fixture no longer defines — a dropped token has to surface as an empty
+  # entry, which is the failure the suite exists to catch.
+  local v
+  while IFS= read -r v; do unset "$v"; done < <(compgen -v | grep '^W_' || true)
   source "$REPO/rootfs/usr/lib/w/w-style/lib/core.sh"
   set -a; source "$FIXTURES/theme/theme.conf"; set +a
   source "$MODULE"

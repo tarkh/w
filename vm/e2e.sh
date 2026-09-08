@@ -336,6 +336,24 @@ assert "kernel hardening reached the running kernel" \
 assert "hardening sysctl drop-ins active" \
   'test -f /etc/sysctl.d/90-w-kernel.conf && test -f /etc/sysctl.d/90-w-fs.conf && test -f /etc/sysctl.d/90-w-net.conf'
 assert "goose (AI host) installed" 'command -v goose'
+# The .snapshots mount points must be plain directories, not the subvolumes snapper's
+# create-config leaves behind (fix_snapper flattens them). A nested subvolume there is
+# invisible under the mount but is a child of @/@home, and a rollback that moves the
+# outgoing root's children renames an active mount point → EBUSY, which is exactly how
+# the first real Limine rollback failed. Asserted on both boot paths: the same
+# create-config runs on each; only the Limine rollback trips over the result.
+# Tested through a subvolid=5 mount rather than `btrfs subvolume list`: the mount
+# points are covered by @snapshots/@home_snapshots in the live tree (so `show` there
+# reports the WRONG subvolume), and list -a prints `<FS_TREE>/` on some rows and not
+# others depending on where it is run from — a grep over it silently stops matching.
+assert "no nested .snapshots subvolume under @ / @home" \
+  'set -e
+   t=$(mktemp -d); rc=0
+   mount -o subvolid=5 "$(findmnt -no SOURCE / | sed "s/\[.*//")" "$t"
+   for d in @/.snapshots @home/.snapshots; do
+     if btrfs subvolume show "$t/$d" &>/dev/null; then echo "nested subvolume: $d"; rc=1; fi
+   done
+   umount "$t"; rmdir "$t"; exit $rc'
 
 if (( FAULT )); then
   # pacstrap copies the host mirrorlist into the target once the packages land, so

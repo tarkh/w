@@ -351,6 +351,10 @@ Scope {
                         visible: root.hasHeader
                         canGoBack: root.depth > 0
                         title: root.currentPanel ? Strings.t(root.currentPanel.title) : ""
+                        helpPage: root.currentPanel && root.currentPanel.help
+                                  ? root.currentPanel.help.page : ""
+                        helpAnchor: root.currentPanel && root.currentPanel.help
+                                    ? root.currentPanel.help.anchor : ""
                         onBack: root.back()
                     }
 

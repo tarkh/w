@@ -27,6 +27,11 @@ It shows the snapshots, asks which one to go back to, and asks you to confirm be
 it changes anything. **The system it replaces is kept, not deleted** — a rollback can
 itself be rolled back.
 
+On an encrypted install, the system you are replacing is registered as a snapshot the
+moment the rollback runs, which turns the *currently running* one read-only on the
+spot. Nothing is wrong: it simply means anything saved between the rollback and the
+reboot cannot be written. Reboot when it offers to.
+
 `w-rollback status` tells you where you stand without changing anything.
 
 ---
@@ -225,8 +230,8 @@ mv /mnt/@.bak-<timestamp> /mnt/@
 
 Once you are sure you no longer need a kept system, remove it. Nothing removes it
 for you, and a plain `btrfs subvolume delete` will refuse: a root subvolume has
-others nested inside it (`/.snapshots`, `/var/lib/machines`, …), so the delete has
-to be recursive.
+others nested inside it (`/var/lib/machines`, `/var/lib/portables`), so the delete
+has to be recursive.
 
 ```sh
 btrfs subvolume delete -R /mnt/@.bak-<timestamp>

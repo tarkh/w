@@ -47,6 +47,7 @@ M.actions = {
   { id = "powermenu",    cat = "apps",   def = "SUPER + Backspace",      dsp = function() return hl.dsp.global("quickshell:powermenu") end },
   { id = "files",        cat = "apps",   def = "SUPER + E",              dsp = function() return hl.dsp.exec_cmd("uwsm app -- nemo") end },
   { id = "browser",      cat = "apps",   def = "SUPER + B",              dsp = function() return hl.dsp.exec_cmd("uwsm app -- firefox") end },
+  { id = "docs",         cat = "apps",   def = "SUPER + F1",             dsp = function() return hl.dsp.global("quickshell:docs") end },
 
   -- Window management.
   { id = "close",          cat = "window", def = "SUPER + Q",             dsp = function() return hl.dsp.window.close() end },

@@ -19,8 +19,15 @@
 # the reader keeps it verbatim.
 
 # Dump the scalar variables a conf file assigns, using bash's own semantics.
+#
+# `env -i` is load-bearing, not tidiness: the probe measures which names the file
+# INTRODUCES (the before/after delta below), and an exported variable of the same
+# name inherited from the caller sits in both snapshots, so `comm -13` drops it.
+# One `AGENT=…` in the developer's environment was enough to make ssh.conf report
+# a reader/`source` disagreement over a key both sides read correctly. PATH is
+# carried through because the probe shells out to comm and sort.
 _wconf_dump_source() { # <file>
-  bash --noprofile --norc -c '
+  env -i PATH="$PATH" bash --noprofile --norc -c '
     set +u
     _before="$(compgen -v | sort)"
     # shellcheck disable=SC1090

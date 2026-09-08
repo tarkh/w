@@ -1,16 +1,18 @@
 // W Linux — Hub System panel (Ф4).
-// The System drill-in screen, in three tabs:
+// The System drill-in screen, in four tabs:
 //   • General  — a read-and-act front-end over the W maintenance tools: About (os-release
 //     version + update channel), the system language, Updates (pending package count + a
 //     pending reboot flag from w-update, plus, on an edge system, the w-sync behind-count),
 //     Logs (retention policy + journal usage) and Session memory.
 //   • Date & Time — DateTimeSection.qml, a sibling file (timezone + NTP, over w-time).
 //   • Security    — SecuritySection.qml, a sibling file (Secure Boot, over w-secureboot).
-// Both were root-level Hub tiles of their own until the menu reorganisation; each is one
-// short topic that reference settings apps file under System, and neither earns a tile in
-// a 16-slot root grid. The Security tab exists only where its backend does (see
-// limineAvailable below). Packs and AI went the other way — promoted OUT to their own
-// root-level tiles/panels (panels/PacksPanel.qml, panels/AIProfilesPanel.qml).
+//   • Rollback    — RollbackSection.qml, a sibling file (snapshot list, over w-rollback).
+// The first three were root-level Hub tiles of their own until the menu reorganisation;
+// each is one short topic that reference settings apps file under System, and none earns
+// a tile in a 16-slot root grid. The Security tab exists only where its backend does (see
+// limineAvailable below); Rollback is unconditional — both boot paths carry snapper.
+// Packs and AI went the other way — promoted OUT to their own root-level tiles/panels
+// (panels/PacksPanel.qml, panels/AIProfilesPanel.qml).
 //
 // This panel is the SOLE owner of the roving-focus index across both Loader boundaries
 // (the DisplaysPanel/NightLightSection contract): the sections render whichever field
@@ -72,7 +74,7 @@ Item {
     component Pill: WPill { borderWidth: HubConfig.border }
 
     // ── Tabs ────────────────────────────────────────────────────────────────────────
-    property string tab: "general"          // "general" | "datetime" | "security"
+    property string tab: "general"          // "general" | "datetime" | "security" | "rollback"
 
     // Secure Boot only exists on the encrypted+Limine install path (sbctl/tpm2-tools are
     // installed there and nowhere else, see package-limine.md) — a plain GRUB system has
@@ -89,7 +91,7 @@ Item {
         onLoadFailed: root.limineAvailable = false
     }
 
-    readonly property var tabs: ["general", "datetime", "security"]
+    readonly property var tabs: ["general", "datetime", "security", "rollback"]
     readonly property int tabIdx: Math.max(0, root.tabs.indexOf(root.tab))
     function setTab(name) {
         if (root.tab === name) return;
@@ -116,6 +118,7 @@ Item {
     function sectionItem() {
         if (root.tab === "datetime") return dtLoader.item;
         if (root.tab === "security") return secLoader.item;
+        if (root.tab === "rollback") return rbLoader.item;
         return null;
     }
     function buildContent() {
@@ -474,6 +477,11 @@ Item {
                 focused: root.focusRegion === "tab" && root.tabIdx === 2
                 onClicked: { root.focusRegion = "tab"; root.setTab("security"); }
             }
+            Pill {
+                label: Strings.t("hub.rollback"); active: root.tab === "rollback"
+                focused: root.focusRegion === "tab" && root.tabIdx === 3
+                onClicked: { root.focusRegion = "tab"; root.setTab("rollback"); }
+            }
         }
     }
 
@@ -534,6 +542,19 @@ Item {
                     label: Strings.t("hub.channel")
                     value: Strings.t("hub.channel." + (root.isEdge ? "edge" : "stable"))
                     focused: root.focusedRow === channelRow
+                }
+
+                // Built-in documentation: the same pages the header "?" opens,
+                // starting from the index. The infobox takes over as the active
+                // popup, which closes the Hub behind it — the card is the viewer.
+                HubRow {
+                    id: docsRow
+                    width: parent.width
+                    icon: "help-browser"; glyph: DocsViewer.helpGlyph
+                    label: Strings.t("hub.docs")
+                    actionText: Strings.t("hub.docsOpen")
+                    focused: root.focusedRow === docsRow
+                    onActivated: DocsViewer.openIndex()
                 }
 
                 // Kernel. Switching INSTALLS the chosen kernel and its paired headers and
@@ -929,15 +950,37 @@ Item {
                 target: secLoader.item
                 function onRunPrivileged(cmd, onDone) { root.runPrivileged(cmd, onDone); }
             }
+
+            // ── Tab: Rollback ───────────────────────────────────────────────────
+            // Snapshots (w-rollback). The section needs nothing pushed in but the
+            // roving cursor — it reads the (rootless) booted-from state itself and
+            // runs the privileged snapshot-list read on creation, which is also why
+            // there is no shared menuLayer here: it has no dropdowns. Recreated per
+            // tab switch, so the w-authd prompt appears on every entry to the tab —
+            // that per-entry re-read is the design, not a cost.
+            Loader {
+                id: rbLoader
+                width: col.width
+                active: root.tab === "rollback"
+                visible: active
+                source: "RollbackSection.qml"
+            }
+            Binding {
+                target: rbLoader.item
+                property: "focusedField"
+                value: root.focusedField
+                when: rbLoader.status === Loader.Ready
+            }
         }
     }
 
-    // The panel's single dropdown overlay, shared by all three tabs (one overlay per
-    // panel — the DisplaysPanel/NightLightSection contract, so a menu opened from a
-    // section closes exactly like one opened over a General row). Declared last so it
-    // paints above the Flickable; `flipUp` because the session-mode row sits at the very
-    // bottom of a long tab, where growing downward would push the menu past the card's
-    // ceiling — it only ever flips when a menu would actually spill, so the sections'
-    // near-the-top rows still grow the card the way they always did.
+    // The panel's single dropdown overlay, shared by the first three tabs (one
+    // overlay per panel — the DisplaysPanel/NightLightSection contract, so a menu
+    // opened from a section closes exactly like one opened over a General row).
+    // Declared last so it paints above the Flickable; `flipUp` because the
+    // session-mode row sits at the very bottom of a long tab, where growing
+    // downward would push the menu past the card's ceiling — it only ever flips
+    // when a menu would actually spill, so the sections' near-the-top rows still
+    // grow the card the way they always did.
     HubDropdown { id: menuLayer; anchors.fill: parent; flipUp: true; returnFocusTo: root }
 }

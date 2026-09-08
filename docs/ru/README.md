@@ -1,6 +1,6 @@
 # W Linux
 
-![W Linux — обои темы `w` по умолчанию](../../rootfs/etc/w/themes/w/wallpaper/wallpaper-1920x1080.webp)
+![W Linux — обои темы `w` по умолчанию](../../banner.webp)
 
 [English](../../README.md) · **Русский**
 

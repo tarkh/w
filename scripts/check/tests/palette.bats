@@ -19,8 +19,14 @@ MG="$BATS_TEST_DIRNAME/fixtures/palette/matugen-purple.json"
 MG_MONO="$BATS_TEST_DIRNAME/fixtures/palette/matugen-mono.json"
 
 # Source a rendered theme and dump every W_* token it defines.
+#
+# `env -i` for the same reason as check/wconf.sh: the dump is "what this FILE
+# defines", and a live W session exports its whole W_* theme into the
+# environment. Inherited tokens would join the roster and, worse, stand in for a
+# token the render dropped — the empty-value assertion below would then pass on a
+# broken theme. PATH is carried through for grep and sort.
 dump_theme() { # <file>
-  bash --noprofile --norc -c '
+  env -i PATH="$PATH" bash --noprofile --norc -c '
     set -a; source "$1"; set +a
     for v in $(compgen -v | grep "^W_" | sort); do printf "%s=%s\n" "$v" "${!v}"; done' _ "$1"
 }

@@ -1,6 +1,6 @@
 # W Linux
 
-![W Linux — the default wallpaper of theme `w`](rootfs/etc/w/themes/w/wallpaper/wallpaper-1920x1080.webp)
+![W Linux — the default wallpaper of theme `w`](banner.webp)
 
 **English** · [Русский](docs/ru/README.md)
 

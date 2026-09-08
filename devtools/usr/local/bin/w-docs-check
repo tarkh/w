@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# w-docs-check — W Linux DEV-ONLY user-documentation drift checker.
+#
+# The user-facing docs (rootfs/usr/share/doc/w) are a hand-curated layer over
+# the dev library (.claude/library/*.md) — the same model as the shipped AI
+# skills and guarded the same way: a curated page declares, in its frontmatter,
+# the library files it was written from and their sha256 at curation time:
+#
+#   ---
+#   sources:
+#     - path: .claude/library/w-update.md
+#       sha256: 60bec354…
+#   ---
+#
+# Recomputing each source's hash reports OK / DRIFT (the library changed since
+# the page was curated → re-review the page) / MISSING (the source is gone).
+# Exits non-zero if anything drifted.
+#
+# Companion to w-ai-lib-check (the skills' analog; same session rule): when a
+# library file you touched anchors both, sync BOTH layers in the same session.
+# The reference/ pages need no drift check — they are generated
+# (w-docs-refgen) and hold no library anchors; faq.md is curated by the
+# release-review convention, see .claude/library/docs.md.
+#
+# Run from the W repo. Options:
+#   --quiet   only print pages with problems (and the summary)
+#   -h        this help
+set -euo pipefail
+
+err() { echo "w-docs-check: $*" >&2; }
+
+quiet=0
+case "${1:-}" in "" | --quiet) quiet=1 ;;
+-h | --help)
+    grep '^#' "$0" | tail -n +2 | sed 's/^# \{0,1\}//'
+    exit 0
+    ;;
+*) err "unknown argument: $1"; exit 2 ;;
+esac
+
+# ── Locate the repo root by walking up until .claude/library is found ─────────
+self="$(realpath "${BASH_SOURCE[0]}")"
+dir="$(dirname "$self")"
+REPO=""
+while [[ "$dir" != "/" ]]; do
+    [[ -d "$dir/.claude/library" ]] && { REPO="$dir"; break; }
+    dir="$(dirname "$dir")"
+done
+[[ -n "$REPO" ]] || { err "not inside the W repo (no .claude/library found); this is a dev-only tool"; exit 2; }
+
+DOCS="$REPO/rootfs/usr/share/doc/w"
+[[ -d "$DOCS" ]] || { err "no docs tree at $DOCS"; exit 2; }
+
+# ── Every docs page that declares sources ─────────────────────────────────────
+mapfile -t pages < <(grep -rl '^sources:' "$DOCS" --include='*.md' | sort || true)
+
+if [[ $quiet == 0 ]]; then
+    printf 'checking sources: of %s pages\n' "${#pages[@]}" >&2
+fi
+
+checked=0; ok=0
+for page in "${pages[@]}"; do
+    # Frontmatter only: between the first two `---` lines. Then every
+    # `path:`/`sha256:` pair in order — portable parse, no YAML library.
+    fm="$(awk 'NR==1 && /^-{3}/{f = 1; next} f && /^-{3}/{exit} f {print}' "$page")"
+    mapfile -t pairs < <(awk '
+        /^  - path:/ { p = $NF }
+        /^    sha256:/ { print p "\t" $NF }
+    ' <<<"$fm")
+    if [[ ${#pairs[@]} -eq 0 ]]; then
+        err "no sources anchors in $page"
+        continue
+    fi
+    checked=$((checked + 1))
+    bad=""
+    for pair in "${pairs[@]}"; do
+        path="${pair%%	*}"
+        want="${pair##*	}"
+        f="$REPO/$path"
+        if [[ ! -f $f ]]; then
+            [[ $quiet == 0 ]] && printf 'MISSING  %s\n        %s\n' "$page" "$path" >&2
+            bad=1
+            continue
+        fi
+        have="$(sha256sum "$f" | awk '{print $1}')"
+        if [[ $have != "$want" ]]; then
+            [[ $quiet == 0 ]] && printf 'DRIFT    %s\n        %s changed since curation\n' "$page" "$path" >&2
+            bad=1
+        fi
+    done
+    if [[ $bad == "" ]]; then
+        ok=$((ok + 1))
+        [[ $quiet == 0 ]] && printf 'OK       %s\n' "$page" >&2
+    fi
+done
+
+printf 'pages with sources: %d, in sync: %d, problems: %d\n' "$checked" "$ok" "$((checked - ok))" >&2
+[[ $((checked - ok)) -eq 0 ]]

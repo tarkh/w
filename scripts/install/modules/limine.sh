@@ -154,8 +154,14 @@ target="${branch}/${kernel}"
 # from $kernel itself, so the mirror cannot disagree with the pin. Best-effort and
 # deliberately before the sed: a failure here must never change this hook's exit
 # code — an unpinned default_entry is a boot hang, a stale mirror is a wrong label.
+# The `2>/dev/null` sits BEFORE the `>`, not after: bash applies redirections left to
+# right, so with the usual order the failure to OPEN the file is still reported on the
+# inherited stderr. That is not theoretical — a rollback registers the outgoing root
+# as a snapshot and turns it read-only under the running system, so this hook (which
+# the same rollback re-runs) printed a red "Read-only file system" at the user right
+# after "Restore complete", for a mirror whose failure is by design harmless.
 if [[ -d /var/lib/w ]]; then
-  printf '%s\n' "$kernel" > /var/lib/w/kernel.default 2>/dev/null || true
+  printf '%s\n' "$kernel" 2>/dev/null > /var/lib/w/kernel.default || true
   chmod 644 /var/lib/w/kernel.default 2>/dev/null || true
 fi
 

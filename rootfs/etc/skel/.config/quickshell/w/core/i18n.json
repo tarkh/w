@@ -78,6 +78,26 @@
   "hub.kernelRebootTitle": { "en": "Reboot to switch kernel", "ru": "Перезагрузите, чтобы сменить ядро" },
   "hub.kernelRunningNow":  { "en": "Running now", "ru": "Сейчас работает" },
   "hub.rebootNow":         { "en": "Reboot", "ru": "Перезагрузить" },
+  "hub.rollback":       { "en": "Rollback", "ru": "Откат" },
+  "hub.rollbackHint": {
+    "en": "A rollback puts the system back to the state captured in a snapshot: files in /home are untouched, the system being replaced is kept, so it is always reversible, and it takes effect at the next boot. Reading the list asks for the administrator password.",
+    "ru": "Откат возвращает систему к состоянию, зафиксированному в снапшоте: файлы в /home не затрагиваются, заменяемая система сохраняется — откат всегда обратим и вступает в силу после перезагрузки. Чтение списка запрашивает пароль администратора." },
+  "hub.rollbackState":  { "en": "Current state", "ru": "Текущее состояние" },
+  "hub.rollbackBooted": { "en": "Booted from", "ru": "Загружено из" },
+  "hub.rollbackBootedNormal":   { "en": "the normal system (@)", "ru": "обычная система (@)" },
+  "hub.rollbackBootedSnapshot": { "en": "snapshot #%n%", "ru": "снапшот #%n%" },
+  "hub.rollbackBootedSnapshotHint": {
+    "en": "The system is running read-only from this snapshot — rolling back without picking a number restores it again.",
+    "ru": "Система запущена из этого снапшота в режиме read-only — откат без выбора номера вернёт его же." },
+  "hub.rollbackSnapshots": { "en": "Snapshots", "ru": "Снапшоты" },
+  "hub.rollbackRestore":   { "en": "Restore", "ru": "Восстановить" },
+  "hub.rollback.pre":      { "en": "pre", "ru": "pre" },
+  "hub.rollback.postOf":   { "en": "post of #%p%", "ru": "post к #%p%" },
+  "hub.rollbackLoading":   { "en": "Loading…", "ru": "Загрузка…" },
+  "hub.rollbackEmpty":     { "en": "No snapshots yet", "ru": "Снапшотов пока нет" },
+  "hub.rollbackLoadFail":  { "en": "Couldn't load the snapshot list", "ru": "Не удалось загрузить список снапшотов" },
+  "hub.rollbackLoadFailHint": { "en": "The request was cancelled or denied.", "ru": "Запрос был отменён или отклонён." },
+  "hub.rollbackRetry":     { "en": "Retry", "ru": "Повторить" },
   "hub.connections": { "en": "Connections…", "ru": "Соединения…" },
   "hub.hostname":    { "en": "Hostname",   "ru": "Имя хоста" },
 
@@ -655,5 +675,13 @@
   "auth.fingerprintFor":      { "en": "Fingerprint of user %1", "ru": "Отпечаток пользователя %1" },
   "auth.fingerprintHint":     { "en": "Touch the fingerprint reader", "ru": "Приложите палец к сканеру отпечатка" },
   "auth.fingerprintStillWaiting": { "en": "Type your password — it is sent as soon as the reader gives up.", "ru": "Введите пароль — он отправится, как только сканер прекратит попытки." },
-  "auth.usePassword":         { "en": "Use password",  "ru": "Ввести пароль" }
+  "auth.usePassword":         { "en": "Use password",  "ru": "Ввести пароль" },
+
+  "hub.docs":            { "en": "Documentation", "ru": "Документация" },
+  "hub.docsOpen":        { "en": "Open",          "ru": "Открыть" },
+  "hotkeys.docs":        { "en": "Documentation", "ru": "Документация" },
+  "docs.contents":       { "en": "Contents",      "ru": "Содержание" },
+  "docs.fullPage":       { "en": "Full page",     "ru": "Вся страница" },
+  "docs.notFoundTitle":  { "en": "Documentation not found", "ru": "Документация не найдена" },
+  "docs.notFoundBody":   { "en": "The documentation directory is missing on this machine. The pages are published with W at the repository.", "ru": "Каталог документации на этой машине отсутствует. Страницы публикуются с W в репозитории." }
 }

@@ -16,7 +16,7 @@ sources:
   - path: .claude/library/update-system.md
     sha256: abcb62f7c888b819407672b86f94795cbd1b716c26ca6c25998d7db240399a50
   - path: .claude/library/w-rollback.md
-    sha256: 544b0784484d83d091b2b9115deee05b4d4854db3e852048a7dc6d100716e6cb
+    sha256: 9c9d1deab14153a4d60dab390f7ef42c86dba88bb59cf5ada4d7e8a213b715a5
 tools:
   - w_snapshot_list
   - w_snapshot_rollback_plan
@@ -377,7 +377,15 @@ Three tools, and the split between them is deliberate:
 - `w_snapshot_rollback_start(number)` — **opens** the rollback. A terminal appears in
   the session, W's password window asks the user to authenticate, and `w-rollback`
   shows what it will do and waits for them to type 'yes'. Omit `number` when the
-  machine is booted from a snapshot and that is the one to restore.
+  machine is booted from a snapshot and that is the one to restore. On Limine the
+  vendor tool asks for the number once more — `launch` cannot pass it through
+  (upstream `--restore` takes no ID); the user picks it there.
+
+On an encrypted (Limine) install the rollback registers the outgoing system as a
+snapshot, which turns the *running* one read-only the moment it completes — writes fail
+until the machine reboots. That is normal, not a failure of the rollback: if the user
+reports write errors right after one, or your own follow-up work cannot save anything,
+the answer is to reboot, not to investigate.
 
 The order matters: **list, let the user choose, then start.** Never choose the snapshot
 yourself and never present a rollback as something you have done — a rollback takes the

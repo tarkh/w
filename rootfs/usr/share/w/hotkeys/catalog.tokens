@@ -27,6 +27,7 @@ volume	apps	SUPER + A
 powermenu	apps	SUPER + Backspace
 files	apps	SUPER + E
 browser	apps	SUPER + B
+docs	apps	SUPER + F1
 
 # ── Window management ─────────────────────────────────────────────────────────────
 close	window	SUPER + Q

@@ -95,6 +95,52 @@ source "$MODULES/devtools.sh"
 [[ -d "$SRC" ]]   || die "Project source not found: $SRC"
 
 # ── Snapper ───────────────────────────────────────────────────────────────────
+# `snapper create-config` always carves its .snapshots as a btrfs SUBVOLUME. W does
+# not use it: the snapshots live in the top-level @snapshots/@home_snapshots, which
+# fstab mounts over that path — so the one snapper made stays empty and invisible
+# underneath, and the mount point must be a plain directory instead.
+#
+# Invisible is not harmless. A nested subvolume is what `btrfs subvolume list -o @`
+# reports, and limine-snapper-restore moves every child of the outgoing root into the
+# restored one. That move is a rename() of an active mount point → EBUSY, and the
+# whole "Moving child subvolumes" step fails ("Device or resource busy"), leaving
+# /var/lib/machines and /var/lib/portables behind and the kept root un-deletable by
+# `snapper delete` (a subvolume with a child). Found on the first real Limine rollback
+# taken from a normal @ — the earlier runs were taken from inside a snapshot, where
+# .snapshots is already a plain dir because snapshots are non-recursive.
+#
+# Only .snapshots is affected: the nested subvolumes W creates on purpose (uv/pip
+# caches, the rootless container store — snapshot exclusion by non-recursion) live
+# under @home and are not mount points, so nothing renames them.
+#
+# $1 = the .snapshots path, which must NOT be mounted over when this is called.
+flatten_snapshots_dir() {
+  local dir="$1"
+  btrfs subvolume show "$dir" &>/dev/null || return 0
+  # Refuse a populated one: that would mean snapshots really were written there
+  # (mount missing at the time), and deleting it would delete them.
+  if [[ -n "$(find "$dir" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
+    echo "  WARN: $dir is a non-empty nested subvolume — left as-is (rollback will not move it)."
+    return 0
+  fi
+  info "Flattening nested subvolume $dir into a plain mount point..."
+  btrfs subvolume delete "$dir" >/dev/null || { echo "  WARN: could not delete $dir."; return 0; }
+  mkdir -m 750 "$dir"
+}
+
+# Same, for a path that is currently mounted over: repair pass for machines installed
+# before the above existed (they reach it through w-update → apply.sh). Best-effort in
+# every branch — a busy /.snapshots must leave the machine exactly as it was, never
+# unmounted. `if`, not `[[ … ]] && …`: a false test as the last statement would return
+# 1 and take apply.sh down with set -e.
+remount_flatten_snapshots_dir() {
+  local dir="$1"
+  mountpoint -q "$dir" || return 0
+  umount "$dir" 2>/dev/null || return 0
+  flatten_snapshots_dir "$dir"
+  if ! mount "$dir"; then die "could not re-mount $dir — snapshots are not visible."; fi
+}
+
 fix_snapper() {
   info "Configuring snapper..."
 
@@ -105,10 +151,14 @@ fix_snapper() {
     fi
     [[ -d /.snapshots ]] && rmdir /.snapshots
     snapper -c root create-config /
+    flatten_snapshots_dir /.snapshots
     # Re-mount @snapshots subvolume (fstab entry already correct)
     mount /.snapshots
   else
     info "Snapper config already exists, skipping create."
+    # Repair pass for machines installed before the flatten existed — see the
+    # function's comment. Runs on every apply; a no-op once the dir is flat.
+    remount_flatten_snapshots_dir /.snapshots
   fi
 
   # Root retention (enforced every run, idempotent): keep the last N snap-pac
@@ -154,6 +204,7 @@ fix_snapper() {
 configure_home_snapper() {
   if snapper -c home list &>/dev/null; then
     info "Home snapper config already exists, skipping."
+    remount_flatten_snapshots_dir /home/.snapshots
     return 0
   fi
   if ! mountpoint -q /home/.snapshots; then
@@ -164,6 +215,7 @@ configure_home_snapper() {
   umount /home/.snapshots
   rmdir  /home/.snapshots 2>/dev/null || true
   snapper -c home create-config /home
+  flatten_snapshots_dir /home/.snapshots
   mount /home/.snapshots   # re-mount top-level @home_snapshots (fstab entry present)
   snapper -c home set-config \
     TIMELINE_CREATE=yes TIMELINE_CLEANUP=yes \

@@ -285,6 +285,15 @@ w_actuate_main() {
       local kh="${1:-}"
       case "$kh" in on|off) CMD=(w-kernel harden "$kh") ;; *) die "hardening state must be on or off";; esac
       ;;
+    snapshot-list)
+      # Read-only: the Hub's Rollback tab lists the snapshots it can roll back
+      # to (w-rollback list --porcelain). Deliberately argument-less — starting
+      # a rollback is NOT a silent root call: w-rollback launch is the one
+      # definition of "start a rollback from a graphical surface" (terminal,
+      # human confirmation, reboot question on a real pty).
+      (($#)) && die "snapshot-list takes no arguments"
+      CMD=(w-rollback list --porcelain)
+      ;;
     run)
       (($#)) || die "no command given"
       CMD=("$@")           # arbitrary command; gated by the polkit prompt + audited
