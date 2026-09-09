@@ -10,7 +10,7 @@ sources:
   - path: .claude/library/package-hyprland.md
     sha256: 8fcbce2ca1880119b352caba9f94b4048e8ff0e8ac3a8915ae326bdb9ec5f9fc
   - path: .claude/library/quickshell.md
-    sha256: b6b033f37c6605ab5ec12ecbad15bef136f7334337d88aafaed06e0561b97376
+    sha256: dda1ea236fe4e8a7d4e9cb75daf5df756557406d72a7a0aac8966e08fe1a075b
   - path: .claude/library/quickshell-bar.md
     sha256: 172fcf47c0789b0b684968235fb741ff9c0de3cd09887d2a0648c5ba66c335ed
   - path: .claude/library/w-bar.md

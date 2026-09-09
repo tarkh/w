@@ -12,9 +12,9 @@ sources:
   - path: .claude/library/w-conf.md
     sha256: 002069840e569db3a750c268458c12fc7ef2396539f4438e3f7068bb43ec729f
   - path: .claude/library/w-reset.md
-    sha256: 75390ab0872e4a11dd2794a2a859a04d6a9f4ff6c90f80c7e0f9e2488a106ddb
+    sha256: f16d6d8101c3e66a006de216d3a834bc8d8c89af28c4fb9e69cb8fc42ce18017
   - path: .claude/library/update-system.md
-    sha256: abcb62f7c888b819407672b86f94795cbd1b716c26ca6c25998d7db240399a50
+    sha256: b13aee29dd9adafa424f03dcbea7e60869ef31dd19ae1d56b1e5272ea87a842d
   - path: .claude/library/w-rollback.md
     sha256: 9c9d1deab14153a4d60dab390f7ef42c86dba88bb59cf5ada4d7e8a213b715a5
 tools:
@@ -77,6 +77,9 @@ wants the known-good W version back — independent of the update channel.
 w-reset <module>          # whole module → W default (makes a pre-backup first)
 w-reset <module> <file>   # one path (full home-relative path OR trailing suffix)
 w-reset <bundle>          # an INSTALLED W-Pack bundle, same syntax
+                          # (a bundle that owns no config file — e.g. `flatpak` —
+                          #  says so and resets nothing; re-apply it with
+                          #  `sudo w-pack refresh <bundle>` instead)
 w-reset --all             # every module and every installed bundle
 w-reset list              # modules and bundles that have a reset manifest
 w-reset check             # AUDIT: what drifted from the W default (changes nothing)

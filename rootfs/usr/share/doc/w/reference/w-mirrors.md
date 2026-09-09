@@ -25,7 +25,7 @@ Commands:
 
 Policy source: /etc/w/mirrors.conf over /usr/share/w/defaults/mirrors.conf
 Keys: COUNTRY PROTOCOL AGE SCORE COUNT THREADS CONNECT_TIMEOUT DOWNLOAD_TIMEOUT
-      INTERVAL_DAYS SKIP_METERED   (\`w-conf cat mirrors\` shows the merged result)
+      INTERVAL_DAYS SKIP_METERED   (`w-conf cat mirrors` shows the merged result)
 
 Exit codes:
   0  Success   1  Runtime error   2  Usage error

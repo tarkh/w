@@ -63,6 +63,11 @@ Item {
     // Drill into a deeper Hub route (the system-language / timezone pickers). Also
     // re-emitted on behalf of the Date & Time section (see the header note).
     signal navigate(var route)
+    // Up on the topmost roving position hands the cursor to the header's "?" button
+    // (Hub.qml's focusHeaderHelp). A route with no `help` entry has no button and the
+    // Hub answers false — the cursor simply stays where it is.
+    signal focusHeader()
+
 
     // Privileged actions handed up to the Hub (suspend for the polkit prompt, restore +
     // refresh on exit) — used by the Logs retention control and, re-emitted, by the
@@ -93,6 +98,20 @@ Item {
 
     readonly property var tabs: ["general", "datetime", "security", "rollback"]
     readonly property int tabIdx: Math.max(0, root.tabs.indexOf(root.tab))
+
+    // Per-tab documentation for the header's "?" (contract in HubRegistry): these four
+    // tabs answer four unrelated questions, so one registry anchor cannot serve them.
+    // `null` on datetime is deliberate — no guide section explains it, and a button
+    // landing on an approximate one is worse than no button. Rollback points at the
+    // standalone recovery page rather than a guide: that IS its documentation.
+    readonly property var help: {
+        switch (root.tab) {
+        case "security": return { page: "guide/security.md", anchor: "what-is-on-by-default" };
+        case "rollback": return { page: "RECOVERY.md", anchor: "" };
+        case "general":  return { page: "guide/updates.md", anchor: "where-you-see-updates" };
+        }
+        return null;
+    }
     function setTab(name) {
         if (root.tab === name) return;
         root.tab = name;
@@ -110,7 +129,7 @@ Item {
     property string focusRegion: "tab"      // "tab" | "content"
     property int focusIdx: 0
 
-    readonly property var focusables: [verRow, channelRow, kernelRow, kernelRebootRow,
+    readonly property var focusables: [verRow, channelRow, docsRow, kernelRow, kernelRebootRow,
                                       localeRow, updRow, syncRow, vacuumRow, retRow,
                                       sessModeRow, sessLayoutsRow, sessAutoRow]
     readonly property var visFocusables: root.focusables.filter((f) => f.visible)
@@ -176,7 +195,7 @@ Item {
         root.scrollIntoView();
     }
     function moveUp() {
-        if (root.focusRegion === "tab") return;
+        if (root.focusRegion === "tab") { root.focusHeader(); return; }
         if (root.focusIdx > 0) { root.focusIdx--; root.scrollIntoView(); return; }
         root.focusRegion = "tab";
     }

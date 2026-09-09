@@ -32,16 +32,19 @@ source "$INSTALL_LIB/tui.sh"
 source "$INSTALL_LIB/progress.sh"
 source "$INSTALL_LIB/disk.sh"
 source "$INSTALL_LIB/system.sh"
-source "$INSTALL_MODULES/base.sh"
-source "$INSTALL_MODULES/bootloader.sh"
-source "$INSTALL_MODULES/network.sh"
-source "$INSTALL_MODULES/wifi.sh"
-source "$INSTALL_MODULES/zram.sh"
-source "$INSTALL_MODULES/snapshots.sh"
-source "$INSTALL_MODULES/plymouth.sh"
-source "$INSTALL_MODULES/grub.sh"
-source "$INSTALL_MODULES/limine.sh"
-source "$INSTALL_MODULES/firstboot.sh"
+source "$INSTALL_LIB/modules.sh"
+
+# Install-phase modules come from the registry (scripts/install/modules.conf, the
+# same file apply.sh reads for the post-boot phases) — so "which modules run in the
+# installer" is a declared fact rather than the shape of this list. main() below
+# still calls them by name: the sequence there interleaves with the disk/system
+# steps, and check/modules.sh proves it matches the registry's order.
+w_modules_load "$INSTALL_ROOT/install/modules.conf" \
+  || { echo "install.sh: module registry unusable" >&2; exit 1; }
+mapfile -t _mod_files < <(w_modules_files install)
+[[ ${#_mod_files[@]} -gt 0 ]] || { echo "install.sh: no install-phase modules" >&2; exit 1; }
+for _f in "${_mod_files[@]}"; do source "$INSTALL_MODULES/$_f"; done
+unset _f _mod_files
 
 # ── Config consumed by the work phases (mapped from ANSWERS after the wizard) ──
 CONF_DISK=""

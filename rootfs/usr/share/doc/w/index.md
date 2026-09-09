@@ -30,6 +30,17 @@ published with the repository.
   controls you get in the Hub.
 - [The desktop](guide/desktop.md) — windows, workspaces, popups, notifications
   and session restore.
+- [Displays and night light](guide/displays.md) — monitor layout, scaling, the
+  login screen's own layout, and the blue-light filter.
+- [Keyboard, mouse and touchpad](guide/input.md) — layouts and the switch key,
+  pointer behaviour, gestures, the fingerprint reader.
+- [Network, DNS and the firewall](guide/network.md) — connecting, encrypted DNS,
+  and the zone to use on an untrusted network.
+- [Power and battery](guide/power.md) — profiles, the idle chain of lock,
+  screen-off and suspend, lid actions, charge limit.
+- [The AI assistant](guide/ai.md) — profiles, models and keys, how much it may
+  do on its own.
+- [Packs](guide/packs.md) — the optional software bundles and how to add one.
 - [FAQ](faq.md) — short answers to common questions.
 
 ## Command reference

@@ -22,7 +22,7 @@ the task.
 - [w-maintenance](skills/w-maintenance/SKILL.md): Recovery & maintenance — reset a broken config to the W default (`w-reset`), the edge update channel (`w-sync`), and snapshot rollback.
 - [w-theming](skills/w-theming/SKILL.md): Theming — the theme model, `w-theme` switching, `w-style` axes, `w-wallpaper`.
 - [w-network](skills/w-network/SKILL.md): Networking — NetworkManager, `w-dns` (DNS-over-TLS), `w-firewall` (firewalld zones), the network block.
-- [w-software](skills/w-software/SKILL.md): Installing software — pacman/yay (repo + AUR) and Flatpak (Bazaar store, Flatseal).
+- [w-software](skills/w-software/SKILL.md): Installing software — pacman/yay (repo + AUR), uv, and where the optional `flatpak` bundle fits.
 - [w-apps](skills/w-apps/SKILL.md): Everyday apps — file managers (yazi/Nemo), media viewers (imv/mpv/zathura), editors (micro/helix), mounting drives & network shares, driverless printing/scanning.
 - [w-packs](skills/w-packs/SKILL.md): Optional software bundles by direction (`w-pack list/install/status`); an installed bundle curates its own skill here.
 - [w-security](skills/w-security/SKILL.md): Security — `w-kernel` hardening, sudo-rs/run0, keyring, `w-ssh` (SSH agent slot + per-host key selectors), fwupd, `w-crypt`/`w-secureboot`.

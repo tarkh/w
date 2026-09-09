@@ -35,7 +35,7 @@ the task.
 - `w-maintenance` — recovery: reset a broken config (`w-reset`), edge updates (`w-sync`), snapshot rollback.
 - `w-theming` — themes, colors, wallpapers (`w-theme`, `w-style`, `w-wallpaper`).
 - `w-network` — connections, DNS-over-TLS (`w-dns`), firewall (`w-firewall`).
-- `w-software` — installing software (pacman/yay, Flatpak/Bazaar).
+- `w-software` — installing software (pacman/yay, uv; Flatpak via its optional bundle).
 - `w-apps` — everyday apps: file managers, media viewers, editors, mounting drives/shares, printing/scanning.
 - `w-packs` — optional software bundles by direction (`w-pack list/install/status`).
 - `w-security` — hardening, secrets, the SSH agent slot (`w-ssh`), firmware, disk encryption/Secure Boot.

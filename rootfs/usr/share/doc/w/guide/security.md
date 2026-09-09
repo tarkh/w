@@ -5,7 +5,7 @@ order: 3
 summary: What W enables out of the box — hardening, sudo-rs, firewall, encrypted DNS, keyring, firmware updates, fingerprint and Secure Boot controls.
 sources:
   - path: .claude/library/security.md
-    sha256: f406324ae9e0c67ff4c0e72a0439ad46f79368a92ae7ad58b928e69db0f3f486
+    sha256: 46eddc9d5ae01864fb5551e3a55e97e55855193aaaaa16c99b3556fa8aa66e8c
 ---
 
 W enables a set of protections on every installation and gives you switches
@@ -29,8 +29,16 @@ for the parts worth adjusting. The graphical controls concentrate in
   any backend.
 - **Firmware updates** — `fwupd` and its timer; `fwupdmgr refresh && fwupdmgr
   update` applies them.
-- **Flatpak sandboxing** — Flatpak with Flathub, the Bazaar store and Flatseal
-  for per-app permissions when they are installed.
+
+## Sandboxed applications (optional)
+
+Third-party GUI applications are best run sandboxed, and W keeps the slots that
+takes ready — the desktop portals and the kernel's unprivileged user namespaces
+are enabled out of the box. The channel itself is opt-in: `sudo w-pack install
+flatpak` adds Flatpak with the Flathub remote, the **Bazaar** store, **Flatseal**
+for per-app permissions, and W's theme inside the sandbox. Install it if you
+want that ecosystem; a machine that takes its software from the repositories
+does not need it.
 
 ## Fingerprint login
 

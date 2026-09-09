@@ -31,7 +31,7 @@ Commands:
 Options:
   --user <name>        Act for another account (root only; default: the invoking
                        user, or SUDO_USER / the primary uid-1000 user)
-  --porcelain          Machine-readable \`list\`, one bundle per line:
+  --porcelain          Machine-readable `list`, one bundle per line:
                        <name> TAB <machine:yes|no> TAB <user:yes|no|n/a> TAB <desc>
 
 Notes:
@@ -39,15 +39,15 @@ Notes:
   Bundles are self-contained under $PACKS_DIR; machine state is recorded in
   $STATE, your own layer in ~/$USER_STATE_REL.
   A bundle someone else installed is NOT set up for you automatically — that
-  would spend your disk and network on a choice you never made. \`w-pack list\`
-  says so plainly, and \`w-pack setup <bundle>\` is the one command that fixes it.
-  refresh is what an update calls: \`w-sync update\` runs it after an apply that
+  would spend your disk and network on a choice you never made. `w-pack list`
+  says so plainly, and `w-pack setup <bundle>` is the one command that fixes it.
+  refresh is what an update calls: `w-sync update` runs it after an apply that
   touched the bundle tree, so a bundle's own idempotent setup (marker regions,
   drop-ins, legacy-layout cleanups) is replayed on every machine instead of
   waiting for someone to reinstall the bundle by hand. It replays the per-user
   layer for every account that already has it — and only those.
   remove is a later phase (shared pacman deps make automatic removal risky). To
-  put a bundle's config back to the W default now, use \`w-reset <bundle>\`.
+  put a bundle's config back to the W default now, use `w-reset <bundle>`.
 
 Exit codes:
   0  Success

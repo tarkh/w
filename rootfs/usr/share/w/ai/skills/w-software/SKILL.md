@@ -2,13 +2,10 @@
 name: w-software
 description: >-
   How to install and manage software on W Linux: native packages via pacman/yay
-  (repo + AUR), sandboxed third-party GUI apps via Flatpak (Flathub, the Bazaar
-  store, Flatseal for permissions), and Python tools/venvs via uv. Load this when
-  the user wants to install, remove, or find an application, or set up a Python
-  environment.
+  (repo + AUR), Python tools/venvs via uv, and where sandboxed third-party GUI apps
+  fit (the optional `flatpak` W-Pack). Load this when the user wants to install,
+  remove, or find an application, or set up a Python environment.
 sources:
-  - path: .claude/library/package-flatpak.md
-    sha256: 9f6e18651f17cb4be183e7859d9ab5b80a85d1a0379ac5f5f0e443382bd0cc88
   - path: .claude/library/package-python.md
     sha256: 239b463324c3f42931b26b09ac082e0d525c2ff706857045c3bd7f37e33fac17
 tools:
@@ -24,7 +21,8 @@ W has three complementary software channels. Choose by trust and origin:
   tools, and generally trusted software. Repo packages via `pacman`; AUR packages via
   `yay` (the AUR helper, already installed).
 - **Flatpak** — for untrusted or third-party GUI applications, run sandboxed
-  (bubblewrap + xdg-desktop-portals).
+  (bubblewrap + xdg-desktop-portals). **Optional:** it ships as the `flatpak` W-Pack,
+  not in the base system.
 - **uv** — for Python CLIs and per-project virtual environments (not a pacman job).
 
 Snap and AppImage are deliberately not used.
@@ -42,23 +40,18 @@ Installing packages is a privileged action: it goes through W's normal sudo/polk
 `w_pacman_install`/`w_pacman_remove` are the curated MCP equivalents (repo-only, one
 package-name-per-token, snap-pac snapshots the transaction — on by default).
 
-## Flatpak (sandboxed GUI apps)
+## Flatpak (sandboxed GUI apps) — optional bundle
 
-- **GUI store: Bazaar** — W's native software store (GTK4), the primary way to browse and
-  install Flatpak apps. Flathub is configured system-wide.
-- **CLI:** `flatpak install flathub <app-id>`, `flatpak list`, `flatpak update`,
-  `flatpak uninstall <app-id>`, `flatpak run <app-id>`.
-- **Permissions: Flatseal** — the GUI to inspect and adjust each app's sandbox permissions
-  (filesystem access, devices, etc.).
+Flatpak is **not part of the base system**. It ships as a W-Pack, together with the
+Flathub remote, the **Bazaar** store, **Flatseal** (per-app permissions) and W's theme
+wiring for the sandbox:
 
-W applies its theme inside the Flatpak sandbox automatically (colors and icons for
-GTK3/GTK4/Qt apps). After switching the system theme, sandboxed apps pick up the new colors
-on their next restart (Flatpak cannot live-reload theme extensions).
+- Is it here? `w-pack status flatpak`. If not: `sudo w-pack install flatpak`.
+- Once installed, the bundle curates its own `flatpak` skill (its CLI, theming
+  behaviour and gotchas live there) — read that instead of duplicating it here.
 
-**Note on per-app overrides:** a per-app override set via `flatpak override --user` (or
-Flatseal) shadows W's system-wide theming override. If a Flatpak app's theme/icons/font
-look wrong, check `flatpak override --user --show <app>` and reset with
-`flatpak override --user --reset <app>` if a stray environment override is the cause.
+If the machine has no Flatpak and the user wants a third-party GUI app, the two honest
+options are: install the bundle, or take the app from the repos/AUR.
 
 ## Python packages/tools (uv)
 

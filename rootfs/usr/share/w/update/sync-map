@@ -83,6 +83,10 @@ scripts/hooks/*			--skip
 
 # ── core: changes to the apply engine → full apply ──────────────────────────────
 scripts/apply.sh		--all
+# The module registry decides which modules exist, in what order they run, and
+# which flag each one answers to — apply.sh, install.sh and w-sync all read it.
+# A change there can reorder or add a step anywhere, so it forces a full apply.
+scripts/install/modules.conf	--all
 scripts/install/lib/deploy.sh	--all
 scripts/install/lib/*		--all
 

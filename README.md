@@ -193,6 +193,18 @@ release; pinning `REF=v0.1.0` holds a machine on one version.
 Every `w-*` tool answers `--help`, and most have a `--porcelain` output for
 scripting.
 
+The full documentation ships with the system and is published here in the same
+tree — [`rootfs/usr/share/doc/w/`](rootfs/usr/share/doc/w/index.md):
+
+- [Guides](rootfs/usr/share/doc/w/index.md#guides) — updates, theming, security,
+  the desktop itself, displays, input, network, power, the AI assistant and packs.
+- [FAQ](rootfs/usr/share/doc/w/faq.md) — short answers to the common questions.
+- [Command reference](rootfs/usr/share/doc/w/index.md#command-reference) — a page
+  per `w-*` command, generated from the command's own help text.
+
+On a W machine the same pages open in the desktop: <kbd>Super+F1</kbd>, or the
+**?** button in the corner of a Hub panel.
+
 If something goes wrong on first boot, `/var/log/w/` already has the whole story:
 `w-install-*.log` for the installer, `w-apply-*.log` for the setup that follows.
 

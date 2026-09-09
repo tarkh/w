@@ -1,0 +1,10 @@
+# flatpak bundle — packages (repo names; w-pack installs via yay → pacman).
+#
+# bazaar is the store frontend (discover/search/install), a NATIVE pacman package
+# (extra/bazaar), GTK4/libadwaita so the W gtk axis themes it. Native on purpose:
+# the store is W infrastructure, drives the SYSTEM flatpak install via libflatpak,
+# and you should not need a store to install the store. No PackageKit, no GNOME
+# Shell. The per-app permission GUI (Flatseal) is itself a Flatpak app and is
+# installed from Flathub by setup.sh.
+flatpak
+bazaar

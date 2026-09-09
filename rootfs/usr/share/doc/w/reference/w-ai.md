@@ -41,19 +41,19 @@ Commands:
                         W_AI_SEARCH_PROVIDER) in ~/.config/w/ai-features.conf
   profile list          List provider profiles, marking the active one
   profile new <n> [--from <base>]   Create a profile (blank, or copied from <base>)
-  profile edit <n>      Edit a profile in \$EDITOR
+  profile edit <n>      Edit a profile in $EDITOR
   profile show <n>      Print a profile's contents
   profile use <n>       Make <n> the active profile (copies it into ai.conf override)
   profile rm <n>        Delete a profile
   profile field <n> <KEY> <value>   Set one KEY=VALUE line in a profile (uncomments
                         a commented default if present; the Hub's field editor uses
-                        this instead of \$EDITOR)
+                        this instead of $EDITOR)
   key set <provider>    Store a provider API key in the keyring (prompts)
   key rm  <provider>    Remove a provider API key from the keyring
   key list              Show which providers have a key
   memory list           List stored assistant memories (shared across hosts)
   memory search <q>     Recall memories matching a query
-  memory add            Write a new memory in \$EDITOR (frontmatter template)
+  memory add            Write a new memory in $EDITOR (frontmatter template)
   memory rm <slug>      Delete a memory by slug
   memory context        Print the session-start memory context block
   memory review         Hygiene report: age, in-context, stale hints

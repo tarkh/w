@@ -48,8 +48,10 @@ edge channel (`w-sync`). The stable channel is planned but not live yet.
 
 **My screen is black / a monitor died after I changed display settings.**
 W guards against losing the last enabled output, and if something slips
-through `w-monitor reset all` from a text console (Ctrl+Alt+F2) puts sane
-defaults back. Details in [RECOVERY.md](RECOVERY.md).
+through, `w-monitor reset --all` from a text console (Ctrl+Alt+F2) puts sane
+defaults back. Details in
+[the displays guide](guide/displays.md#a-black-screen-after-a-display-change)
+and [RECOVERY.md](RECOVERY.md).
 
 **The fingerprint reader stopped unlocking.**
 Re-enroll the finger with `w-fingerprint` (or **Hub → Input → Fingerprint**);
@@ -59,12 +61,30 @@ the traditional password always works as the fallback.
 That is session restore, on by default. Turn it off or exclude the app in
 **Hub → System → Session**; see [the desktop guide](guide/desktop.md).
 
+**Why does my laptop suspend later than the time I set?**
+The three idle timers are a chain, not three stopwatches: the screen goes off so
+long *after the lock*, and suspend so long *after the screen goes off*. Each row
+in **Hub → Power** shows the resulting absolute time underneath it — see
+[the power guide](guide/power.md#idle-lock-then-screen-off-then-suspend).
+
 ## Software
 
 **How do I install something not in my list?**
-`w-software` covers the two native channels: `yay` (repositories + AUR) and
-Flatpak/Bazaar for sandboxed apps. Anything installed this way snapshots like
-an update does.
+`yay` covers the repositories and the AUR; sandboxed third-party apps come from
+Flatpak/Bazaar, which is the optional `flatpak` bundle (`sudo w-pack install
+flatpak`). Anything installed this way snapshots like an update does.
+
+**A pack says it is on the machine but not set up for me.**
+A pack has a machine half (packages, installed once, needs an administrator) and
+a per-account half that is deliberately not done for everybody automatically.
+Press **Set up** in **Hub → Packs**, or run `w-pack setup <name>` — no password
+needed. See [the packs guide](guide/packs.md#installing-and-setting-up-for-your-account).
+
+**Is the AI assistant required, and does it need a paid account?**
+Neither. Nothing in W depends on it, and it does nothing until you give it a
+model in **Hub → AI**. That can be a subscription you already have, an API key,
+or a model running locally on your own machine — see
+[the AI guide](guide/ai.md).
 
 **Is AUR safe?**
 It is third-party packaging, reviewed by you at the PKGBUILD prompt the same

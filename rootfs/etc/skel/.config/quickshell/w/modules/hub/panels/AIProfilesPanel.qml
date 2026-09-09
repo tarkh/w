@@ -34,6 +34,11 @@ import qs.modules.shading
 
 Item {
     id: root
+    // Up on the topmost roving position hands the cursor to the header's "?" button
+    // (Hub.qml's focusHeaderHelp). A route with no `help` entry has no button and the
+    // Hub answers false — the cursor simply stays where it is.
+    signal focusHeader()
+
     // While the new-profile prompt is open, grow to its lower edge (mirrors Input's
     // "Switch key" menu-growth trick) so the card expands under the prompt instead of
     // clipping it — the prompt's own implicitHeight already accounts for the wrapped
@@ -509,7 +514,9 @@ Item {
         if (cd.length === 0) return;
         switch (e.key) {
         case HubNavKeys.down: root.focusRow(root.focusIndex + 1); e.accepted = true; return;
-        case HubNavKeys.up:   root.focusRow(root.focusIndex - 1); e.accepted = true; return;
+        case HubNavKeys.up:
+            if (root.focusIndex === 0) { root.focusHeader(); e.accepted = true; return; }
+            root.focusRow(root.focusIndex - 1); e.accepted = true; return;
         case HubNavKeys.del: {
             const d = cd[root.focusIndex];
             // Mirrors the mouse's × exactly — that click removes the profile with no

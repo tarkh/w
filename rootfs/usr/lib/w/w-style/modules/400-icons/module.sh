@@ -74,15 +74,16 @@ retint_papirus_dir() {
 # Vendored papirus-folders (MIT) edits the icon-theme symlinks + refreshes caches.
 #
 # Retints the system theme AND every per-user ~/.local/share/icons/<theme>
-# mirror that the flatpak module reflink-copies for the sandbox (see package-flatpak).
-# That module mirrors Papirus and Papirus-Dark only, so a light theme finds no
+# mirror that the `flatpak` W-Pack reflink-copies for the sandbox (see pack-flatpak).
+# That bundle mirrors Papirus and Papirus-Dark only, so a light theme finds no
 # mirror to retint and the loop simply does nothing — sandboxed apps keep stock
-# folders until the mirror learns to follow the theme.
+# folders until the mirror learns to follow the theme. No bundle, no mirror: the
+# loop is then a plain no-op and this axis is unaffected.
 # Those user mirrors live in the icon search path AHEAD of /usr/share/icons, so a
 # stale mirror would SHADOW a fresh system retint for host GTK/Qt apps (Nemo). Each
 # copy is retinted by ABSOLUTE PATH so papirus-folders edits exactly that dir (its
 # readlink-f branch), never the XDG-resolved first match — keeping host + sandbox in
-# sync on every `--style`, independent of when the flatpak module last ran.
+# sync on every `--style`, independent of when the bundle's setup last ran.
 render_system() {
   load_conf "$(w_system_theme_dir)"
   echo "w-style: rendering icons (folder retint)..."
@@ -100,7 +101,7 @@ render_system() {
   echo "  Papirus folders → $W_ICON_FOLDER (base $base)"
   retint_papirus_dir "/usr/share/icons/$base"
 
-  # Per-user flatpak mirrors (uid 1000..65533, as in flatpak.sh mirror_icons_to_users).
+  # Per-user flatpak mirrors (uid 1000..65533, as in the bundle's setup-user.sh).
   local u uid home mirror
   while IFS=: read -r u _ uid _ _ home _; do
     (( uid >= 1000 && uid < 65534 )) || continue

@@ -10,7 +10,7 @@ description: >-
   fingerprints, firmware, or LUKS/TPM2/Secure Boot questions.
 sources:
   - path: .claude/library/security.md
-    sha256: f406324ae9e0c67ff4c0e72a0439ad46f79368a92ae7ad58b928e69db0f3f486
+    sha256: 46eddc9d5ae01864fb5551e3a55e97e55855193aaaaa16c99b3556fa8aa66e8c
   - path: .claude/library/w-fingerprint.md
     sha256: b90c064967fe921e5caa2992fbf049f310fc1820cba8eec937e25306171a8f69
   - path: .claude/library/w-ssh.md
@@ -30,8 +30,9 @@ CVE fixes. On top of that:
 
 ## Kernel & hardening — `w-kernel`
 
-The default kernel is `linux-zen` (not `linux-hardened`, which would break Flatpak's user
-namespaces and DKMS). sysctl and boot-cmdline hardening are applied as a profile.
+The default kernel is `linux-zen` (not `linux-hardened`, which would break the
+unprivileged user namespaces sandboxing and rootless containers rely on, and DKMS).
+sysctl and boot-cmdline hardening are applied as a profile.
 
 - `w-kernel list [--porcelain]` — the known kernels, which are installed, which one boots
   next and which one is running. Porcelain is TSV:
@@ -164,6 +165,15 @@ Firmware updates use **fwupd** with LVFS; metadata refreshes on a timer. There i
 GNOME Software/Discover — use the CLI:
 
 - `fwupdmgr get-devices`, `fwupdmgr refresh`, `fwupdmgr get-updates`, `fwupdmgr update`.
+
+## Application sandboxing — the optional `flatpak` bundle
+
+W keeps the slots sandboxing needs in the base — the desktop portals and the kernel's
+unprivileged user namespaces (which is why the default kernel is not `linux-hardened`).
+The channel itself is opt-in: `sudo w-pack install flatpak` adds Flatpak with Flathub,
+the Bazaar store, Flatseal for per-app permissions, and W's theme inside the sandbox.
+Check with `w-pack status flatpak`; once installed, the bundle curates its own
+`flatpak` skill with the operational detail.
 
 ## Disk encryption & Secure Boot (encrypted installs only)
 

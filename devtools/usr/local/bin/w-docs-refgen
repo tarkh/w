@@ -83,12 +83,17 @@ print(sql)
 PYEOF
         return
     fi
+    # The heredoc is read as SOURCE, so the shell escaping an UNQUOTED heredoc
+    # needs (\` \$ \\) is still in it, while `w-<cmd> help` prints those
+    # characters bare. Undo exactly those three — the page claims to be the same
+    # text as the live help, and it has to be. Only unquoted heredocs reach here:
+    # the opener pattern below does not match `<<'EOF'`.
     awk '
         st == 0 && /^usage\(.*\{/ { st = 1; next }
         st == 1 && /<<-?[ \t]*EOF/ { st = 2; next }
         st == 2 && /^EOF[ \t]*$/ { st = 3 }
         st == 2 { print }
-    ' "$1"
+    ' "$1" | sed 's/\\\([$`\\]\)/\1/g'
 }
 
 gen_page() { # $1 = binary path, $2 = command name, $3 = Info line
@@ -137,9 +142,13 @@ end="$(grep -n 'W-DOCS:reference-toc END' "$DOCS/index.md" | cut -d: -f1)" || tr
 pages="$out/pages"
 mkdir -p "$pages"
 mv "$out"/w-*.md "$pages/"
-head -n "$start" "$DOCS/index.md" >"$out/index.md"
-cat "$toc" >>"$out/index.md"
-tail -n "+$end" "$DOCS/index.md" >>"$out/index.md"
+# The rebuilt index goes to a temp file, NOT into $out: on a real run $out IS
+# reference/, and an index.md written there is a stray page that the golden
+# check then reports as a divergence of the tree against itself.
+idx="$(mktemp /tmp/w-docs-refgen-idx.XXXXXX)"
+head -n "$start" "$DOCS/index.md" >"$idx"
+cat "$toc" >>"$idx"
+tail -n "+$end" "$DOCS/index.md" >>"$idx"
 
 if ((check)); then
     diff="$(mktemp /tmp/w-docs-refgen-XXXXXX)"
@@ -148,7 +157,7 @@ if ((check)); then
         sed -n '1,20p' "$diff" >&2
         fails=1
     fi
-    if ! diff -u "$DOCS/index.md" "$out/index.md" >>"$diff"; then
+    if ! diff -u "$DOCS/index.md" "$idx" >>"$diff"; then
         sed -n '/reference-toc/,$p' "$diff" | sed -n '1,15p' >&2
         fails=1
     fi
@@ -159,6 +168,6 @@ if ((check)); then
 fi
 
 mv "$pages"/*.md "$REF/"
-cp "$out/index.md" "$DOCS/index.md"
-rm -rf "$pages" "$toc"
+cp "$idx" "$DOCS/index.md"
+rm -rf "$pages" "$toc" "$idx"
 echo "generated $(find "$REF" -name 'w-*.md' | wc -l) reference pages + index TOC"

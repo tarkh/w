@@ -45,9 +45,9 @@ Commands:
                                                       irrelevant, it returns all
                                                       of them)
   edit <name> [opts]      Rebuild a generated theme's palette in place, keeping
-                          its wallpaper. Same options as \`new\` minus the image
+                          its wallpaper. Same options as `new` minus the image
                           (a different wallpaper is a different theme — use
-                          \`new\`), plus --rename <newname>; anything not given
+                          `new`), plus --rename <newname>; anything not given
                           keeps what the theme already has. Re-skins the session
                           (or the system) if that theme is the active one.
                           Hand-authored themes are refused.

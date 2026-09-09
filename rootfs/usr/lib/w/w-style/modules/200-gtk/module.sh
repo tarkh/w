@@ -58,7 +58,10 @@ gtk_appearance_map() {
 # USER scope only: flatpak GTK3 apps run inside a user session, env-hyprland renders
 # `w-style apply user` at login (before apps start), and a user-dir extension mounts
 # even for system-installed apps (verified). Skipping root/skel avoids a system-vs-
-# user same-name extension precedence clash. No-op without flatpak or the base theme.
+# user same-name extension precedence clash. No-op without flatpak or the base theme —
+# Flatpak is the optional `flatpak` W-Pack, so on most machines this simply does
+# nothing; the axis stays in core because it is the gtk render that owns the brand
+# CSS ([[pack-flatpak]]).
 # $1 = adw-gtk3 base name (appearance-correct), $2 = brand theme name (w-gtk),
 # $3 = brand CSS (theme_css sans the @import line).
 sync_flatpak_gtk3() {

@@ -98,7 +98,7 @@ unset f head1
 # ── Suites ────────────────────────────────────────────────────────────────────
 for s in "$SRC"/scripts/check/*.sh; do source "$s"; done
 
-SUITES=(bash python unit perms manifests routing publish wconf i18n packages landmines paths qml theme pam docs)
+SUITES=(bash python unit perms manifests modules routing publish wconf i18n packages landmines paths qml theme pam docs)
 ONLINE=0
 STRICT=0
 RUN=()

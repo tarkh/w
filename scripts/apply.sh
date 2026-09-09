@@ -16,6 +16,7 @@ MODULES="$SRC/scripts/install/modules"
 source "$SRC/scripts/install/lib/deploy.sh"
 source "$SRC/scripts/install/lib/pac.sh"
 source "$SRC/scripts/install/lib/aurbuild.sh"
+source "$SRC/scripts/install/lib/modules.sh"
 
 die()  { echo -e "\033[1;31mERROR:\033[0m $*" >&2; exit 1; }
 info() { echo -e "\033[1;35m==>\033[0m $*"; }
@@ -50,46 +51,16 @@ if [[ $EUID -eq 0 && -z "${W_APPLY_LOGGED:-}" ]]; then
   trap _w_apply_save EXIT
 fi
 
-source "$MODULES/wallpaper.sh"
-source "$MODULES/windowblind.sh"
-source "$MODULES/greeter.sh"
-source "$MODULES/hyprland.sh"
-source "$MODULES/polkit.sh"
-source "$MODULES/hyprlock.sh"
-source "$MODULES/quickshell.sh"
-source "$MODULES/update.sh"
-source "$MODULES/applets.sh"
-source "$MODULES/sensors.sh"
-source "$MODULES/files.sh"
-source "$MODULES/printing.sh"
-source "$MODULES/shell.sh"
-source "$MODULES/firefox.sh"
-source "$MODULES/screencapture.sh"
-source "$MODULES/sudo.sh"
-source "$MODULES/firewall.sh"
-source "$MODULES/dns.sh"
-source "$MODULES/time.sh"
-source "$MODULES/harden.sh"
-source "$MODULES/keyring.sh"
-source "$MODULES/fwupd.sh"
-source "$MODULES/logs.sh"
-source "$MODULES/mirrors.sh"
-source "$MODULES/flatpak.sh"
-source "$MODULES/grub.sh"
-source "$MODULES/limine.sh"
-source "$MODULES/gpu.sh"
-source "$MODULES/style.sh"
-source "$MODULES/uv.sh"
-source "$MODULES/ai.sh"
-source "$MODULES/updatesys.sh"
-source "$MODULES/site.sh"
-source "$MODULES/reset.sh"
-source "$MODULES/packs.sh"
-source "$MODULES/power.sh"
-source "$MODULES/kbdlight.sh"
-source "$MODULES/nightlight.sh"
-source "$MODULES/session.sh"
-source "$MODULES/devtools.sh"
+# ── Module registry ───────────────────────────────────────────────────────────
+# Which modules exist, in what order they run, and what each one is called — all of
+# it lives in scripts/install/modules.conf now (read through lib/modules.sh). The
+# source list, the --all sequence, the flag dispatch and usage() below are derived
+# from it, so they cannot drift apart the way the hand-kept copies did.
+w_modules_load "$SRC/scripts/install/modules.conf" || die "module registry unusable"
+mapfile -t _mod_files < <(w_modules_files apply manual dev)
+[[ ${#_mod_files[@]} -gt 0 ]] || die "module registry lists no post-boot module files"
+for _f in "${_mod_files[@]}"; do source "$MODULES/$_f"; done
+unset _f _mod_files
 
 [[ $EUID -eq 0 ]] || die "Must be run as root."
 [[ -d "$SRC" ]]   || die "Project source not found: $SRC"
@@ -507,70 +478,24 @@ apply_bootloader() {
   if [[ -f /etc/default/limine ]]; then mod_limine; else mod_grub; fi
 }
 
-# ── Full-apply module list ──────────────────────────────────────────────────────
-# Single source of truth for --all/--dev, shared with the firstboot progress TUI
-# (scripts/install/lib/progress.sh:progress_modules parses the "@@WFB i n label@@"
-# markers below to drive its gauge — label text stays plain English like the rest
-# of apply.sh's info() output, no i18n plumbing needed here).
-ALL_MODULES=(
-  "apply_rootfs|Rootfs overlay"
-  "install_yay|yay"
-  "install_packages|Packages"
-  "apply_plymouth|Plymouth"
-  "apply_bootloader|Bootloader"
-  "mod_gpu|GPU drivers"
-  "mod_wallpaper|Wallpaper"
-  "mod_windowblind|Window blind"
-  "mod_greeter|Greeter"
-  "mod_hyprland|Hyprland"
-  "mod_polkit|Polkit"
-  "mod_hyprlock|Lock screen"
-  "mod_quickshell|Quickshell"
-  "mod_power|Power management"
-  "mod_kbdlight|Keyboard backlight"
-  "mod_nightlight|Night light"
-  "mod_session|Session memory"
-  "mod_update|Updater"
-  "mod_applets|Tray applets"
-  "mod_sensors|Sensors"
-  "mod_files|Files"
-  "mod_printing|Printing"
-  "mod_shell|Shell"
-  "mod_firefox|Firefox"
-  "mod_screencapture|Screen capture"
-  "mod_sudo|sudo-rs"
-  "mod_firewall|Firewall"
-  "mod_dns|DNS"
-  "mod_time|Network time"
-  "mod_harden|Hardening"
-  "mod_keyring|Keyring"
-  "mod_fwupd|Firmware updates"
-  "mod_logs|Log retention"
-  "mod_mirrors|Package mirrors"
-  "mod_style|Style"
-  "mod_flatpak|Flatpak"
-  "mod_uv|uv (Python)"
-  "mod_ai|AI integration"
-  "mod_updatesys|Update client"
-  # After the update client, which seeds /etc/w/update.conf (SITE_REPO lives
-  # there); mod_site re-renders whatever the overlay touches itself, so its
-  # position relative to --power/--dns/--time/--logs does not matter.
-  "mod_site|Site overlay"
-  "mod_reset|Config reset tool"
-  "mod_packs|Packs framework"
-  # LAST on purpose: creating the root snapper config here (not first) keeps the
-  # whole apply snapshot-free — snap-pac has no `root` config to snapshot during the
-  # package installs above, so the only post-install snapshot is `initial` below.
-  "fix_snapper|Snapper"
-)
-
+# ── Full apply ────────────────────────────────────────────────────────────────
+# The sequence and the labels come from the registry (phase `apply`, in file order);
+# the "@@WFB i n label@@" markers below are what the firstboot progress TUI reads
+# (scripts/install/lib/progress.sh:progress_modules) to drive its gauge. Label text
+# stays plain English like the rest of apply.sh's info() output — no i18n plumbing.
 run_all() {
   pre_apply_home_snapshot
-  local n=${#ALL_MODULES[@]} i=0 entry fn label
-  for entry in "${ALL_MODULES[@]}"; do
-    i=$((i + 1))
-    fn="${entry%%|*}"; label="${entry#*|}"
-    echo "@@WFB $i $n $label@@"
+  local i n=0 idx=() fn
+  for ((i = 0; i < W_MOD_N; i++)); do
+    if [[ "${W_MOD_PHASE[i]}" == apply ]]; then idx+=("$i"); n=$((n + 1)); fi
+  done
+  [[ $n -gt 0 ]] || die "module registry lists no --all modules"
+  local step=0
+  for i in "${idx[@]}"; do
+    step=$((step + 1))
+    fn="${W_MOD_FN[i]}"
+    echo "@@WFB $step $n ${W_MOD_LABEL[i]}@@"
+    declare -F "$fn" >/dev/null || die "module '${W_MOD_NAME[i]}': function $fn is not defined"
     "$fn"
   done
   initial_snapshot
@@ -612,67 +537,41 @@ initial_snapshot() {
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+# usage/dispatch are generated from the registry: a flag exists exactly when a row
+# declares one, and it calls exactly that row's function. --all/--dev stay explicit
+# (they are compositions, not modules).
 usage() {
-  echo "Usage: apply.sh [--snapper] [--rootfs] [--yay] [--packages] [--plymouth] [--grub] [--limine] [--gpu] [--wallpaper] [--windowblind] [--greeter] [--hyprland] [--polkit] [--hyprlock] [--quickshell] [--update] [--applets] [--sensors] [--files] [--printing] [--shell] [--firefox] [--screencapture] [--sudo] [--firewall] [--dns] [--time] [--harden] [--keyring] [--fwupd] [--logs] [--mirrors] [--flatpak] [--style] [--uv] [--ai] [--updatesys] [--site] [--reset] [--packs] [--power] [--kbdlight] [--nightlight] [--session] [--all] [--devtools] [--dev]"
+  local flags=() f line="Usage: apply.sh"
+  mapfile -t flags < <(w_modules_flags apply manual)
+  for f in "${flags[@]}"; do line+=" [$f]"; done
+  echo "$line [--all] [--devtools] [--dev]"
   echo "  No args: runs --snapper + --rootfs"
   echo "  --devtools: deploy dev-only test helpers (VM only, never in --all/build)"
   echo "  --dev:      --all + --devtools (manual dev-VM use)"
 }
+
+# flag → function, for every phase that owns one (install-only modules have none).
+declare -A FLAG_FN=()
+for ((_i = 0; _i < W_MOD_N; _i++)); do
+  if [[ -n "${W_MOD_FLAG[_i]}" && "${W_MOD_PHASE[_i]}" != install ]]; then
+    FLAG_FN["${W_MOD_FLAG[_i]}"]="${W_MOD_FN[_i]}"
+  fi
+done
+unset _i
 
 ARGS=("$@")
 [[ ${#ARGS[@]} -eq 0 ]] && ARGS=(--snapper --rootfs)
 
 for arg in "${ARGS[@]}"; do
   case "$arg" in
-    --snapper)   fix_snapper      ;;
-    --rootfs)    apply_rootfs     ;;
-    --yay)       install_yay      ;;
-    --packages)  install_packages ;;
-    --plymouth)  apply_plymouth   ;;
-    --grub)      mod_grub         ;;
-    --limine)    mod_limine       ;;
-    --gpu)       mod_gpu          ;;
-    --wallpaper)     mod_wallpaper    ;;
-    --windowblind)   mod_windowblind ;;
-    --greeter)       mod_greeter      ;;
-    --hyprland)  mod_hyprland     ;;
-    --polkit)    mod_polkit       ;;
-    --hyprlock)  mod_hyprlock     ;;
-    --quickshell) mod_quickshell  ;;
-    --update)    mod_update       ;;
-    --applets)   mod_applets      ;;
-    --sensors)   mod_sensors      ;;
-    --files)     mod_files        ;;
-    --printing)  mod_printing     ;;
-    --shell)     mod_shell        ;;
-    --firefox)   mod_firefox      ;;
-    --screencapture) mod_screencapture ;;
-    --sudo)      mod_sudo         ;;
-    --firewall)  mod_firewall     ;;
-    --dns)       mod_dns          ;;
-    --time)      mod_time         ;;
-    --harden)    mod_harden       ;;
-    --keyring)   mod_keyring      ;;
-    --fwupd)     mod_fwupd        ;;
-    --logs)      mod_logs         ;;
-    --mirrors)   mod_mirrors      ;;
-    --flatpak)   mod_flatpak      ;;
-    --style)     mod_style        ;;
-    --uv)        mod_uv           ;;
-    --ai)        mod_ai           ;;
-    --updatesys) mod_updatesys    ;;
-    --site)      mod_site         ;;
-    --reset)     mod_reset        ;;
-    --packs)     mod_packs        ;;
-    --power)     mod_power        ;;
-    --kbdlight)  mod_kbdlight     ;;
-    --nightlight) mod_nightlight  ;;
-    --session)   mod_session      ;;
-    --all)       run_all          ;;
-    --devtools)  mod_devtools     ;;
+    --all)      run_all          ;;
     # Dev-VM convenience: full apply + dev helpers. Never used by the installer.
-    --dev)       run_all; mod_devtools ;;
-    *) usage; exit 1              ;;
+    --dev)      run_all; mod_devtools ;;
+    *)
+      fn="${FLAG_FN[$arg]:-}"
+      [[ -n "$fn" ]] || { usage; exit 1; }
+      declare -F "$fn" >/dev/null || die "flag $arg maps to $fn, which is not defined"
+      "$fn" ;;
   esac
 done
 

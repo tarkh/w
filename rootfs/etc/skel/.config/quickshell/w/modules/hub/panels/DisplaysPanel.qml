@@ -61,6 +61,11 @@ Item {
     // Privileged actuation for the login-screen scope: handed up to the Hub, which
     // suspends for the polkit prompt and restores + refreshes on exit (same contract as
     // NetworkPanel.qml).
+    // Up on the topmost roving position hands the cursor to the header's "?" button
+    // (Hub.qml's focusHeaderHelp). A route with no `help` entry has no button and the
+    // Hub answers false — the cursor simply stays where it is.
+    signal focusHeader()
+
     signal runPrivileged(var cmd, var onDone)
 
     // The shared pill (core/WPill.qml) with the Hub's outline width — used for the
@@ -167,7 +172,7 @@ Item {
         root.scrollContentIntoView();
     }
     function moveUp() {
-        if (root.focusRegion === "scope") return;
+        if (root.focusRegion === "scope") { root.focusHeader(); return; }
         if (root.focusRegion === "actions") { root.focusRegion = "scope"; root.focusIdx = root.scopeIdx; return; }
         if (root.focusIdx > 0) { root.focusIdx--; root.scrollContentIntoView(); return; }
         if (root.scope === "greeter") { root.focusRegion = "actions"; root.focusIdx = 0; }
@@ -227,6 +232,17 @@ Item {
     // "night" = the night-light settings, which have no per-output rows at all and are
     // rendered entirely by NightLightSection.qml (the Repeater's model goes empty).
     property string scope: "session"
+
+    // Per-tab documentation for the header's "?" (contract in HubRegistry): the login
+    // screen is a separate config with its own staging rules, and the night light is a
+    // different subsystem entirely — one anchor cannot cover all three.
+    readonly property var help: {
+        switch (root.scope) {
+        case "greeter": return { page: "guide/displays.md", anchor: "the-login-screen-has-its-own-layout" };
+        case "night":   return { page: "guide/displays.md", anchor: "night-light" };
+        }
+        return { page: "guide/displays.md", anchor: "the-monitor-layout" };
+    }
 
     // ── Session state (list + status porcelain reads) ──────────────────────────────
     property var liveRows: []        // [{name,desc,mode,scale,transform,enabled,focused}]

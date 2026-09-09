@@ -127,6 +127,17 @@ Scope {
     // + title for the Loader and breadcrumb.
     readonly property var currentPanel: root.currentRoute.length ? HubRegistry.find(root.currentRoute) : null
 
+    // The documentation the header's "?" opens: the loaded panel's own `help` when it
+    // declares one (a tabbed panel whose tabs answer different questions — see the
+    // HubRegistry header), else the registry entry's. `undefined` = no property, so the
+    // registry wins; `null` = the panel saying "no button here", which must NOT fall
+    // back, hence the two-step rather than a single `||`.
+    readonly property var help: {
+        const own = panelLoader.item ? panelLoader.item.help : undefined;
+        if (own !== undefined) return own;
+        return root.currentPanel && root.currentPanel.help ? root.currentPanel.help : null;
+    }
+
     // +1 when drilling in (child enters from the right), -1 when going back (from the
     // left). Read by the content enter-transition.
     property int navDir: 1
@@ -177,8 +188,30 @@ Scope {
     // rootGrid and panelLoader.item are descendants of card), so this only needs to
     // move the ACTIVE item, not touch the Escape/Backspace handling below.
     function focusContent() {
+        root.helpFocused = false;
         if (panelLoader.active && panelLoader.item) panelLoader.item.forceActiveFocus();
         else rootGrid.forceActiveFocus();
+    }
+
+    // ── The header's "?" as a roving stop ─────────────────────────────────────────
+    // The help button belongs to the HEADER, which is the Hub's chrome and not the
+    // panel's content — so the panel cannot carry it in its own focusables list. The
+    // contract is one signal instead: a panel whose roving cursor is already at its
+    // topmost position emits focusHeader() on Up rather than swallowing the key, and
+    // the Hub parks the cursor on the button (when this route has one). Panels that
+    // do not emit it simply never reach the button — the same graceful degradation
+    // as a route with no `help` entry getting no button at all.
+    //
+    // While the cursor is here the Hub itself must hold real Qt focus: the panel is
+    // still alive and its Keys.onPressed would otherwise eat the arrows before they
+    // bubbled up (a focused descendant is asked first).
+    property bool helpFocused: false
+
+    function focusHeaderHelp() {
+        if (!root.hasHeader || !header.hasHelp) return false;
+        root.helpFocused = true;
+        card.forceActiveFocus();
+        return true;
     }
 
     // Consume any pending deep-link into a starting stack. Ф0: registry is empty so the
@@ -327,6 +360,19 @@ Scope {
                 // for confirm (see quickshell-hub.md's keyboard-nav section).
                 focus: true
                 Keys.onPressed: (e) => {
+                    // The roving cursor parked on the header's "?" (see focusHeaderHelp):
+                    // Enter opens that panel's page, Down hands the cursor back to the
+                    // panel, and Esc/Backspace keep navigating as they always do.
+                    if (root.helpFocused) {
+                        switch (e.key) {
+                        case HubNavKeys.confirm:
+                        case Qt.Key_Enter:
+                        case Qt.Key_Space:
+                            header.openHelp(); e.accepted = true; return;
+                        case HubNavKeys.down:
+                            root.focusContent(); e.accepted = true; return;
+                        }
+                    }
                     switch (e.key) {
                     case HubNavKeys.back:  root.back(); e.accepted = true; return;
                     case Qt.Key_Backspace: root.back(); e.accepted = true; return;
@@ -351,10 +397,16 @@ Scope {
                         visible: root.hasHeader
                         canGoBack: root.depth > 0
                         title: root.currentPanel ? Strings.t(root.currentPanel.title) : ""
-                        helpPage: root.currentPanel && root.currentPanel.help
-                                  ? root.currentPanel.help.page : ""
-                        helpAnchor: root.currentPanel && root.currentPanel.help
-                                    ? root.currentPanel.help.anchor : ""
+                        // A tabbed panel may answer a different question per tab, so the
+                        // LOADED screen gets to override the registry entry (HubRegistry
+                        // header). Reading `panelLoader.item` from here is safe in both
+                        // directions: the id resolves regardless of declaration order, and
+                        // the binding re-runs when the item (or its own help) changes. A
+                        // panel without the property yields undefined → registry default;
+                        // a panel returning null means "no button on this tab".
+                        helpPage: root.help ? root.help.page : ""
+                        helpAnchor: root.help ? root.help.anchor : ""
+                        helpFocused: root.helpFocused
                         onBack: root.back()
                     }
 
@@ -430,6 +482,8 @@ Scope {
                                 // returns it so Esc / Backspace navigate the Hub again (and,
                                 // now, so its own roving-nav Keys.onPressed sees arrows again).
                                 function onRestoreFocus() { root.focusContent(); }
+                                // Up at the panel's topmost row → the header's "?".
+                                function onFocusHeader() { root.focusHeaderHelp(); }
                                 // A panel that needs a file → the window-level picker.
                                 function onPickFile(opts, onPicked) { root.pickFile(opts, onPicked); }
                             }

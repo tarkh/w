@@ -69,6 +69,11 @@ Item {
     // `args` reaches the drilled-into panel as its `navArgs` (see Hub.push): the
     // editor has to be told WHICH theme it is editing.
     signal navigate(var route, var args)
+    // Up on the topmost roving position hands the cursor to the header's "?" button
+    // (Hub.qml's focusHeaderHelp). A route with no `help` entry has no button and the
+    // Hub answers false — the cursor simply stays where it is.
+    signal focusHeader()
+
 
     // The shared pill (core/WPill.qml) carrying the Hub's configured outline width.
     // The body used to live here, byte-for-byte in four panels; see WPill for the
@@ -165,7 +170,7 @@ Item {
         root.enterRegion(root.nextRegion(root.focusRegion), false);
     }
     function moveUp() {
-        if (root.focusRegion === "tab") return;
+        if (root.focusRegion === "tab") { root.focusHeader(); return; }
         if (root.focusRegion === "settings") {
             if (root.focusIdx > 0) { root.focusIdx--; return; }
             root.focusRegion = "tab"; root.focusIdx = root.tabs.indexOf("settings");

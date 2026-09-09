@@ -7,7 +7,7 @@ description: >-
   already-installed bundle is covered by that bundle's own skill (skills/<bundle>).
 sources:
   - path: .claude/library/packs.md
-    sha256: 4b3bcff0bbd9c57d0dee82df23a841c214ba4b8a91fbf690f29e48a571e90347
+    sha256: 83d58d741f78be6eb9bdab294fc288880eead52a7cdc707e3ad737a83e42d7c5
 tools:
   - w_pack_list
   - w_pack_status
@@ -22,7 +22,9 @@ theme, shell, security — and is always present. **W-Packs** are the second lay
 
 - A bundle is named by *direction*, not by tool: `containers` (not `podman`),
   `gaming` (not `steam`). The user picks a capability; the engine is an
-  implementation detail.
+  implementation detail. Where the ecosystem itself *is* the choice, its own name is
+  the direction — `flatpak` (the sandboxed-app channel), `bitwarden` (that vendor's
+  desktop app wired into W's slots).
 - A bundle is **self-contained**: one directory under `/usr/share/w/packs/<bundle>/`
   carries everything it needs — packages, config, its w-style theme axis, its AI
   knowledge, and a setup step. Installing it wires all of that up; the base system

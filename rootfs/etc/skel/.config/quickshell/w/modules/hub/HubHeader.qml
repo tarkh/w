@@ -18,8 +18,21 @@ Item {
     property bool canGoBack: false
     property string helpPage: ""       // docs page of this panel; "" → no button
     property string helpAnchor: ""     // section slug within that page
+    // Roving-focus indicator for the "?" button. The header is the Hub's, not the
+    // panel's, so the panel cannot own this index: a panel whose own roving cursor
+    // is at the top emits focusHeader() and the Hub parks the cursor HERE (see
+    // Hub.qml's helpFocused). Same visual contract as every other focused element —
+    // Colors.hover wash + a 2px accentInk ring.
+    property bool helpFocused: false
+
+    readonly property bool hasHelp: root.helpPage.length > 0
 
     signal back()
+
+    // Activation from the keyboard, called by the Hub when Enter lands on the button.
+    function openHelp() {
+        if (root.hasHelp) DocsViewer.openPage(root.helpPage, root.helpAnchor);
+    }
 
     implicitHeight: 40
     implicitWidth: parent ? parent.width : 0
@@ -88,7 +101,16 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         width: 28
         height: 28
-        visible: root.helpPage.length > 0
+        visible: root.hasHelp
+
+        Rectangle {
+            anchors.fill: parent
+            radius: Geometry.radiusSm
+            visible: root.helpFocused
+            color: Colors.hover
+            border.color: Colors.accentInk
+            border.width: 2
+        }
 
         ChromeIcon {
             anchors.centerIn: parent
@@ -101,7 +123,7 @@ Item {
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            onClicked: DocsViewer.openPage(root.helpPage, root.helpAnchor)
+            onClicked: root.openHelp()
         }
     }
 }

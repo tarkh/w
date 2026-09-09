@@ -28,6 +28,11 @@ import qs.modules.shading
 
 Item {
     id: root
+    // Up on the topmost roving position hands the cursor to the header's "?" button
+    // (Hub.qml's focusHeaderHelp). A route with no `help` entry has no button and the
+    // Hub answers false — the cursor simply stays where it is.
+    signal focusHeader()
+
     // +8 mirrors the Flickable's own contentHeight padding below (focus-wash bleed
     // slack) — see quickshell-hub.md's Ф-Keyboard gotcha #6.
     implicitHeight: Math.max(col.implicitHeight + 8, menuLayer.menuBottom)
@@ -125,7 +130,9 @@ Item {
         if (root.focusCount === 0) return;
         switch (e.key) {
         case HubNavKeys.down: root.focusRow(root.focusIndex + 1); e.accepted = true; return;
-        case HubNavKeys.up:   root.focusRow(root.focusIndex - 1); e.accepted = true; return;
+        case HubNavKeys.up:
+            if (root.focusIndex === 0) { root.focusHeader(); e.accepted = true; return; }
+            root.focusRow(root.focusIndex - 1); e.accepted = true; return;
         case HubNavKeys.confirm:
         case Qt.Key_Enter:
         case Qt.Key_Space: {

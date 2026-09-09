@@ -38,6 +38,11 @@ Item {
     // Emitted when chord capture ends or a prompt closes: the Hub re-grabs keyboard focus on its
     // card so Esc / Backspace navigate again (during capture / a prompt we hold focus elsewhere).
     signal restoreFocus()
+    // Up on the topmost roving position hands the cursor to the header's "?" button
+    // (Hub.qml's focusHeaderHelp). A route with no `help` entry has no button and the
+    // Hub answers false — the cursor simply stays where it is.
+    signal focusHeader()
+
 
     // The shared pill (core/WPill.qml) with the Hub's outline width — used across
     // the banner and prompt forms. Was a file-local copy of the same Rectangle.
@@ -463,7 +468,9 @@ Item {
         if (cd.length === 0) return;
         switch (e.key) {
         case HubNavKeys.down: root.focusRow(root.focusIndex + 1); e.accepted = true; return;
-        case HubNavKeys.up:   root.focusRow(root.focusIndex - 1); e.accepted = true; return;
+        case HubNavKeys.up:
+            if (root.focusIndex === 0) { root.focusHeader(); e.accepted = true; return; }
+            root.focusRow(root.focusIndex - 1); e.accepted = true; return;
         case HubNavKeys.del: {
             const d = cd[root.focusIndex];
             // Mirrors the mouse's × exactly on both row kinds — that click removes with

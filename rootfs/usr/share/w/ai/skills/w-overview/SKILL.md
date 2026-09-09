@@ -7,7 +7,7 @@ description: >-
   before answering questions about how W is organized or which command to use.
 sources:
   - path: .claude/library/essentials.md
-    sha256: 10eef30984a20696d87e18e5ebb485c62b3b81d667e11cc7fa8e28879a12034f
+    sha256: 8ff2eea0cec41b9f19a08f9476526b4c62dc89550152e68c15e29a5f6ba190c7
 ---
 
 # W Overview
@@ -35,8 +35,15 @@ W keeps its own state and configuration under predictable roots:
 | `~/.config/quickshell/w/` | The Quickshell UI config tree, live. Split by ownership: `shell.qml`, `core/`, `modules/` are W's (refreshed by every update, in EVERY account's home); `config/*.json` (bar, launcher, notifications, …) are the user's — written once, never overwritten. |
 | `/run/w/` | Runtime state: the resolved wallpaper manifest under `/run/w/wallpaper/`, and `/run/w/fp/` where the auth dialog parks its per-user "ask me for the password, not my fingerprint" flag. |
 | `/usr/share/w/ai/` | This AI knowledge base (read-only, shipped). |
+| `/usr/share/doc/w/` | The user documentation, on disk: `index.md`, `faq.md`, `guide/`, a page per command under `reference/`, and `RECOVERY.md`. |
 | `/usr/bin/w-*` | The first-party W command-line tools — everything a person, a unit or a config calls by name. |
 | `/usr/lib/w/` | W's internals: sourced shell libraries, the polkit dispatchers, the `w-mcp` Python package, the `w-style` rendering axes. Not on `PATH`, and not meant to be run by hand. |
+
+Point people at the shipped documentation rather than improvising an answer: it is
+the same text the desktop shows on <kbd>Super+F1</kbd> (and behind the **?** button
+in a Hub panel), it works with no network, and `reference/w-<cmd>.md` is generated
+from that command's own help, so it cannot drift from the tool. `w-info` lists every
+command with a one-line description.
 
 Themes resolve **user over system**: a per-user theme in `~/.config/w/` shadows the
 system one in `/etc/w/`, and both sit above W's defaults in `/usr/share/w/defaults/`

@@ -53,12 +53,29 @@ Item {
     implicitHeight: Math.max(topCol.implicitHeight + 12 + col.implicitHeight + 8, menuLayer.menuBottom)
 
     // Drill into a deeper Hub route (the layout picker).
+    // Up on the topmost roving position hands the cursor to the header's "?" button
+    // (Hub.qml's focusHeaderHelp). A route with no `help` entry has no button and the
+    // Hub answers false — the cursor simply stays where it is.
+    signal focusHeader()
+
     signal navigate(var route)
 
     component Pill: WPill { borderWidth: HubConfig.border }
 
     // ── Backing state ────────────────────────────────────────────────────────────
     property string scope: "keyboard"          // keyboard | mouse | touchpad | fingerprint
+
+    // Per-tab documentation for the header's "?" (contract in HubRegistry). Fingerprint
+    // deliberately leaves this page: enrolling a finger is a login-security topic and is
+    // documented there, next to the password fallback it changes.
+    readonly property var help: {
+        switch (root.scope) {
+        case "mouse":       return { page: "guide/input.md", anchor: "mouse" };
+        case "touchpad":    return { page: "guide/input.md", anchor: "touchpad" };
+        case "fingerprint": return { page: "guide/security.md", anchor: "fingerprint-login" };
+        }
+        return { page: "guide/input.md", anchor: "keyboard-layouts-and-the-switch-key" };
+    }
 
     // Keyboard ring (authoritative: w-keyboard status)
     property var    codes: []                  // ordered layout codes, e.g. ["us","ru"]
@@ -375,7 +392,7 @@ Item {
         root.focusRow(root.focusIdx + 1);
     }
     function moveUp() {
-        if (root.focusRegion === "scope") return;
+        if (root.focusRegion === "scope") { root.focusHeader(); return; }
         if (root.focusIdx > 0) { root.focusRow(root.focusIdx - 1); return; }
         root.focusRegion = "scope";
         root.scopeIdx = Math.max(0, root.scopes.indexOf(root.scope));

@@ -37,6 +37,11 @@ Item {
 
     // Privileged actuation: hand the pkexec command up to the Hub, which suspends for the
     // polkit prompt and restores + refreshes on exit. onDone re-reads the affected state.
+    // Up on the topmost roving position hands the cursor to the header's "?" button
+    // (Hub.qml's focusHeaderHelp). A route with no `help` entry has no button and the
+    // Hub answers false — the cursor simply stays where it is.
+    signal focusHeader()
+
     signal runPrivileged(var cmd, var onDone)
 
     // ── Keyboard roving-focus (flat list, top→bottom) ───────────────────────────────
@@ -59,7 +64,9 @@ Item {
         if (hostField.input.activeFocus) return;
         switch (e.key) {
         case HubNavKeys.down: root.focusRow(root.focusIndex + 1); e.accepted = true; return;
-        case HubNavKeys.up:   root.focusRow(root.focusIndex - 1); e.accepted = true; return;
+        case HubNavKeys.up:
+            if (root.focusIndex === 0) { root.focusHeader(); e.accepted = true; return; }
+            root.focusRow(root.focusIndex - 1); e.accepted = true; return;
         case HubNavKeys.confirm:
         case Qt.Key_Enter:
         case Qt.Key_Space:

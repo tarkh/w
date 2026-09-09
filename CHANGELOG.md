@@ -8,6 +8,58 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.8.0
+
+- **The documentation now covers every Hub panel — and speaks Russian.** Six new
+  guides join the four already shipped: displays, input, network, power, AI and
+  packs, ten in total. The **?** in a Hub tab header opens the matching page from
+  twelve places now instead of two, including tabs that had no way in at all —
+  **System → Security**, and **System → Rollback**, which opens the recovery page.
+  The whole tree — start page, FAQ and all ten guides — is translated into Russian
+  and appears on its own when the system language is Russian. The per-command
+  reference stays English: it is generated from the commands' own help text. The
+  project README links into the tree too, so the docs are readable on GitHub
+  without installing W.
+
+- **Fixed: on a Russian system the documentation would not open at all.** Every
+  page is looked up in your language first and falls back to English. Since
+  v0.7.0, where that fallback arrived, a race in the file loader killed the retry,
+  so a non-English system got an empty viewer and nothing else. It falls back
+  correctly now — and there is a Russian tree for it to find.
+
+- **The documentation reads better.** Rewritten renderer: real spacing between
+  paragraphs and lists, themed links, commands set off from the prose, and code
+  shown on its own block with shell highlighting. You can select the text with the
+  mouse and copy it with Ctrl+C, and scroll a page from the keyboard.
+  **Documentation** in **Hub → System** is no longer stepped over when you move
+  through the Hub with the arrow keys.
+
+- **Flatpak is no longer installed with the base system.** It is a second software
+  ecosystem with its own runtimes and store, and a machine that takes its software
+  from the repositories never needs it — so it is now an optional bundle:
+  Flatpak + Flathub, the Bazaar store, Flatseal, and the W theme carried into the
+  sandbox. New installs get it as an unchecked box in the installer, or later with
+  `sudo w-pack install flatpak`.
+
+  **On machines already running W nothing is removed** — Flatpak stays installed
+  and keeps working. If you use it, run `sudo w-pack install flatpak` once to put
+  it under bundle management; after that `sudo w-pack refresh flatpak` tops up the
+  sandbox theming that a system update used to do on its own.
+
+- **Fixed: four reference pages showed escaping the commands never print.** The
+  pages for `w-ai`, `w-mirrors`, `w-pack` and `w-theme` carried stray backslashes
+  in front of quoted command names.
+
+- **Fixed: the FAQ named a command that does not exist.** Recovering from a black
+  screen is `w-monitor reset --all`, not `w-monitor reset all`.
+
+- **Fixed: a selective update could run its steps out of order.** The module list
+  `w-sync` used had drifted from the one the system applies: eight modules were
+  missing from it and got appended at the end, so time settings, power, mirrors
+  and five others ran after package installation rather than in their place. It
+  never produced a failure. Both lists are now generated from one registry, and a
+  check proves they agree.
+
 ## v0.7.0
 
 - **W's documentation now ships with the system and opens on the desktop.** Press

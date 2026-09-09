@@ -38,6 +38,11 @@ Item {
     // where it wasn't masked by genuine overflow the way it is here).
     implicitHeight: Math.max(col.implicitHeight + 8, menuLayer.menuBottom)
 
+    // Up on the topmost roving position hands the cursor to the header's "?" button
+    // (Hub.qml's focusHeaderHelp). A route with no `help` entry has no button and the
+    // Hub answers false — the cursor simply stays where it is.
+    signal focusHeader()
+
     signal runPrivileged(var cmd, var onDone)
 
     // ── Keyboard roving-focus (flat list, top→bottom, inside a Flickable) ───────────
@@ -90,7 +95,9 @@ Item {
         if (vf.length === 0) return;
         switch (e.key) {
         case HubNavKeys.down: root.focusRow(root.focusIndex + 1); e.accepted = true; return;
-        case HubNavKeys.up:   root.focusRow(root.focusIndex - 1); e.accepted = true; return;
+        case HubNavKeys.up:
+            if (root.focusIndex === 0) { root.focusHeader(); e.accepted = true; return; }
+            root.focusRow(root.focusIndex - 1); e.accepted = true; return;
         case HubNavKeys.confirm:
         case Qt.Key_Enter:
         case Qt.Key_Space: {

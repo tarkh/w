@@ -23,11 +23,16 @@ pragma Singleton
 //   3. DEEP LINK: an anchor slug selects ONE section — from its heading to the
 //      next heading of the same-or-higher level — instead of the whole page.
 //      The card is a ~720px dialog; the section that answers the question is
-//      what a deep link is FOR. A missing anchor (or a not-yet-translated one)
-//      degrades to the whole page, never to an error.
+//      what a deep link is FOR. The anchor a Hub help: button carries is fixed
+//      at the EN slug (the registry has no per-locale copy); a loaded page may
+//      declare a frontmatter `anchors:` map from that EN slug to its own
+//      heading's slug, translated before the section search. A missing anchor
+//      (mapped or not) degrades to the whole page, never to an error.
 //   4. IMAGE ABSOLUTIZATION: relative image targets are rewritten to absolute
-//      file:// URLs against the page's own directory, because the card's Text
+//      file:// URLs against the page's own directory, because the card's body
 //      resolves markdown resources against the QML file, not against the doc.
+//   5. RENDERING: handed to the infobox as markdown, which core/Markdown turns
+//      into themed rich text (block rhythm, code plaques, link colour).
 //
 // FileView's loadFailed drives the locale fallback: try <lang>/<page>, then
 // <page> — no filesystem probing anywhere.
@@ -91,7 +96,16 @@ Singleton {
     FileView {
         id: view
         onLoaded: root._render(text())
-        onLoadFailed: root._next()
+        // Deferred, not a direct call: reassigning this SAME FileView's `path`
+        // synchronously from inside its own loadFailed handler races Quickshell's
+        // internal operation teardown — the retry gets silently dropped ("got
+        // operation finished from dropped operation"), neither loaded nor
+        // loadFailed fires for it, and the card never opens. Reproduced headless
+        // (quickshell -p) against a real missing-then-present candidate pair:
+        // synchronous retry drops every time, Qt.callLater's one-tick defer does
+        // not. Only ever exercised with 2+ candidates — i.e. a non-English
+        // locale, which is why English (always one candidate) never hit it.
+        onLoadFailed: Qt.callLater(() => root._next())
     }
 
     // One glyph for "help" everywhere (Hub's help button, docs cards) — verified
@@ -122,9 +136,21 @@ Singleton {
         const tm = /^title:[ \t]*(.+)$/m.exec(fm);
         const pageTitle = tm ? tm[1].trim().replace(/^["']|["']$/g, "") : root.wantedPage;
 
+        // A translated page's headings slug differently from the EN anchor a
+        // Hub help: button carries (fixed at the registry, not per-locale), so
+        // it may declare a frontmatter map from that EN slug to its own heading's
+        // slug. Checked for completeness by docs.sh's _chk_help_anchors.
+        let anchor = root.wantedAnchor;
+        const am = /^anchors:\r?\n((?:^[ \t]+\S.*\r?\n?)+)/m.exec(fm);
+        if (am && anchor) {
+            const esc = anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const p = new RegExp("^[ \\t]+" + esc + ":[ \\t]*(.+?)[ \\t]*$", "m").exec(am[1]);
+            if (p) anchor = p[1].trim();
+        }
+
         let title = pageTitle;
-        if (root.wantedAnchor) {
-            const sec = root._section(body, root.wantedAnchor);
+        if (anchor) {
+            const sec = root._section(body, anchor);
             if (sec) {
                 title = sec.heading;
                 body = sec.body;
@@ -135,15 +161,10 @@ Singleton {
         body = body.replace(/(!\[[^\]]*\]\()(?!\w+:|\/|#[^)]*)([^)\s]+)/g,
             (all, pre, src) => pre + "file://" + root.dir + "/" + pageDir + "/" + src);
 
-        // The card's markdown importer has flat block margins: headings come
-        // with NONE, list and hr containers sit flush against surrounding
-        // text, and the list MARKER follows the source bullet char (`-` filled
-        // disc, `*` hollow circle, `+` square — probed against the shipped Qt).
-        // All uniform-only, source-agnostic block rules live in _spaceUp:
-        // spacer paragraphs (U+200B keeps the width exact) around headings,
-        // code fences, rules and list runs, and every bullet marker becomes
-        // the disc one. Pages on disk stay untouched canonical GFM.
-        body = root._spaceUp(body);
+        // Block rhythm, code highlighting and link colour are NOT this file's
+        // business: every infobox body goes through core/Markdown, so a docs page
+        // and a statement card breathe identically. Pages on disk stay canonical
+        // GFM — no rendering hints are written into them.
 
         const actions = [];
         if (root.wantedAnchor) {
@@ -165,82 +186,6 @@ Singleton {
             actions: actions.length ? actions : undefined,
             onLink: (link) => root._openLink(link, pageDir)
         });
-    }
-
-    // Uniform block rules for the card's flat-margin importer. One empty
-    // spacer line (≈ one body line high) above/below: headings, fenced code,
-    // horizontal rules, and whole LISTS (the <ul>/<ol> container itself gets
-    // zero margin from the importer — only the items between them breathe).
-    // Also normalizes every bullet marker to `-`, so no source can ship
-    // hollow-circle or square markers. Inside a fence nothing is touched.
-    // Paragraph blocks are Qt's own 7px pair — untouched.
-    function _spaceUp(src) {
-        const SP = "\u200b";
-        const out = [];
-        const lines = src.split("\n");
-        const gap = () => {
-            if (out.length && out[out.length - 1] !== SP) out.push(SP);
-        };
-        const bullet = /^[ \t]*([*+-])[ \t]+/;
-        const ordered = /^[ \t]*\d{1,9}[.)][ \t]+/;
-        let fence = false, inList = false;
-        for (let line of lines) {
-            if (/^```/.test(line)) {
-                if (!fence) gap();
-                out.push(line);
-                if (fence) gap();
-                fence = !fence;
-                inList = false;
-                continue;
-            }
-            if (fence) {
-                out.push(line);
-                continue;
-            }
-            if (/^[ \t]*-{3,}[ \t]*$/.test(line) || /^[ \t]*\*{3,}[ \t]*$/.test(line)) {
-                gap();
-                out.push(line);
-                gap();
-                inList = false;
-                continue;
-            }
-            // A list item, either marker class. ONE state for both: the run
-            // stays open through items, loose blanks and indented
-            // continuations, and gets exactly one spacer above the first item
-            // and one after the last — never between the items.
-            const bm = bullet.exec(line);
-            if (bm || ordered.test(line)) {
-                if (bm && bm[1] !== "-")
-                    line = line.slice(0, bm.index) + " - " + line.slice(bm.index + bm[1].length);
-                if (!inList) {
-                    gap();
-                    inList = true;
-                }
-                out.push(line);
-                continue;
-            }
-            if (inList && line.trim() === "") {
-                out.push(line);          // loose list — run continues
-                continue;
-            }
-            if (inList && /^[ \t]{2,}/.test(line)) {
-                out.push(line);          // indented continuation of a list item
-                continue;
-            }
-            if (inList) {
-                gap();
-                inList = false;
-            }
-            if (/^#{1,6}[ \t]+\S/.test(line)) {
-                gap();
-                out.push(line);
-                out.push(SP);
-                continue;
-            }
-            out.push(line);
-        }
-        if (inList) gap();
-        return out.join("\n");
     }
 
     // Link dispatch: documentation links navigate, the rest are external.

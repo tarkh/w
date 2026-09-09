@@ -191,7 +191,8 @@ causes partial upgrades.
 
 - **Rollback:** handled automatically by snap-pac (snapshots each `yay -Syu`) + grub-btrfs
   (boot into a snapshot). No separate action is needed.
-- **Firmware and Flatpak** update through their own channels (`fwupdmgr`, the Bazaar
-  store), deliberately outside `w-update`.
+- **Firmware and Flatpak** update through their own channels (`fwupdmgr`; `flatpak
+  update` or the Bazaar store, if the optional `flatpak` bundle is installed),
+  deliberately outside `w-update`.
 - **Package delivery** (mirror selection, retries, the `w-mirrors` upkeep tool) is its own
   layer under all of this — see the section above.

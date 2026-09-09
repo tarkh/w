@@ -23,12 +23,12 @@
 #   1. `git diff --name-only OLD..NEW` lists every changed path.
 #   2. Each path is matched against /usr/share/w/update/sync-map (first rule wins):
 #        <glob>\t<flag>   flag ∈ a real apply flag (--dns) | AUTO | --all | --skip
-#      - AUTO  : the path is scripts/install/modules/<m>.sh → derive --<m>, but only
-#                if apply.sh actually accepts it (post-boot module); install-only
-#                modules (base/network/…) have no flag → skipped.
+#      - AUTO  : the path is scripts/install/modules/<m>.sh → derive its flag from
+#                the module registry, but only when that module runs post-boot;
+#                install-only modules (base/network/…) have no flag → skipped.
 #      - --all : force a full apply (core paths: apply.sh, install/lib).
 #      - --skip: nothing to apply on the target (docs, vm/, .claude/).
-#   3. The collected flags run in canonical (ALL_MODULES) order. An unmatched path
+#   3. The collected flags run in canonical registry order. An unmatched path
 #      safely falls through to --all — forgetting a rule is slow, never broken.
 # The map is read from the freshly-pulled checkout, so it is always current.
 
@@ -63,12 +63,27 @@ COMMITS_CAP=30
 # check timer runs every 6h, so a full day of silence means nobody refreshed it).
 STATE_STALE_AFTER=86400
 
-# Canonical apply order (mirrors apply.sh ALL_MODULES) — selected flags run in this
-# sequence so ordering constraints (rootfs first, style late, …) hold on a subset.
-ORDER=(--rootfs --yay --packages --plymouth --grub --limine --gpu --wallpaper \
-  --windowblind --greeter --hyprland --polkit --hyprlock --quickshell --update \
-  --applets --sensors --files --printing --shell --firefox --screencapture --sudo \
-  --firewall --dns --harden --keyring --fwupd --style --flatpak --ai --updatesys --site --reset --packs)
+# Canonical apply order and the post-boot flag set both come from the module registry
+# in the freshly-pulled checkout (scripts/install/modules.conf — the same file apply.sh
+# reads), so a selected subset runs in apply.sh's own sequence and ordering constraints
+# (rootfs first, style late, snapper last) hold. It replaces a hand-kept ORDER array
+# that had already drifted: eight modules added to apply.sh were missing here, and the
+# tail-append fallback ran them out of order.
+MODULES_CONF="$REPO/scripts/install/modules.conf"
+MODULES_LIB="$REPO/scripts/install/lib/modules.sh"
+ORDER=()
+
+# Loaded lazily: the read-only commands (check/status/log) must keep working on a
+# machine whose checkout is missing, and only the apply path needs the order at all.
+load_order() {
+  [[ ${#ORDER[@]} -gt 0 ]] && return 0
+  [[ -r "$MODULES_LIB" && -r "$MODULES_CONF" ]] || return 1
+  # shellcheck source=../../../scripts/install/lib/modules.sh
+  source "$MODULES_LIB"
+  w_modules_load "$MODULES_CONF" || return 1
+  mapfile -t ORDER < <(w_modules_flags apply manual)
+  [[ ${#ORDER[@]} -gt 0 ]]
+}
 
 err()  { echo -e "\033[1;31mw-sync:\033[0m $*" >&2; }
 info() { echo -e "\033[1;35m==>\033[0m $*"; }
@@ -570,6 +585,8 @@ compute_flags() {
   local changed="$1" force_all="$2" f flag mod
   declare -A want=()
   [[ "$force_all" == yes ]] && { echo "--all"; return; }
+  # No registry (or an unreadable one) → a full apply, never a guessed subset.
+  load_order || { echo "--all"; return; }
   while IFS= read -r f; do
     [[ -z "$f" ]] && continue
     flag="$(map_file "$f")"
@@ -578,9 +595,10 @@ compute_flags() {
       --all)  echo "--all"; return ;;
       AUTO)
         mod="$(basename "$f")"; mod="${mod%.sh}"
-        # Only route to a flag apply.sh actually accepts (post-boot module);
-        # install-only modules (base/network/…) have none → nothing to do.
-        grep -q -- "--$mod)" "$APPLY" && want["--$mod"]=1 ;;
+        # Only route to a module the registry declares post-boot; an install-only one
+        # (base/network/…) and the dev-only one have no flag here → nothing to do.
+        mod="$(w_modules_flag_of "$mod")"
+        [[ -n "$mod" ]] && want["$mod"]=1 ;;
       *) want["$flag"]=1 ;;
     esac
   done <<< "$changed"
@@ -588,8 +606,8 @@ compute_flags() {
   for flag in "${ORDER[@]}"; do
     [[ -n "${want[$flag]:-}" ]] && { out+=("$flag"); unset "want[$flag]"; }
   done
-  # Any flag not in ORDER (a module added to apply.sh but not mirrored here yet) is
-  # still applied — appended at the end rather than silently dropped.
+  # Any flag not in ORDER (a sync-map rule naming something the registry does not
+  # declare) is still applied — appended at the end rather than silently dropped.
   for flag in "${!want[@]}"; do out+=("$flag"); done
   printf '%s' "${out[*]}"
 }
