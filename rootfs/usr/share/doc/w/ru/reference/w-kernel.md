@@ -1,0 +1,43 @@
+---
+title: w-kernel
+section: reference
+order: 0
+summary: Выбор активного ядра и переключение профиля защиты.
+---
+
+`w-kernel` — Выбор активного ядра и переключение профиля защиты.
+
+## Использование
+
+```
+Использование: w-kernel <команда> [параметры]
+
+Info: Выбор активного ядра и переключение профиля защиты.
+
+Команды:
+  list [--porcelain]        Известные ядра, какие установлены, ядро по умолчанию
+                            и запущенное
+  set <zen|vanilla|lts>     Установить ядро (+парные headers) и сделать основным
+  remove <zen|vanilla|lts>  Удалить ядро (+headers); откажется трогать запущенное
+                            или основное
+  harden <on|off|status>    Переключить весь профиль защиты (sysctl + cmdline)
+                            (status принимает --porcelain)
+  help                      Показать эту справку
+
+Porcelain:
+  list --porcelain          TSV, заголовок + строка на ядро:
+                            name  pkg  version  installed  default  running
+  harden status --porcelain TSV, заголовок + строка: state(on|off|mixed) pending(yes|no
+
+Коды выхода:
+  0  Успех
+  1  Ошибка выполнения
+  2  Ошибка вызова
+
+Примеры:
+  sudo w-kernel set lts
+  sudo w-kernel harden on
+```
+
+Эта страница генерируется из собственной справки команды (w-docs-refgen). Живая
+версия того же текста на машине с W: `w-kernel help`.

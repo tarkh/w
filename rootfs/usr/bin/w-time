@@ -33,7 +33,13 @@ die() { err "$*"; exit 1; }
 need_root() { [[ $EUID -eq 0 ]] || die "this command requires root"; }
 need_conf() { wconf_has time SERVERS || die "no NTP configuration in any layer (vendor file missing — run: sudo apply.sh --rootfs)"; }
 
+# W_I18N_LIB is a dev/test seam, the same one W_CONF_LIB is: it lets this CLI be
+# sourced from a checkout on a machine with no W installed (scripts/check/tests).
+# shellcheck source=../lib/w/w-i18n-lib.sh
+source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
+
 usage() {
+  if w_help w-time; then return 0; fi
   cat <<EOF
 Usage: w-time <command> [args]
 

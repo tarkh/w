@@ -30,7 +30,14 @@ set -euo pipefail
 err() { echo "w-docs-check: $*" >&2; }
 
 quiet=0
-case "${1:-}" in "" | --quiet) quiet=1 ;;
+# NB: `""` and `--quiet` used to share this arm, which made verbose mode
+# unreachable — and since quiet also gated the MISSING/DRIFT lines, the tool could
+# only ever say "problems: N" without naming a single page. Both halves fixed:
+# default is verbose, and quiet now suppresses only the OK lines, exactly as the
+# help above says.
+case "${1:-}" in
+"") ;;
+--quiet) quiet=1 ;;
 -h | --help)
     grep '^#' "$0" | tail -n +2 | sed 's/^# \{0,1\}//'
     exit 0
@@ -78,13 +85,13 @@ for page in "${pages[@]}"; do
         want="${pair##*	}"
         f="$REPO/$path"
         if [[ ! -f $f ]]; then
-            [[ $quiet == 0 ]] && printf 'MISSING  %s\n        %s\n' "$page" "$path" >&2
+            printf 'MISSING  %s\n        %s\n' "$page" "$path" >&2
             bad=1
             continue
         fi
         have="$(sha256sum "$f" | awk '{print $1}')"
         if [[ $have != "$want" ]]; then
-            [[ $quiet == 0 ]] && printf 'DRIFT    %s\n        %s changed since curation\n' "$page" "$path" >&2
+            printf 'DRIFT    %s\n        %s changed since curation\n' "$page" "$path" >&2
             bad=1
         fi
     done

@@ -5,7 +5,7 @@ order: 0
 summary: Render the active theme across all themed subsystems.
 ---
 
-`w-style` — Render the active theme across all themed subsystems..
+`w-style` — Render the active theme across all themed subsystems.
 
 ## Usage
 
@@ -20,6 +20,24 @@ Commands:
   status                         Show key resolved colors (system theme)
 
 Subsystems (in apply order — [scope] user | system | dual):
+$SUBSYSTEMS
+
+  user   = all user-scope axes into $HOME (or /etc/skel as root); login render, no system work
+  all    = user-scope (skel) + system axes; requires root (install-time)
+
+Scope: user axes → invoking user's effective theme; system axes → system fallback
+       (/etc/w/active-theme); dual axes → user channels + system channels when root.
+
+Exit codes:
+  0  Success
+  1  Runtime error
+  2  Usage error
+
+Examples:
+  w-style apply hyprland
+  w-style apply all
+  w-style set W_PALETTE_ACCENT "#9d6fa8"
+  w-style status
 ```
 
 This page is generated from the command's own help text (w-docs-refgen). The

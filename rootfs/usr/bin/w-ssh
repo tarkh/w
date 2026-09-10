@@ -60,7 +60,13 @@ KEYS_DIR="$SSH_DIR/agent-keys"
 USER_CONFIG="$SSH_DIR/config"
 INCLUDE_LINE="Include config.d/*.conf"
 
+# W_I18N_LIB is a dev/test seam, the same one W_CONF_LIB is: it lets this CLI be
+# sourced from a checkout on a machine with no W installed (scripts/check/tests).
+# shellcheck source=../lib/w/w-i18n-lib.sh
+source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
+
 usage() {
+  if w_help w-ssh; then return 0; fi
   cat <<EOF
 Usage: w-ssh <command>
 

@@ -5,7 +5,7 @@ order: 0
 summary: Manage mouse, touchpad and swipe-gesture settings of the Wayland session.
 ---
 
-`w-pointer` — Manage mouse, touchpad and swipe-gesture settings of the Wayland session..
+`w-pointer` — Manage mouse, touchpad and swipe-gesture settings of the Wayland session.
 
 ## Usage
 

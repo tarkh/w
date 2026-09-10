@@ -36,10 +36,17 @@ add-zsh-hook precmd _w_reload_shell_colors
 # Modern CLI first (eza/bat), with a graceful fallback to coreutils. eza icons +
 # colors and bat highlighting follow the active theme (EZA_COLORS via w-style; bat
 # rides the ghostty palette through BAT_THEME=ansi).
+#
+# No `-h` on the long listings. In eza that flag is --header, not human-readable
+# (sizes are human by default), and that header row — "Permissions Size User Date
+# Modified Name" — is the ONLY English left in a listing on a translated system:
+# eza has no i18n and the dates already follow the locale through chrono. Dropping
+# it makes the listing fully localized. eza's error messages stay English; that is
+# upstream's, not ours (config-i18n.md §5).
 if command -v eza &>/dev/null; then
   alias ls='eza --group-directories-first --icons=auto'
-  alias ll='eza -lh --group-directories-first --icons=auto --git'
-  alias la='eza -lah --group-directories-first --icons=auto --git'
+  alias ll='eza -l --group-directories-first --icons=auto --git'
+  alias la='eza -la --group-directories-first --icons=auto --git'
   alias lt='eza --tree --level=2 --group-directories-first --icons=auto'
 else
   alias ls='ls --color=auto --group-directories-first'

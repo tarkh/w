@@ -5,7 +5,7 @@ order: 0
 summary: Show and switch the system UI language (LANG).
 ---
 
-`w-locale` — Show and switch the system UI language (LANG)..
+`w-locale` — Show and switch the system UI language (LANG).
 
 ## Usage
 
@@ -16,7 +16,9 @@ Info: Show and switch the system UI language (LANG).
 
 Commands:
   status [--porcelain]   Show the current LANG
-  list [--porcelain]     List selectable UTF-8 locales
+  list [--porcelain] [--names]
+                         List selectable UTF-8 locales (--names adds each
+                         language's own name and country, tab-separated)
   set <locale>           Switch LANG (root; generates the locale; needs relogin)
   help                   Show this help
 

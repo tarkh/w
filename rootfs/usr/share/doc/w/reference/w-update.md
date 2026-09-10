@@ -5,7 +5,7 @@ order: 0
 summary: Update all system and AUR packages (repo + AUR in one pass).
 ---
 
-`w-update` — Update all system and AUR packages (repo + AUR in one pass)..
+`w-update` — Update all system and AUR packages (repo + AUR in one pass).
 
 ## Usage
 

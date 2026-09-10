@@ -5,7 +5,7 @@ order: 0
 summary: Select the active kernel and toggle the hardening profile.
 ---
 
-`w-kernel` — Select the active kernel and toggle the hardening profile..
+`w-kernel` — Select the active kernel and toggle the hardening profile.
 
 ## Usage
 

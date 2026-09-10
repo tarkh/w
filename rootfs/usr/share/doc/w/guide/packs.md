@@ -5,7 +5,7 @@ order: 10
 summary: What a pack is, the bundles W offers, installing one for the machine and setting it up for your account, and how to undo it.
 sources:
   - path: .claude/library/packs.md
-    sha256: 83d58d741f78be6eb9bdab294fc288880eead52a7cdc707e3ad737a83e42d7c5
+    sha256: b98c683b8901a93aeb2dde01b086845015c4d39c35cd1f846ddee541098a2774
 ---
 
 W installs in two layers. The **base** is everything a working desktop needs and
@@ -27,14 +27,17 @@ it into the desktop — so a pack arrives configured, not merely downloaded.
 - **flatpak** — sandboxed third-party applications: Flatpak with Flathub, the
   Bazaar store and Flatseal for managing app permissions. This is the answer to
   "how do I install an application that is not packaged for Arch".
+- **office** — the office direction: LibreOffice for documents, spreadsheets
+  and presentations, pdfarranger and xournalpp for PDF page surgery and
+  annotation, and the Obsidian markdown knowledge base for notes.
 - **bitwarden** — the Bitwarden desktop app wired into W's slots: SSH agent,
   biometric unlock, tray autostart.
 - **ai-extra** — the advanced stack for [the AI assistant](ai.md#advanced): local
   models, semantic memory, better web search.
 
-**Hub → Packs** lists them with their state, and installing from there opens a
-terminal so you can watch it happen. From a shell the same list is `w-pack
-list`.
+**Hub → Packs** lists them with their state and does the whole life cycle —
+installing, setting up and removing. Anything long or privileged opens a terminal
+so you can watch it happen. From a shell the same list is `w-pack list`.
 
 Packs are also offered during installation, so a new machine can arrive with the
 ones you want already set up. A couple of them only make sense from a running
@@ -59,19 +62,54 @@ you will rarely see this state, because installing does both halves for you.
 Installing is snapshotted like any other package change, so it is reversible the
 same way — see [the update guide](updates.md#if-an-update-goes-wrong).
 
-## Undoing a pack
+## Removing a pack
 
-There is no *remove* yet, and that is a deliberate omission rather than an
-oversight: packs share dependencies with the base system and with each other,
-and automatic removal risks taking something else with it. It is a planned
-addition.
+In **Hub → Packs**, every pack that is on the machine has a **Remove** button. It
+asks first, and the confirmation offers the same two answers the commands do —
+take the pack off the machine (needs an administrator), or undo only your own
+account's layer. From a shell:
 
-What you can do today:
+```
+sudo w-pack remove <pack>
+```
 
-- `w-reset <pack>` returns the pack's configuration to the W default, backing up
-  your current copies first. No administrator rights needed for your own home.
-- The pre-install snapshot is still in the boot menu if you would rather rewind
-  the whole thing.
+This undoes what W did, which is not the same as uninstalling the software.
+Removing a pack takes away its wiring: the pack stops being listed as installed,
+its colours stop being rendered, its session variables and shell hooks go, its
+configuration files that W owned are deleted (a backup is made first), and
+whatever it set up — a service, a command name, a system-wide setting — is put
+back the way it was.
+
+**Your packages stay by default.** They are `pacman`'s business, not W's, so the
+exact command to remove them is printed for you to run — or add `--packages` and
+the removal does it in the same pass. The panel never adds that flag on your
+behalf: taking the packages is the one irreversible part, and it is not a choice to
+make before you have seen the list. That is also why the terminal a removal opens
+waits for you before it closes — the report at the end is the point of it. Anything another pack you still have also
+needs is left out of that list automatically.
+
+**Your data is never deleted.** Downloaded models, container images, toolchains,
+installed Flatpak applications — those are yours, and W only tells you where they
+are and how much room they take. The same goes for configuration files you own
+rather than W: since the software usually stays installed, deleting your settings
+for it would be damage rather than an undo, so they are listed and left alone.
+
+If you removed a pack's packages by hand and it keeps coming back after an
+update, this is why: without `w-pack remove`, W still thinks the pack is yours
+and re-applies it. Run the command above and it stays gone.
+
+```
+w-pack unsetup <pack>
+```
+
+The same thing for **your account only**, with no administrator rights: the pack
+stays on the machine for everyone else, and it simply stops being set up for you.
+`w-pack setup <pack>` brings it back whenever you want.
+
+To put a pack's configuration back to the W default **without removing it**, use
+`w-reset <pack>` — it restores from the pack's own files, backing up your current
+copies first, and needs no administrator rights for your own home. The pre-install
+snapshot is also still in the boot menu if you would rather rewind everything.
 
 ## Keeping packs current
 

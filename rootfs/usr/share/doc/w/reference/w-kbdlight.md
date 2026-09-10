@@ -5,7 +5,7 @@ order: 0
 summary: Keyboard backlight — level, media keys, and light at the LUKS prompt.
 ---
 
-`w-kbdlight` — Keyboard backlight — level, media keys, and light at the LUKS prompt..
+`w-kbdlight` — Keyboard backlight — level, media keys, and light at the LUKS prompt.
 
 ## Usage
 

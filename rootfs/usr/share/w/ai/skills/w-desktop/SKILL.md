@@ -10,7 +10,7 @@ sources:
   - path: .claude/library/package-hyprland.md
     sha256: 8fcbce2ca1880119b352caba9f94b4048e8ff0e8ac3a8915ae326bdb9ec5f9fc
   - path: .claude/library/quickshell.md
-    sha256: dda1ea236fe4e8a7d4e9cb75daf5df756557406d72a7a0aac8966e08fe1a075b
+    sha256: 1ddc54593c92571de2d2b8658b376e7ecb2dc44b2292ca77da3ec07a3717bbe2
   - path: .claude/library/quickshell-bar.md
     sha256: 172fcf47c0789b0b684968235fb741ff9c0de3cd09887d2a0648c5ba66c335ed
   - path: .claude/library/w-bar.md
@@ -91,8 +91,10 @@ Since Hyprland 0.55 the compositor config is **Lua**, not the old hyprlang `.con
 
 These are the **default** chords; bindings are data-driven and user-remappable, so a
 given machine may differ. For *configuring* input — remapping keys and profiles
-(`w-hotkeys`), keyboard layouts (`w-keyboard`), and the system locale (`w-locale`) —
-see the **`w-input`** skill; the table below is just a quick reference.
+(`w-hotkeys`), keyboard layouts (`w-keyboard`), the system locale (`w-locale`) and
+the language profile behind it (`w-langpack` — why part of the UI can stay English
+after a language switch) — see the **`w-input`** skill; the table below is just a
+quick reference.
 
 | Binding | Action |
 |---|---|

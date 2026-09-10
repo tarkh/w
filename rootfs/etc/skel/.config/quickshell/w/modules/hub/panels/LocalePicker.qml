@@ -34,23 +34,39 @@ FocusScope {
     signal navigateBack()
 
     property string query: ""
-    property var locales: []                  // ["en_US.UTF-8", …]
+    // [{ code: "ru_RU.UTF-8", label: "русский (Россия)" }, …] — the label is the
+    // ENDONYM, the language's name in itself, so the list stays readable to
+    // someone who is about to LEAVE the current language. glibc carries them in
+    // the locale sources; `w-locale list --names` extracts them.
+    property var locales: []
 
     function filtered() {
         const q = root.query.trim().toLowerCase();
         if (!q) return root.locales;
-        return root.locales.filter(l => l.toLowerCase().indexOf(q) >= 0);
+        // Both columns are searchable: a user may type "рус" or "ru_RU" — and on a
+        // keyboard that cannot produce the script of its own language's name, only
+        // the code is typeable at all.
+        return root.locales.filter(l => l.code.toLowerCase().indexOf(q) >= 0
+                                     || l.label.toLowerCase().indexOf(q) >= 0);
     }
     readonly property var model: filtered()
 
     Process {
         id: localeList
         running: true
-        command: ["w-locale", "list", "--porcelain"]
+        command: ["w-locale", "list", "--porcelain", "--names"]
         stdout: StdioCollector {
             onStreamFinished: {
                 const out = [];
-                for (const line of (this.text || "").split("\n")) { const t = line.trim(); if (t) out.push(t); }
+                for (const line of (this.text || "").split("\n")) {
+                    if (!line.trim()) continue;
+                    // code <TAB> language <TAB> country; either name may be empty
+                    // (C.UTF-8 has no locale source), and then the row is the code.
+                    const f = line.split("\t");
+                    const lang = (f[1] || "").trim(), country = (f[2] || "").trim();
+                    out.push({ code: f[0].trim(),
+                               label: lang ? (country ? lang + " (" + country + ")" : lang) : "" });
+                }
                 root.locales = out;
             }
         }
@@ -93,7 +109,7 @@ FocusScope {
                     case "up":   results.decrementCurrentIndex(); e.accepted = true; return;
                     case "confirm":
                         if (results.currentIndex >= 0 && results.currentIndex < results.count)
-                            root.pick(results.model[results.currentIndex]);
+                            root.pick(results.model[results.currentIndex].code);
                         e.accepted = true;
                         return;
                     // "back" is deliberately left unaccepted: popping a panel belongs to
@@ -141,10 +157,22 @@ FocusScope {
 
                 readonly property bool current: ListView.isCurrentItem
 
+                // Endonym leads, the locale code trails as the secondary column: the
+                // name is what you recognise, the code is what you verify. A locale
+                // with no name of its own (C.UTF-8) shows its code in the lead slot
+                // and nothing trailing, instead of an empty row.
                 Text {
-                    anchors { left: parent.left; leftMargin: 10; right: parent.right; rightMargin: 12
-                              verticalCenter: parent.verticalCenter }
-                    text: dele.modelData
+                    id: codeText
+                    anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter }
+                    text: dele.modelData.label ? dele.modelData.code : ""
+                    color: dele.current ? Colors.accentFg : Colors.muted
+                    font.family: Fonts.family; font.pixelSize: 12
+                    Behavior on color { ColorAnimation { duration: Motion.fast } }
+                }
+                Text {
+                    anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter
+                              right: codeText.left; rightMargin: 10 }
+                    text: dele.modelData.label || dele.modelData.code
                     color: dele.current ? Colors.accentFg : Colors.text
                     font.family: Fonts.family; font.pixelSize: 14
                     elide: Text.ElideRight
@@ -163,7 +191,7 @@ FocusScope {
                         root.lastPointer = p;
                         results.currentIndex = dele.index;
                     }
-                    onClicked: root.pick(dele.modelData)
+                    onClicked: root.pick(dele.modelData.code)
                 }
             }
         }

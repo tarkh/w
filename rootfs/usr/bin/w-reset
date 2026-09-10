@@ -46,7 +46,6 @@ MANIFEST_DIR="/usr/share/w/update"
 SKEL="/etc/skel"
 VENDOR="/usr/share/w/vendor/etc-w"
 REPO="/var/lib/w/src"                 # edge source; absent on a stable-only client
-SYS_BACKUP_ROOT="/var/lib/w/reset-backups"
 PACKS_DIR="/usr/share/w/packs"        # staged W-Pack bundle trees
 PACKS_STATE="/var/lib/w/packs.json"   # which bundles this machine has
 
@@ -61,8 +60,20 @@ err()  { echo -e "\033[1;31mw-reset:\033[0m $*" >&2; }
 info() { echo -e "\033[1;35m==>\033[0m $*"; }
 warn() { echo -e "\033[1;33mWARN:\033[0m $*" >&2; }
 
+# Safety copies before every destructive restore. Shared with `w-pack remove`,
+# which hands a user their files back on exactly the same rule (backup follows the
+# owner of the data) — see w-backup-lib.sh.
+# shellcheck source=../lib/w/w-backup-lib.sh
+source "${W_BACKUP_LIB:-/usr/lib/w/w-backup-lib.sh}"
+
 # ── Usage ────────────────────────────────────────────────────────────────────
+# W_I18N_LIB is a dev/test seam, the same one W_CONF_LIB is: it lets this CLI be
+# sourced from a checkout on a machine with no W installed (scripts/check/tests).
+# shellcheck source=../lib/w/w-i18n-lib.sh
+source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
+
 usage() {
+  if w_help w-reset; then return 0; fi
   cat <<EOF
 Usage: w-reset <module|bundle|--all> [file] [--user <name>]
 
@@ -129,56 +140,10 @@ resolve_user() {
 }
 
 # ── Backup helpers ───────────────────────────────────────────────────────────
-# The backup follows the OWNER of the data: a reset acts on the user's behalf, so a
-# home-path backup lands in that user's own state dir (user-owned), even when root
-# runs it. System/override paths (root-owned) back up under /var/lib/w. One
-# invocation can touch both, so the two roots are created lazily, per path.
-BK_TS=""; HOME_BK=""; SYS_BK=""
-init_backup() { BK_TS="$(date +%Y%m%d-%H%M%S)"; }
-
-ensure_home_bk() {
-  [[ -n "$HOME_BK" ]] && return 0
-  # Own each parent from the home root down, so a root-run backup never leaves a
-  # root-owned .local/state/w behind (the trap the deploy SDK guards).
-  local rel=".local/state/w/reset-backups/$BK_TS" acc="$TARGET_HOME" part
-  local IFS=/
-  for part in $rel; do
-    acc="$acc/$part"
-    if [[ $EUID -eq 0 ]]; then install -d -o "$TARGET_USER" -g "$TARGET_USER" "$acc"
-    else install -d "$acc"; fi
-  done
-  unset IFS
-  HOME_BK="$TARGET_HOME/$rel"
-}
-ensure_sys_bk() { [[ -n "$SYS_BK" ]] && return 0; SYS_BK="$SYS_BACKUP_ROOT/$BK_TS"; mkdir -p "$SYS_BK"; }
-
-# backup_path <abs-path>  — snapshot current version (file, dir or symlink) if present.
-backup_path() {
-  local p="$1" dest
-  [[ -e "$p" || -L "$p" ]] || return 0
-  if [[ "$p" == "$TARGET_HOME"/* ]]; then
-    ensure_home_bk; dest="$HOME_BK/${p#"$TARGET_HOME"/}"
-  else
-    ensure_sys_bk; dest="$SYS_BK/${p#/}"
-  fi
-  mkdir -p "$(dirname "$dest")"
-  cp -a "$p" "$dest"
-}
-
-# Hand the home backup tree to the user (root-run copies inherit source owner, but
-# the intermediate dirs mkdir -p created above are root-owned — tidy them up).
-finalize_backup() {
-  [[ $EUID -eq 0 && -n "$HOME_BK" ]] && chown -R "$TARGET_USER:$TARGET_USER" "$HOME_BK" || true
-}
-
-# Report where backups landed (either or both roots may be unused). Ends with an
-# explicit `return 0` — a trailing `[[…]] && echo` that goes false would otherwise
-# return 1 and trip `set -e` in the caller.
-backup_summary() {
-  [[ -n "$HOME_BK" ]] && echo "  home backup:   $HOME_BK"
-  [[ -n "$SYS_BK"  ]] && echo "  system backup: $SYS_BK"
-  return 0
-}
+# Now w_backup_* from w-backup-lib.sh (sourced above), shared with `w-pack
+# remove`: the rule "the backup follows the OWNER of the data" has to be ONE
+# rule, or one of the two tools eventually leaves a root-owned tree in someone's
+# home. Nothing about the behaviour here changed — only where it is written.
 
 # ── Restore primitives ───────────────────────────────────────────────────────
 # A restored file keeps the mode of the pristine copy rather than a fixed 644: these
@@ -207,14 +172,14 @@ restore_home() {                       # <relpath> (trailing '/' = dir)
   if [[ "$rel" == */ ]]; then
     local src="$SRC_HOME/${rel%/}" dst="$TARGET_HOME/${rel%/}"
     [[ -d "$src" ]] || { warn "skel dir missing, skipping: $rel"; return 0; }
-    backup_path "$dst"
+    w_backup_path "$dst"
     install -d -o "$TARGET_USER" -g "$TARGET_USER" "$dst"
     # No --delete: restore W files, leave any stray user-added files in place.
     rsync -a --chown="$TARGET_USER:$TARGET_USER" "$src/" "$dst/"
   else
     local src="$SRC_HOME/$rel" dst="$TARGET_HOME/$rel"
     [[ -f "$src" ]] || { warn "skel file missing, skipping: $rel"; return 0; }
-    backup_path "$dst"
+    w_backup_path "$dst"
     own_home_parents "$rel"
     install -D -m "$(src_mode "$src")" -o "$TARGET_USER" -g "$TARGET_USER" "$src" "$dst"
   fi
@@ -225,11 +190,11 @@ restore_system() {                     # <abspath> (trailing '/' = dir)
   local p="$1" src="$SRC_SYS$1"
   if [[ "$p" == */ ]]; then
     [[ -d "${src%/}" ]] || { warn "source missing ($src): $p"; return 1; }
-    backup_path "${p%/}"
+    w_backup_path "${p%/}"
     rsync -a --chown=root:root "${src%/}/" "$p"
   else
     [[ -f "$src" ]] || { warn "source missing ($src): $p"; return 1; }
-    backup_path "$p"
+    w_backup_path "$p"
     install -D -m "$(src_mode "$src")" -o root -g root "$src" "$p"
   fi
 }
@@ -238,12 +203,12 @@ reset_user_conf() {                    # <home-relative path, e.g. .config/w/nig
   local rel="$1"
   local dst="$TARGET_HOME/$rel"
   if [[ -e "$dst" || -L "$dst" ]]; then
-    backup_path "$dst"
+    w_backup_path "$dst"
     rm -f "$dst"
   fi
   # A layer may carry its own .d/*.conf drop-ins (wconf_layer_table); wipe those too.
   if [[ -d "$dst.d" ]]; then
-    backup_path "$dst.d"
+    w_backup_path "$dst.d"
     rm -rf "$dst.d"
   fi
 }
@@ -253,7 +218,7 @@ restore_override() {                   # <abspath> under /etc/w
   local p="$1"
   # active-theme is a symlink into the theme catalog; vendor default = baseline 'w'.
   if [[ "$p" == /etc/w/active-theme ]]; then
-    backup_path "$p"; ln -sfn themes/w "$p"; return 0
+    w_backup_path "$p"; ln -sfn themes/w "$p"; return 0
   fi
 
   # Split subsystems (update-system.md phase 2+): the admin file holds only
@@ -263,7 +228,7 @@ restore_override() {                   # <abspath> under /etc/w
   # it is what lets later default improvements keep arriving afterwards.
   local base; base="$(basename "$p")"
   if [[ -f "/usr/share/w/defaults/${base}" || -f "/usr/share/w/defaults/${base%.conf}.schema" ]]; then
-    backup_path "$p"
+    w_backup_path "$p"
     # Keep the file (with its header) but strip every assignment: the subsystem's
     # own tooling re-seeds what it must (w-power rewrites MODE on the next apply).
     if [[ -f "$p" ]]; then
@@ -277,7 +242,7 @@ restore_override() {                   # <abspath> under /etc/w
   local src
   src="$VENDOR/$base"; [[ -f "$src" ]] || src="$REPO/rootfs$p"
   [[ -f "$src" ]] || { warn "no vendor default for $p (needs --reset applied or $REPO)"; return 1; }
-  backup_path "$p"
+  w_backup_path "$p"
   install -Dm644 -o root -g root "$src" "$p"
 }
 
@@ -373,7 +338,7 @@ reset_entry() {                        # <path> <class> [file-filter]
 # theme catalog) are handled by the normal loop under root.
 reset_style_user() {
   local pin="$TARGET_HOME/.config/w/theme/active"
-  backup_path "$pin"                   # no-op if the user never pinned a theme
+  w_backup_path "$pin"                   # no-op if the user never pinned a theme
   info "Resetting this user's theme to the system default (w-theme reset)..."
   as_user w-theme reset || warn "w-theme reset failed"
   THEME_HANDLED=1
@@ -572,15 +537,15 @@ cmd_status() {
 # system paths were skipped for lack of root.
 finish() {
   [[ $HOME_TOUCHED -eq 1 && $THEME_HANDLED -eq 0 ]] && rerender_theme
-  finalize_backup
-  info "Done."; backup_summary
+  w_backup_finalize
+  info "Done."; w_backup_summary
   [[ $SYS_SKIPPED -gt 0 ]] &&
     warn "$SYS_SKIPPED system/override path(s) skipped (need root) — rerun with sudo to reset them too."
   return 0
 }
 
 cmd_all() {
-  resolve_user "$1"; init_backup
+  resolve_user "$1"; w_backup_init "$TARGET_USER" "$TARGET_HOME"
   local m b
   for m in "$MANIFEST_DIR"/*.manifest; do
     [[ -e "$m" ]] || break
@@ -597,7 +562,7 @@ cmd_all() {
 
 cmd_module() {                         # <module> [file] <user>
   local module="$1" file="$2" user="$3"
-  resolve_user "$user"; init_backup
+  resolve_user "$user"; w_backup_init "$TARGET_USER" "$TARGET_HOME"
   reset_module "$module" "$file"
   finish
 }

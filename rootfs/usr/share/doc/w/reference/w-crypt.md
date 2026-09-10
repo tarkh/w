@@ -5,7 +5,7 @@ order: 0
 summary: Manage disk-encryption factors — TPM2 auto-unlock and recovery keys.
 ---
 
-`w-crypt` — Manage disk-encryption factors — TPM2 auto-unlock and recovery keys..
+`w-crypt` — Manage disk-encryption factors — TPM2 auto-unlock and recovery keys.
 
 ## Usage
 

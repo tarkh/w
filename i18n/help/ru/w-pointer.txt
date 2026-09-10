@@ -1,0 +1,25 @@
+# w-i18n-src: dfe0efba56b83d601c8a3886e281327638edecbd61ebad0eca2f45e3f5c31f15
+Использование: w-pointer <команда> [аргументы]
+
+Info: Настройки мыши, тачпада и жестов Wayland-сессии.
+
+Команды:
+  status [--porcelain]   Показать все настройки (+ есть ли тачпад)
+  list [--porcelain]     Список активных указательных устройств (мышь / тачпад)
+  get <ключ>             Напечатать одну настройку
+  set <ключ> <значение>  Изменить одну настройку (сразу и постоянно)
+  detect                 Пересканировать тачпады и запомнить имена их устройств
+  reset [<область>|--all]  Вернуть дефолты (mouse | touchpad | gestures | cursor)
+  keys                   Список задаваемых ключей с допустимыми значениями
+  help                   Показать эту справку
+
+Конфиг хранится в: $FRAG
+
+Коды выхода: 0 успех · 1 ошибка выполнения/проверки · 2 ошибка вызова
+
+Примеры:
+  w-pointer set mouse.sensitivity 0.3
+  w-pointer set touchpad.tap_to_click on
+  w-pointer set gestures.workspace_fingers 4
+  w-pointer set cursor.menu_timeout 0.1
+  w-pointer reset touchpad

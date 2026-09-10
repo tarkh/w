@@ -1,0 +1,27 @@
+Использование: w-time <команда> [аргументы]
+
+Info: Настройка часового пояса, системных часов и NTP (systemd-timesyncd).
+
+Команды:
+  status                 Часовой пояс, часы, состояние NTP + набор серверов
+  list-zones [--porcelain]
+                         Список поясов как "<смещение>  <Зона>" (копировать Зону)
+  set-zone <Зона>        Задать часовой пояс (root; напр. Europe/Moscow)
+  ntp on|off             Включить/выключить сетевую синхронизацию времени (root)
+  set-time <"Г-М-Д Ч:М:С">
+                         Выставить часы вручную (root; требует выключенного NTP)
+  servers <имя>          Сменить набор NTP-серверов из каталога (root)
+  apply                  Перегенерировать drop-in timesyncd из $CONF (после правки)
+  help                   Показать эту справку
+
+Каталог и выбор: $CONF   Сгенерированный результат: $DROPIN
+
+Коды выхода: 0 успех · 1 ошибка выполнения/проверки · 2 ошибка вызова
+
+Примеры:
+  w-time status
+  w-time list-zones | grep -i berlin
+  sudo w-time set-zone Europe/Moscow
+  sudo w-time ntp off
+  sudo w-time set-time "2026-07-23 14:30:00"
+  sudo w-time servers cloudflare

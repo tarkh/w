@@ -44,6 +44,17 @@ scripts/packs/*.md		--packs
 vm/*				--skip
 archiso/*			--skip
 docs/*				--skip
+# The localization canon: five domain JSONs plus help/<lang>/, read only at
+# BUILD time by w-i18n-gen and w-docs-refgen. Nothing on a machine ever opens
+# it — what ships is the generated side (rootfs/usr/share/w/i18n, the shell's
+# and the greeter's i18n.json, the localized .desktop keys, the reference
+# pages), and every one of those is routed by its own rule below. Skipping the
+# canon therefore cannot lose a delivery: rule 0 of check/i18n.sh runs
+# w-i18n-gen --check, so a canon edit whose artifacts were not regenerated is
+# red — the artifacts are always in the same commit as the translation.
+# Unlisted it falls to the catch-all, and a one-word translation fix forces a
+# full --all apply on every edge machine.
+i18n/*				--skip
 *.md				--skip
 LICENSE*			--skip
 .gitignore			--skip

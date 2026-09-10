@@ -5,7 +5,7 @@ order: 0
 summary: Set up and manage Secure Boot (sbctl keys + Limine hash).
 ---
 
-`w-secureboot` — Set up and manage Secure Boot (sbctl keys + Limine hash)..
+`w-secureboot` — Set up and manage Secure Boot (sbctl keys + Limine hash).
 
 ## Usage
 

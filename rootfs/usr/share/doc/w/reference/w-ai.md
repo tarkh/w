@@ -5,7 +5,7 @@ order: 0
 summary: Launch and manage the W AI assistant — hosts, keys, memory, ask.
 ---
 
-`w-ai` — Launch and manage the W AI assistant — hosts, keys, memory, ask..
+`w-ai` — Launch and manage the W AI assistant — hosts, keys, memory, ask.
 
 ## Usage
 

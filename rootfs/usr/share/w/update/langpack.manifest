@@ -1,0 +1,19 @@
+# langpack.manifest — the console half of the language profile (mod_langpack).
+# Single source of truth: deploy iterates this; w-reset/drift reuse it.
+# Format: <path>\t<class>   class: managed | override
+#
+# /etc/vconsole.conf is MACHINE STATE with two independent writers, which is why
+# it is `override` (apply_rootfs excludes it once it exists) rather than managed:
+#
+#   • KEYMAP — chosen in the installer wizard (sys_locale) and, at every boot of
+#     an encrypted machine, the layout the LUKS passphrase is typed in;
+#   • FONT   — derived from the locale by `w-langpack font`, so a TTY does not
+#     transliterate non-Latin text (config-i18n.md §4).
+#
+# rootfs/etc/vconsole.conf stays in the repo as the seed for a machine that has
+# none. It shipped `KEYMAP=us` and was NOT declared here until 2026-09-10, so
+# every `apply.sh --rootfs` rsynced it back over the live file — which silently
+# reverted the keymap the user picked during installation, and (once w-langpack
+# existed) dropped the console font on the very next apply. Found by checking
+# `/etc/vconsole.conf` after a deploy rather than after the command that wrote it.
+/etc/vconsole.conf	override

@@ -5,7 +5,7 @@ order: 0
 summary: Configure monitors (resolution, scale, rotation, layout).
 ---
 
-`w-monitor` — Configure monitors (resolution, scale, rotation, layout)..
+`w-monitor` — Configure monitors (resolution, scale, rotation, layout).
 
 ## Usage
 

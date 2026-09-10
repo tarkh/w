@@ -17,7 +17,9 @@
 // or deleted from here (`w-theme new/rm` write ~/.config/w/themes without any
 // privilege), while a system theme needs `sudo w-theme` on the CLI. So the Add
 // button and the per-tile ✕ live in the personal section only, and the panel
-// never has to ask for a password.
+// never has to ask for a password. The ✕ raises the Hub's shared HubConfirm —
+// the one way every destructive action in the Hub asks — rather than the
+// tile-local plate this panel used to draw over its own thumbnail.
 //
 // Switching hands `w-theme set <name>` up to the Hub via the `switchTheme` signal; the
 // Hub runs the crossfade in the transition mode from HubConfig.themeSwitch ("live" =
@@ -52,7 +54,11 @@ Item {
                                        // (quickshell-hub.md Ф-Keyboard gotcha 6).
                                        ? (barLoader.item ? barLoader.item.implicitHeight + 8 : 0)
                                        : (settingsLoader.item ? settingsLoader.item.implicitHeight : 0)
-    implicitHeight: Math.max(header.height + 12 + contentH, menuLayer.menuBottom)
+    implicitHeight: Math.max(header.height + 12 + contentH, menuLayer.menuBottom, confirm.contentBottom)
+
+    // The Hub card, handed over by Hub.qml on load — the delete confirmation dims it,
+    // and needs its real rectangle and corner radius to do that without square corners.
+    property Item hubSurface: null
 
     // Order here IS the pill order and the "tab" region's index space — moveH maps
     // the roving index straight through it, so the two cannot drift apart.
@@ -190,28 +196,21 @@ Item {
 
     focus: true
     Keys.onPressed: (e) => {
-        // A delete confirmation is armed on the focused tile (see HubNavKeys.del
-        // below) — Escape/Backspace cancel it here instead of their usual "pop
-        // this panel" meaning (same two keys Hub.qml's card checks for `back`),
-        // so backing out of "are you sure?" doesn't also leave Appearance.
-        if (root.pendingDelete !== "" && (e.key === HubNavKeys.back || e.key === Qt.Key_Backspace)) {
-            root.pendingDelete = "";
-            e.accepted = true;
-            return;
-        }
+        // While the confirmation is up it owns the keyboard — Escape/Backspace close IT
+        // rather than popping the panel (Ф-Keyboard gotcha 14's local-guard shape).
+        if (confirm.open) { confirm.handleKey(e); return; }
         switch (e.key) {
         case HubNavKeys.left:  root.moveH(-1); e.accepted = true; return;
         case HubNavKeys.right: root.moveH(1);  e.accepted = true; return;
         case HubNavKeys.down:  root.moveDown(); e.accepted = true; return;
         case HubNavKeys.up:    root.moveUp();   e.accepted = true; return;
-        // Second keyboard verb on a "user" tile, mirroring InputPanel's
-        // ring-removal — arms the same inline confirmation the ✕ badge opens on a
-        // click; pressing it again on the already-armed tile backs out (a second
-        // way out, alongside Escape/Backspace above).
+        // Second keyboard verb on a "user" tile, mirroring InputPanel's ring-removal —
+        // opens the very same confirmation the ✕ badge opens on a click. One step, not
+        // two: the modal IS the confirmation, so there is nothing left to "arm".
         case HubNavKeys.del: {
             if (root.focusRegion === "user") {
                 const t = userThemes.get(root.focusIdx);
-                if (t) root.pendingDelete = (root.pendingDelete === t.name) ? "" : t.name;
+                if (t) root.askRemove(t.name);
             }
             e.accepted = true;
             return;
@@ -223,11 +222,6 @@ Item {
             if (root.focusRegion === "user") {
                 const t = userThemes.get(root.focusIdx);
                 if (!t) { e.accepted = true; return; }
-                // Confirm on the SAME tile that HubNavKeys.del armed executes the
-                // delete — matching the moved-away-is-not-armed-elsewhere mouse
-                // behaviour (only the armed tile's own inline button can delete
-                // it; picking/editing a different tile leaves an armed one alone).
-                if (t.name === root.pendingDelete) { root.removeTheme(t.name); e.accepted = true; return; }
                 // Shift+confirm reaches the ✎ badge's route (rebuild this theme's
                 // palette) — plain confirm keeps its existing "switch to it"
                 // meaning, the tile's primary and far more common action. Not
@@ -313,15 +307,22 @@ Item {
     // ── Delete a personal theme ────────────────────────────────────────────────────
     // `w-theme rm` handles the awkward case itself: deleting the theme this session
     // is wearing resets the pin (with the usual crossfade) before removing anything,
-    // so the panel does not have to sequence that. Confirmation is inline on the
-    // tile rather than a modal — opening the shared Infobox would replace the Hub,
-    // which is the wrong shape for "are you sure" about one tile.
-    property string pendingDelete: ""
+    // so the panel does not have to sequence that — but the confirmation still names
+    // it, because a delete that also changes the visible theme should not surprise.
+    property string askName: ""
+    function askRemove(name) {
+        root.askName = name;
+        confirm.ask({
+            title:   Strings.t("appear.deleteTitle").replace("%n%", name),
+            message: Strings.t("appear.deleteBody"),
+            actions: [{ key: "remove", label: Strings.t("appear.delete") }],
+        });
+    }
 
     Process {
         id: remover
         command: ["true"]
-        onExited: { root.pendingDelete = ""; root.reload(); }
+        onExited: root.reload()
     }
 
     function removeTheme(name) {
@@ -352,7 +353,6 @@ Item {
 
         readonly property bool current: cell.name === root.activeName
         readonly property bool focused: root.focusRegion === cell.region && root.focusIdx === cell.index
-        readonly property bool confirming: root.pendingDelete === cell.name
         // Editing rebuilds the palette in place, which only makes sense for a theme
         // this tool generated, and only in the collection this user owns (a system
         // theme would need sudo, so it stays a CLI operation).
@@ -419,7 +419,6 @@ Item {
                 anchors.centerIn: parent
                 width: parent.width - 12
                 horizontalAlignment: Text.AlignHCenter
-                visible: !cell.confirming
                 text: cell.name.charAt(0).toUpperCase() + cell.name.slice(1)
                 color: "#ffffff"
                 font.family: Fonts.family
@@ -450,19 +449,17 @@ Item {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                enabled: !cell.confirming
                 onClicked: root.pick(cell.name)
             }
 
             // Tile affordances: badges that only appear on hover, so the grid stays
             // clean. Edit rebuilds the palette (base colour / contrast / dark-light)
-            // keeping the wallpaper; delete asks first, in-tile, because it throws
-            // away a generated theme (and possibly the active one).
+            // keeping the wallpaper; delete raises the Hub's shared confirmation,
+            // because it throws away a generated theme (and possibly the active one).
             Row {
                 anchors { top: parent.top; right: parent.right; margins: 6 }
                 spacing: 4
-                visible: !cell.confirming
-                       && (ma.containsMouse || editMa.containsMouse || xMa.containsMouse)
+                visible: ma.containsMouse || editMa.containsMouse || xMa.containsMouse
 
                 Rectangle {
                     visible: cell.editable
@@ -504,44 +501,7 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: root.pendingDelete = cell.name
-                    }
-                }
-            }
-
-            // Confirmation, drawn over the tile itself.
-            Rectangle {
-                anchors.fill: parent
-                radius: thumb.rad
-                visible: cell.confirming
-                color: Qt.rgba(0, 0, 0, 0.78)
-
-                Column {
-                    anchors.centerIn: parent
-                    spacing: 8
-                    width: parent.width - 16
-
-                    Text {
-                        width: parent.width
-                        horizontalAlignment: Text.AlignHCenter
-                        text: Strings.t("appear.deleteConfirm")
-                        color: "#ffffff"
-                        font.family: Fonts.family
-                        font.pixelSize: 12
-                        wrapMode: Text.WordWrap
-                    }
-                    Row {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        spacing: 8
-                        WButton {
-                            label: Strings.t("appear.delete")
-                            tone: "danger"
-                            onClicked: root.removeTheme(cell.name)
-                        }
-                        WButton {
-                            label: Strings.t("hub.cancel")
-                            onClicked: root.pendingDelete = ""
-                        }
+                        onClicked: root.askRemove(cell.name)
                     }
                 }
             }
@@ -686,4 +646,12 @@ Item {
     // drawn past its bottom edge and clipped. The flip only fires when a menu genuinely
     // does not fit downward, so the short Themes/Settings tabs are unaffected.
     HubDropdown { id: menuLayer; anchors.fill: parent; flipUp: true; returnFocusTo: root }
+
+    // ── Delete confirmation (tints the whole Hub card, above the grid) ────────────
+    HubConfirm {
+        id: confirm
+        anchors.fill: parent
+        surface: root.hubSurface
+        onChose: root.removeTheme(root.askName)
+    }
 }

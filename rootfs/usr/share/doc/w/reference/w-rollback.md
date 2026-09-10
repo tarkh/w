@@ -5,7 +5,7 @@ order: 0
 summary: Roll the system back to a btrfs snapshot, on either boot path.
 ---
 
-`w-rollback` — Roll the system back to a btrfs snapshot, on either boot path..
+`w-rollback` — Roll the system back to a btrfs snapshot, on either boot path.
 
 ## Usage
 

@@ -60,6 +60,7 @@ file_permissions=(
   ["/root/w/rootfs/usr/lib/w/w-kbdlight-boot"]="0:0:755"
   ["/root/w/rootfs/usr/lib/w/w-wait-notifications"]="0:0:755"
   ["/root/w/rootfs/usr/lib/w/w-snapshot-notify"]="0:0:755"
+  ["/root/w/rootfs/usr/lib/w/w-i18n"]="0:0:755"
   ["/root/w/rootfs/usr/lib/w/w-theme/palette.py"]="0:0:755"
   ["/root/w/rootfs/usr/lib/systemd/system-sleep/w-power"]="0:0:755"
   ["/root/w/rootfs/usr/lib/systemd/system-sleep/w-sensors"]="0:0:755"

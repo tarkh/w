@@ -14,6 +14,13 @@
 # app-com.mitchellh.ghostty.service — one shared process, ~20ms. `exec` leaves no
 # wrapper process behind, so the only cost over a direct call is the bash startup
 # that immediately exec's away. See package-ghostty.md.
+#
+# `--hold` exists because a command's OUTPUT can outlive its usefulness by one
+# frame: `w-pack remove` prints what it left in place, where the backup went and
+# the exact `pacman -Rns` line to run — and then the window closes on it. Holding
+# is the launcher's job, not the command's: a CLI must not grow an interactive
+# tail just because one caller opened it in a window, and doing it here works on
+# every terminal in the catalog (and outside it) with one implementation.
 
 set -euo pipefail
 
@@ -31,7 +38,13 @@ KNOWN_TERMINALS=(ghostty foot)
 
 err() { echo "w-term: $*" >&2; }
 
+# W_I18N_LIB is a dev/test seam, the same one W_CONF_LIB is: it lets this CLI be
+# sourced from a checkout on a machine with no W installed (scripts/check/tests).
+# shellcheck source=../lib/w/w-i18n-lib.sh
+source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
+
 usage() {
+  if w_help w-term; then return 0; fi
   cat <<EOF
 Usage: w-term [command]
 
@@ -45,6 +58,11 @@ Commands:
   set <name>      Set the active terminal (writes user override)
   help            Show this help
 
+Options:
+  --hold          With \`-e\`: when CMD finishes, ask before closing the window
+                  so its output stays readable. Answering anything but yes hands
+                  the window to an interactive shell instead of closing it
+
 Config: $SYS_CONF (vendor default) + $USER_CONF (user override)
 
 Exit codes:
@@ -53,6 +71,7 @@ Exit codes:
 Examples:
   w-term
   w-term -e btop
+  w-term --hold -e sudo w-pack remove containers
   w-term set ghostty
 EOF
 }
@@ -84,7 +103,20 @@ load_conf() {
 # Each terminal maps to its fastest new-window verb; TERMINAL_OPTS is appended to
 # the window invocation (not between `-e` and the command).
 launch() {
-  local run=("$@")
+  local run=("$@") prompt
+  # Hold: run CMD, then ask. Everything crosses into the inner shell as ARGV
+  # (`bash -c <script> _ <prompt> <cmd…>`), never as text spliced into the
+  # script — a bundle name or a path with a space or a quote in it is then
+  # simply an argument, not a parsing accident. The prompt is resolved HERE
+  # because w_t needs the catalog this script sourced; the inner shell has none.
+  if [[ $HOLD -eq 1 ]]; then
+    prompt="$(w_t term.holdClose)"
+    run=(bash -c 'p="$1"; shift; "$@"; ec=$?
+                  printf "\n"
+                  read -rp "$p " ans
+                  case "$ans" in [yY]*) exit "$ec" ;; esac
+                  exec "${SHELL:-/bin/bash}" -i' _ "$prompt" "${run[@]}")
+  fi
   case "$TERMINAL" in
     ghostty)
       # D-Bus fast path into the pre-warmed daemon (one shared process).
@@ -135,6 +167,15 @@ cmd_set() {
 }
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────
+# --hold is a PREFIX option, not a command: it modifies `-e` and is meaningless
+# without it (a bare window has no command whose end to wait for), so pairing it
+# with anything else is a usage error rather than a silent no-op.
+HOLD=0
+if [[ "${1:-}" == "--hold" ]]; then
+  HOLD=1; shift
+  [[ "${1:-}" == "-e" ]] || { err "--hold requires -e CMD"; usage >&2; exit 2; }
+fi
+
 case "${1:-}" in
   -e)              shift; load_conf; launch "$@" ;;
   get)             load_conf; echo "$TERMINAL" ;;

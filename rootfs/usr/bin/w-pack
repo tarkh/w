@@ -48,41 +48,89 @@
 # install. It costs disk and network and is a decision a non-admin never asked
 # for. The catch-up is explicit and rootless: `w-pack setup <bundle>`.
 #
-# v1 = list + install + setup + status + refresh. `remove` is a later phase and
-# needs a declared inverse per bundle (teardown.sh / teardown-user.sh — packs.md
-# phase 7); reverting a bundle's CONFIG already works today via `w-reset <bundle>`.
+# ── remove is the mirror, and its subject is W's wiring — not your software ──
+# `w-pack remove` does NOT mean "uninstall the software"; pacman has always been
+# able to do that and needs no help. What only W can undo is what only W did:
+# the machine/user state entries, the w-style axes, the /etc/w drop-ins, the
+# curated AI skill, and whatever `setup.sh` set up imperatively. Without a remove
+# there is no way out of that at all — and hand-uninstalling the packages is not
+# even stable, because packs.json still says "installed", so the next
+# `w-sync update` calls `w-pack refresh`, which re-runs setup.sh and puts the
+# whole bundle back (for ai-extra: reinstalls the Ollama package, re-enables the
+# service and re-pulls a 635MB model).
+#
+# So the inverse has to be DECLARED per bundle, exactly as the setup half is:
+#   setup.sh       <-> teardown.sh        (machine)
+#   setup-user.sh  <-> teardown-user.sh   (one account)
+# It cannot be derived from the tree: ai-extra installs `ollama` from inside
+# setup.sh, by GPU variant, so it is not in pkgs.txt at all and a "just undo the
+# manifest" remover would leave the bundle's main package behind. check.sh
+# refuses a bundle that has a setup half with no teardown half, so the asymmetry
+# cannot come back with the next bundle.
+#
+# Three deliberate conservatisms (packs.md phase 7):
+#   * packages stay by default — they are pacman's subject, not W's. The exact
+#     `pacman -Rns` line is printed; `--packages` runs it, minus anything another
+#     INSTALLED bundle also lists.
+#   * data is never deleted — model stores, image stores, toolchains, nested
+#     btrfs subvolumes. Paths and sizes are printed; the human decides.
+#   * only `managed` config is removed (backed up first). A `user`-class file is
+#     the user's, and with the packages left standing, deleting the settings of
+#     software that is still installed would be damage, not a rollback.
 
 set -euo pipefail
 
 # ── Constants ────────────────────────────────────────────────────────────────
-PACKS_DIR="/usr/share/w/packs"                         # deployed bundle tree
-STATE="/var/lib/w/packs.json"                          # machine layer state
-USER_STATE_REL=".local/state/w/packs.json"             # per-user layer state (in $HOME)
-WSTYLE_DROPIN="/usr/lib/w/w-style/modules.d"     # w-style axis drop-in root
-AI_SKILLS="/usr/share/w/ai/skills"                     # curated AI knowledge
-DEPLOY_SDK="/usr/lib/w/lib/deploy.sh"            # seed_user_file (config-ownership SDK)
+# Each root is env-overridable (the same seam w-mirrors' MIRRORLIST/STATE use), so
+# the unit tests can drive the remove pipeline against a temporary bundle tree
+# without a W installation anywhere near them. Nothing on a real machine sets these.
+PACKS_DIR="${W_PACKS_DIR:-/usr/share/w/packs}"          # deployed bundle tree
+STATE="${W_PACKS_STATE:-/var/lib/w/packs.json}"         # machine layer state
+USER_STATE_REL=".local/state/w/packs.json"              # per-user layer state (in $HOME)
+WSTYLE_DROPIN="${W_PACKS_WSTYLE_DROPIN:-/usr/lib/w/w-style/modules.d}"  # w-style axis drop-in root
+AI_SKILLS="${W_PACKS_AI_SKILLS:-/usr/share/w/ai/skills}"  # curated AI knowledge
+DEPLOY_SDK="${W_PACKS_DEPLOY_SDK:-/usr/lib/w/lib/deploy.sh}"  # seed_user_file (config-ownership SDK)
+
+# Command-line options, defaulted here rather than at the dispatch block below so
+# the functions that read them are also correct when this file is SOURCED (the
+# unit tests drive remove directly, never through the parser).
+ARG_USER=""; PORCELAIN=0; WITH_PACKAGES=0
 
 err()  { echo -e "\033[1;31mw-pack:\033[0m $*" >&2; }
 info() { echo -e "\033[1;35m==>\033[0m $*"; }
 warn() { echo -e "\033[1;33mWARN:\033[0m $*" >&2; }
 
+# The three shared libs below carry the same dev/test seam W_I18N_LIB has (and for
+# the same reason): the unit tests drive this CLI from a checkout, on a machine
+# with no W installed, where /usr/lib/w does not exist at all.
 # shellcheck source=../lib/w/w-priv-lib.sh
-source /usr/lib/w/w-priv-lib.sh
+source "${W_PRIV_LIB:-/usr/lib/w/w-priv-lib.sh}"
 # The package-transaction seam (installer.md §5 layer 2). A bundle install pulls
 # tens of packages in one go and is exactly the long transaction a stalled mirror
 # kills; before Ф.3 this script could not reach the seam at all (it lives in
 # scripts/install/lib, which is not on an installed machine) and ran bare pacman.
 # shellcheck source=../lib/w/w-pac-lib.sh
-source /usr/lib/w/w-pac-lib.sh
+source "${W_PAC_LIB:-/usr/lib/w/w-pac-lib.sh}"
+# Safety copies for `remove`, shared with w-reset: the backup follows the OWNER of
+# the data, so a home file lands in that account's own state dir even when root is
+# the one removing it.
+# shellcheck source=../lib/w/w-backup-lib.sh
+source "${W_BACKUP_LIB:-/usr/lib/w/w-backup-lib.sh}"
 
 # ── Usage ────────────────────────────────────────────────────────────────────
 # NB: the heredoc delimiter is deliberately UNQUOTED so $PACKS_DIR/$STATE below
 # expand to the real paths — which means backticks in this text are command
 # substitution and MUST stay escaped. An unescaped `w-sync update` here used to
 # run the updater every time someone typed `w-pack` with no arguments.
+# W_I18N_LIB is a dev/test seam, the same one W_CONF_LIB is: it lets this CLI be
+# sourced from a checkout on a machine with no W installed (scripts/check/tests).
+# shellcheck source=../lib/w/w-i18n-lib.sh
+source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
+
 usage() {
+  if w_help w-pack; then return 0; fi
   cat <<EOF
-Usage: w-pack <command> [bundle] [--user <name>] [--porcelain]
+Usage: w-pack <command> [bundle] [--user <name>] [--porcelain] [--packages]
 
 Info: Install and inspect optional W software bundles (packs).
 
@@ -97,6 +145,11 @@ Commands:
                        (no root, no polkit — it only writes your own home)
   refresh [<bundle>]   Re-apply installed bundles from the staged tree, WITHOUT
                        touching packages (config + w-style + AI skill + setup)
+  remove <bundle>      Undo W's wiring for a bundle: its per-account layers, its
+                       machine teardown, W-owned config, theme axes, AI skill and
+                       state. Packages and data are left alone (see --packages)
+  unsetup <bundle>     Undo only YOUR account's layer, leaving the machine and
+                       everyone else untouched (no root, like \`setup\`)
   status [<bundle>]    Show what is installed (all, or one bundle)
   help                 Show this help
 
@@ -105,9 +158,13 @@ Options:
                        user, or SUDO_USER / the primary uid-1000 user)
   --porcelain          Machine-readable \`list\`, one bundle per line:
                        <name> TAB <machine:yes|no> TAB <user:yes|no|n/a> TAB <desc>
+  --packages           With \`remove\`: also uninstall the bundle's packages, minus
+                       any another installed bundle still lists. Without it the
+                       exact \`pacman -Rns\` line is only printed
 
 Notes:
-  install and refresh require root (packages + system paths); setup does not.
+  install, refresh and remove require root (packages + system paths); setup and
+  unsetup do not — they write only your own home.
   Bundles are self-contained under $PACKS_DIR; machine state is recorded in
   $STATE, your own layer in ~/$USER_STATE_REL.
   A bundle someone else installed is NOT set up for you automatically — that
@@ -118,8 +175,12 @@ Notes:
   drop-ins, legacy-layout cleanups) is replayed on every machine instead of
   waiting for someone to reinstall the bundle by hand. It replays the per-user
   layer for every account that already has it — and only those.
-  remove is a later phase (shared pacman deps make automatic removal risky). To
-  put a bundle's config back to the W default now, use \`w-reset <bundle>\`.
+  remove undoes what W DID, not what you installed: state, W-owned config, theme
+  axes, the AI skill and the bundle's own teardown steps. Your packages and your
+  data stay — the \`pacman -Rns\` line is printed for you, and paths worth
+  gigabytes (model stores, image stores, toolchains) are only ever named. To put
+  a bundle's config back to the W default WITHOUT removing it, use
+  \`w-reset <bundle>\`.
 
 Exit codes:
   0  Success
@@ -132,6 +193,9 @@ Examples:
   w-pack setup ai-extra              # catch my own account up, no sudo
   sudo w-pack refresh
   w-pack status
+  sudo w-pack remove containers      # unwire it; podman stays installed
+  sudo w-pack remove dev --packages  # ...and take its packages too
+  w-pack unsetup dev                 # just my own account, no sudo
 EOF
 }
 
@@ -604,6 +668,277 @@ refresh_bundle() {
   done < <(w_home_users)
 }
 
+# ── remove / unsetup ─────────────────────────────────────────────────────────
+# The mirror of install, in reverse, with the subject narrowed to W's own wiring
+# (see the header). The order is the install pipeline read backwards, and it is
+# not free: the per-user layers go first because they need the machine's files
+# still in place (w-ssh, w-style, the bundle's own binaries) to unwind cleanly,
+# and the state entry is dropped BEFORE the optional package removal so that an
+# interrupted `pacman -Rns` leaves the honest "not installed, some packages may
+# remain" rather than "installed, but unwired".
+
+# teardown.sh — the declared inverse of setup.sh. Same env plus PACK_PACKAGES, so
+# a bundle that installed something imperatively (ai-extra's GPU-matched Ollama,
+# which is deliberately NOT in pkgs.txt) can remove exactly that, and only when
+# the user asked for packages to go.
+run_teardown() {
+  local name="$1" bdir; bdir="$(bundle_dir "$name")"
+  local td="$bdir/teardown.sh"
+  [[ -f "$td" ]] || return 0
+  info "Running '$name' machine teardown..."
+  BUNDLE_NAME="$name" BUNDLE_DIR="$bdir" PACK_PACKAGES="$WITH_PACKAGES" \
+    bash "$td" || warn "teardown failed for '$name' — its machine steps may be half-undone"
+}
+
+# teardown-user.sh — the declared inverse of setup-user.sh, for ONE account, with
+# the same privilege contract: root during remove, the account itself during
+# unsetup, told which via PACK_AS_ROOT.
+run_teardown_user() {                                   # <bundle> <user> <home>
+  local name="$1" u="$2" home="$3" bdir; bdir="$(bundle_dir "$name")"
+  local td="$bdir/teardown-user.sh"
+  [[ -f "$td" ]] || return 0
+  local as_root=0; [[ $EUID -eq 0 ]] && as_root=1
+  info "Running '$name' user teardown for $u..."
+  BUNDLE_NAME="$name" BUNDLE_DIR="$bdir" PACK_USER="$u" PACK_HOME="$home" \
+    PACK_AS_ROOT="$as_root" PACK_PACKAGES="$WITH_PACKAGES" bash "$td" \
+    || warn "user teardown failed for '$name' ($u) — their account may be half-undone"
+}
+
+# Remove the manifest rows W OWNS, backing each up first. Only `managed`: a
+# `user`-class file is seed-if-absent, i.e. the account's own from the moment it
+# was seeded, and since the packages stay by default the software it configures is
+# usually still installed. Deleting it would be damage, not a rollback — so those
+# are named instead, once, at the end.
+KEPT_USER_FILES=()
+remove_manifest_rows() {                                # <bundle> <scope:system|home> [home]
+  local name="$1" scope="$2" home="${3:-}" bdir; bdir="$(bundle_dir "$name")"
+  local manifest="$bdir/manifest"
+  [[ -f "$manifest" ]] || return 0
+  local path class target
+  while read -r path class _ || [[ -n "$path" ]]; do
+    [[ -z "$path" || "$path" == \#* ]] && continue
+    if [[ "$scope" == system ]]; then
+      [[ "$path" == /* ]] || continue
+      target="$path"                                    # absolute rows are always managed
+    else
+      [[ "$path" == /* ]] && continue
+      target="$home/$path"
+      if [[ "$class" != managed ]]; then
+        [[ -e "${target%/}" ]] && KEPT_USER_FILES+=("$target")
+        continue
+      fi
+    fi
+    [[ -e "${target%/}" || -L "${target%/}" ]] || continue
+    w_backup_path "${target%/}"
+    if [[ "$target" == */ ]]; then rm -rf "${target%/}"; else rm -f "$target"; fi
+  done < "$manifest"
+}
+
+# The axes leave with the bundle — that is the whole point of them living in the
+# drop-in root rather than in w-style's core: no bundle, no axis, so there is
+# never a dead axis rendering a config for a binary nobody has. Re-render what is
+# left so the removed axis's artefacts stop being reproduced at the next login.
+remove_wstyle() {
+  local name="$1" bdir; bdir="$(bundle_dir "$name")"
+  local wdir="$bdir/wstyle" d token gone=0
+  compgen -G "$wdir/*/module.sh" >/dev/null 2>&1 || return 0
+  info "Removing '$name' w-style axes from $WSTYLE_DROPIN..."
+  for d in "$wdir"/*/; do
+    [[ -d "$d" ]] || continue
+    token="$(basename "$d")"
+    [[ -d "$WSTYLE_DROPIN/$token" ]] || continue
+    rm -rf "${WSTYLE_DROPIN:?}/$token"; gone=1
+  done
+  [[ $gone -eq 1 ]] || return 0
+  w-style apply >/dev/null 2>&1 || warn "w-style apply failed — the theme re-renders at next login"
+}
+
+remove_ai() {
+  local name="$1"
+  [[ -d "$AI_SKILLS/$name" ]] || return 0
+  info "Dropping '$name' from the AI knowledge base..."
+  rm -rf "${AI_SKILLS:?}/$name"
+}
+
+# Forget the bundle. Both states are rewritten the same way they are written —
+# tmp + mv + re-chmod 0644, because mktemp makes 0600 and a 0600 packs.json is
+# what once made the user-scope AI tools report "not installed".
+state_forget() {
+  require_jq; [[ -f "$STATE" ]] || return 0
+  local tmp; tmp="$(mktemp)"
+  jq --arg b "$1" 'del(.bundles[$b])' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
+  chmod 0644 "$STATE"
+}
+
+user_forget() {                                         # <bundle> <user> <home>
+  require_jq
+  local f; f="$(user_state_of "$3")"
+  [[ -f "$f" ]] || return 0
+  local tmp; tmp="$(mktemp)"
+  jq --arg b "$1" 'del(.bundles[$b])' "$f" > "$tmp" && mv "$tmp" "$f"
+  if [[ $EUID -eq 0 ]]; then chown "$2:$2" "$f"; fi
+  chmod 0644 "$f"
+}
+
+# One account's layer, end to end. Recorded as gone only after the teardown ran,
+# mirroring the install rule that state follows the work rather than announcing it.
+teardown_user_layer() {                                 # <bundle> <user> <home>
+  run_teardown_user   "$1" "$2" "$3"
+  remove_manifest_rows "$1" home "$3"
+  user_forget         "$1" "$2" "$3"
+}
+
+# Everything in pkgs.txt (comments and blanks dropped), one per line.
+bundle_pkgs() {
+  local list; list="$(bundle_dir "$1")/pkgs.txt"
+  [[ -f "$list" ]] || return 0
+  sed 's/#.*//' "$list" | grep -v '^[[:space:]]*$' | tr -d ' \t'
+}
+
+# What `pacman -Rns` may safely be offered for this bundle: its own packages minus
+# anything another INSTALLED bundle still lists. pacman itself refuses to break a
+# dependency, so the danger here is not breakage but over-reach — taking a package
+# a bundle the user kept still needs, which pacman cannot know is shared because
+# both bundles named it explicitly.
+removable_pkgs() {                                      # <bundle>
+  local name="$1" other shared=""
+  while read -r other; do
+    [[ -z "$other" || "$other" == "$name" ]] && continue
+    is_installed "$other" || continue
+    shared+="$(bundle_pkgs "$other")"$'\n'
+  done < <(list_bundles)
+  local p
+  while read -r p; do
+    [[ -n "$p" ]] || continue
+    grep -qxF "$p" <<<"$shared" && continue
+    printf '%s\n' "$p"
+  done < <(bundle_pkgs "$name")
+}
+
+remove_bundle() {
+  local name="$1" u home any_user=0
+
+  # Per-account layers first: they unwind against a machine that is still whole.
+  # Every account that went through the layer, and only those — the same rule
+  # refresh follows, for the same reason.
+  if bundle_has_user_layer "$name" && need_sdk; then
+    while IFS=$'\t' read -r u home; do
+      [[ -n "$u" ]] || continue
+      user_has "$name" "$home" || continue
+      any_user=1
+      w_backup_target "$u" "$home"
+      teardown_user_layer "$name" "$u" "$home"
+      w_backup_finalize
+      w_backup_summary
+    done < <(w_home_users)
+  fi
+  [[ $any_user -eq 1 ]] || info "No account had '$name' set up — machine layer only."
+
+  # Machine layer, in reverse install order.
+  w_backup_target "" ""
+  run_teardown         "$name"
+  remove_manifest_rows "$name" system
+  remove_wstyle        "$name"
+  remove_ai            "$name"
+  state_forget         "$name"
+  info "Bundle '$name' removed."
+}
+
+# The packages are a separate question with a separate answer, asked after the
+# unwiring is already done: even when it is declined, W has stopped claiming the
+# bundle, which is the part only W could do.
+remove_packages() {                                     # <bundle>
+  local name="$1" pkgs
+  pkgs="$(removable_pkgs "$name" | tr '\n' ' ')"; pkgs="${pkgs%% }"
+  [[ -n "${pkgs// }" ]] || return 0
+  if [[ "$WITH_PACKAGES" == 1 ]]; then
+    info "Removing packages: $pkgs"
+    # Local work — no mirror is involved, so there is nothing for the w_pac seam
+    # to retry against (the same reasoning that keeps `pacman -U` out of it).
+    # shellcheck disable=SC2086  # word-splitting is intended: $pkgs is a list
+    pacman -Rns --noconfirm $pkgs || warn "package removal reported an error — check 'pacman -Qi' for what stayed"
+  else
+    echo
+    echo "  Packages were left installed. To remove them too:"
+    echo "      sudo pacman -Rns $pkgs"
+    echo "  (or re-run with --packages). Anything another installed bundle still"
+    echo "  lists has already been excluded from that line."
+  fi
+}
+
+cmd_remove() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || { err "remove needs a bundle name"; usage >&2; exit 2; }
+  require_root "remove"
+  require_jq
+  require_user
+  bundle_exists "$name" || { err "unknown bundle: $name (see 'w-pack list')"; exit 1; }
+  is_installed  "$name" || { err "'$name' is not installed on this machine — nothing to remove"; exit 1; }
+
+  # A bundle another INSTALLED bundle depends on cannot go quietly: install pulls
+  # dependencies in automatically, so removing one out from under its dependent
+  # would leave that dependent silently broken with nothing recording why.
+  local dep_of="" other
+  while read -r other; do
+    [[ -z "$other" || "$other" == "$name" ]] && continue
+    is_installed "$other" || continue
+    [[ " $(meta_field "$other" DEPS) " == *" $name "* ]] && dep_of+=" $other"
+  done < <(list_bundles)
+  if [[ -n "$dep_of" ]]; then
+    err "'$name' is required by installed bundle(s):$dep_of"
+    err "  Remove those first, or they will be left without it."
+    exit 1
+  fi
+
+  info "Removing bundle '$name' ($(meta_field "$name" DESC))..."
+  w_backup_init "$TARGET_USER" "$TARGET_HOME"
+  remove_bundle "$name"
+  w_backup_finalize
+  w_backup_summary
+  remove_packages "$name"
+  if [[ ${#KEPT_USER_FILES[@]} -gt 0 ]]; then
+    echo
+    echo "  Left in place (yours, not W's — the software they configure may still"
+    echo "  be installed):"
+    printf '      %s\n' "${KEPT_USER_FILES[@]}"
+  fi
+  info "Done."
+}
+
+# The rootless half of remove, and the exact counterpart of `setup`: it undoes ONE
+# account's layer and touches nothing else, so a second administrator can drop a
+# bundle for themselves while the machine — and everyone else on it — keeps it.
+cmd_unsetup() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || { err "unsetup needs a bundle name"; usage >&2; exit 2; }
+  require_jq
+  bundle_exists "$name" || { err "unknown bundle: $name (see 'w-pack list')"; exit 1; }
+  require_user
+
+  if ! bundle_has_user_layer "$name"; then
+    info "'$name' is machine-wide — it has no per-account part, so there is nothing to undo."
+    info "  To take it off the machine: sudo w-pack remove $name"
+    return 0
+  fi
+  if ! user_has "$name" "$TARGET_HOME"; then
+    info "'$name' is not set up for $TARGET_USER — nothing to undo."
+    return 0
+  fi
+
+  info "Undoing '$name' for $TARGET_USER..."
+  w_backup_init "$TARGET_USER" "$TARGET_HOME"
+  teardown_user_layer "$name" "$TARGET_USER" "$TARGET_HOME"
+  w_backup_finalize
+  w_backup_summary
+  if [[ ${#KEPT_USER_FILES[@]} -gt 0 ]]; then
+    echo
+    echo "  Left in place (yours, not W's):"
+    printf '      %s\n' "${KEPT_USER_FILES[@]}"
+  fi
+  info "The bundle stays on the machine for everyone else."
+  info "Set yourself back up any time with: w-pack setup $name"
+}
+
 # ── list / status ────────────────────────────────────────────────────────────
 # Three states, not two, because there are two layers and the honest answer has
 # to name which one is missing:
@@ -702,13 +1037,20 @@ cmd_status() {
 }
 
 # ── Dispatch ─────────────────────────────────────────────────────────────────
+# Source-guard: the unit tests take the functions above and drive the remove
+# pipeline against a temporary bundle tree and a temporary state file (checks.md
+# rule 11). It sits ABOVE the option parser on purpose — a sourced w-pack must
+# not try to read bats' own arguments as its own.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then return 0; fi
+
 # Parse the options out of anywhere in the args (same shape as w-reset), so
 # `w-pack setup dev --user alice` and `w-pack --user alice setup dev` both read.
-ARG_USER=""; PORCELAIN=0; POS=()
+POS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --user) ARG_USER="${2:-}"; [[ -n "$ARG_USER" ]] || { err "--user needs a name"; exit 2; }; shift 2 ;;
     --porcelain) PORCELAIN=1; shift ;;
+    --packages) WITH_PACKAGES=1; shift ;;
     *) POS+=("$1"); shift ;;
   esac
 done
@@ -719,6 +1061,8 @@ case "${1:-}" in
   install)        cmd_install "${2:-}" ;;
   setup)          cmd_setup "${2:-}" ;;
   refresh)        cmd_refresh "${2:-}" ;;
+  remove)         cmd_remove "${2:-}" ;;
+  unsetup)        cmd_unsetup "${2:-}" ;;
   status)         cmd_status "${2:-}" ;;
   help|-h|--help) usage ;;
   "")             usage >&2; exit 2 ;;

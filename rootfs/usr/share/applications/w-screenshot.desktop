@@ -1,8 +1,11 @@
 [Desktop Entry]
 Name=Screenshot
+Name[ru]=Снимок экрана
 Comment=Select a region, then annotate, copy or save it
+Comment[ru]=Выделить область, затем разметить, скопировать или сохранить
 Exec=w-screenshot region
 Icon=camera-photo
 Type=Application
 Categories=Graphics;
 Keywords=screenshot;screen shot;capture;region;area;snip;grab;
+Keywords[ru]=снимок экрана;скриншот;снимок;экран;область;захват;screenshot;screen shot;capture;region;area;snip;grab;

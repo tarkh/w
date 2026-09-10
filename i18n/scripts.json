@@ -1,0 +1,28 @@
+{
+  "_comment": "Strings the W shell/python scripts put on a GRAPHICAL surface — desktop notifications and their action buttons — plus the w-info catalog's own chrome. Namespaced '<script>.<thing>'. Generated into /usr/share/w/i18n/<lang>.conf and read at runtime through /usr/lib/w/w-i18n-lib.sh (bash) or /usr/lib/w/w-i18n (anything else). The --help text of the w-* commands is NOT here — it is its own domain, i18n/help/<lang>/, see config-i18n.md §5a — and their runtime terminal output stays English for now (§5). w-info is the one deliberate exception on this side: its body IS the catalog, and every line of that catalog is a translated Info:, so an English frame around a Russian list would just look broken. Values may carry printf placeholders (%s, asserted to match across languages) and must not contain a real newline — the target is a key=value line format.",
+
+  "screenshot.copied": { "en": "Copied to clipboard", "ru": "Скопировано в буфер обмена" },
+  "screenshot.saved":  { "en": "Saved", "ru": "Сохранено" },
+
+  "info.header": { "en": "W Linux — available tools (run '<tool> help' for details):", "ru": "W Linux — доступные инструменты (подробности: '<tool> help'):" },
+  "info.count":  { "en": "%s tool(s)",                                                 "ru": "инструментов: %s" },
+  "info.none":   { "en": "No w-* tools with Info: descriptions found.",                "ru": "Инструментов w-* с описанием Info: не найдено." },
+  "info.hint":   { "en": "Run 'w-<tool> help' on a specific tool for usage.",          "ru": "Запустите 'w-<tool> help' для конкретного инструмента." },
+
+  "nightlight.app":              { "en": "W Night light", "ru": "W Ночной свет" },
+  "nightlight.title":            { "en": "Night light: %s", "ru": "Ночной свет: %s" },
+  "nightlight.mode.schedule":    { "en": "schedule", "ru": "по расписанию" },
+  "nightlight.mode.off":         { "en": "off", "ru": "выключен" },
+  "nightlight.detail.filtering": { "en": "filtering now", "ru": "фильтр активен" },
+  "nightlight.detail.neutral":   { "en": "neutral until %s", "ru": "нейтрально до %s" },
+  "nightlight.detail.disabled":  { "en": "filter disabled", "ru": "фильтр отключён" },
+
+  "term.holdClose":    { "en": "Close this window? [y/N]", "ru": "Закрыть окно? [y/N]" },
+
+  "session.app":       { "en": "Session", "ru": "Сессия" },
+  "session.cancelled": { "en": "Cancelled — windows still open", "ru": "Отменено — окна ещё открыты" },
+
+  "snapshot.title":   { "en": "Running from snapshot #%s", "ru": "Запущено из снапшота #%s" },
+  "snapshot.body":    { "en": "Recovery boot — the system is read-only and changes outside /home are lost.", "ru": "Загрузка для восстановления — система доступна только для чтения, изменения вне /home будут потеряны." },
+  "snapshot.restore": { "en": "Restore this snapshot", "ru": "Восстановить этот снапшот" }
+}

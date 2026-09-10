@@ -1,0 +1,444 @@
+#!/usr/bin/env python3
+# w-i18n-gen — one source of truth for every W translation, fanned out to the
+# five runtimes that actually consume them.
+#
+# WHY A GENERATOR. W's strings used to live in three unrelated stores, split by
+# runtime boundary rather than by choice: the shell's core/i18n.json (QML, live
+# FileView), the greeter's own copy (must be self-contained — it runs before
+# /home exists) and the installer's key=value dicts (bash + dialog, running off
+# the ISO). Adding two more surfaces — desktop entries and the scripts' desktop
+# notifications — would have made five places to edit and five ways to drift.
+# The formats cannot be unified (a .desktop file must carry `Name[ru]=` inline,
+# per the freedesktop spec; dialog's dicts are parsed line-wise, not sourced), so
+# the SOURCE is unified instead and each runtime keeps its native format.
+#
+#   i18n/shell.json     → rootfs/etc/skel/.config/quickshell/w/core/i18n.json
+#   i18n/greeter.json   → rootfs/etc/greetd/quickshell/w/core/i18n.json
+#   i18n/installer.json → scripts/install/i18n/<lang>.conf
+#   i18n/scripts.json   → rootfs/usr/share/w/i18n/<lang>.conf
+#   i18n/apps.json      → localized keys inside rootfs/usr/share/applications/*.desktop
+#   i18n/help/<lang>/   → rootfs/usr/share/w/i18n/help/<lang>/w-<tool>.txt
+#
+# THE HELP DOMAIN IS THE ODD ONE and deliberately so. It is not a JSON catalog:
+# a help text is multi-line prose whose alignment is the layout, and JSON would
+# store it as one unreviewable "\n"-spliced string. It also holds TRANSLATIONS
+# ONLY — English stays in each tool's own usage() heredoc, because that heredoc
+# is what w-info parses for its catalog, what w-docs-refgen renders the English
+# reference from, and what prints on a machine with no catalog installed. Adding
+# an `en` copy here would create a second English original and a way for the two
+# to disagree. What replaces the missing `en` column as a drift detector is a
+# `# w-i18n-src: <sha256>` anchor on the translation's first line — the same
+# idiom as the docs' `sources:` — recomputed here on every run.
+#
+# Same idiom as w-docs-refgen: generated artefacts are committed, and check.sh's
+# i18n suite runs `--check` so a hand-edit of a generated file is a red check
+# rather than a silent divergence. Edit i18n/, never the targets.
+#
+# Modes:
+#   w-i18n-gen            rewrite every target from i18n/
+#   w-i18n-gen --check    render in memory and diff against the committed tree —
+#                         exit 1 on any divergence (the golden gate)
+#
+# DEV-ONLY: lives in devtools/, never ships.
+
+import difflib
+import hashlib
+import json
+import pathlib
+import re
+import subprocess
+import sys
+
+WIDTH = 79  # section-rule width in the generated .conf files
+# printf conversions, `%%` excluded (it prints a literal % and takes no argument).
+PLACEHOLDER = re.compile(r"%(?!%)[-#0 +']*[0-9.]*[a-zA-Z]")
+
+
+def die(msg):
+    print(f"w-i18n-gen: {msg}", file=sys.stderr)
+    sys.exit(2)
+
+
+def find_root():
+    """Walk up to the repo root, marked by what this tool reads (not by
+    .claude/library — the golden check also runs on the published tree, where
+    the library is filtered out but i18n/ and rootfs/ are present)."""
+    d = pathlib.Path(__file__).resolve().parent
+    while d != d.parent:
+        if (d / "scripts/apply.sh").is_file() and (d / "i18n").is_dir():
+            return d
+        d = d.parent
+    die("not inside the W repo; this is a dev-only tool")
+
+
+# ── Canonical catalogs ────────────────────────────────────────────────────────
+def load(root, domain):
+    path = root / "i18n" / f"{domain}.json"
+    try:
+        cat = json.loads(path.read_text())
+    except FileNotFoundError:
+        die(f"missing canonical catalog: {path}")
+    except json.JSONDecodeError as e:
+        die(f"{path}: {e}")
+    if "_comment" not in cat:
+        die(f"{path}: no _comment header")
+    return cat
+
+
+def entries(cat):
+    """Translation entries only — the _comment header and the _section:N layout
+    markers are structure, not strings."""
+    return [(k, v) for k, v in cat.items()
+            if k != "_comment" and not k.startswith("_section:")]
+
+
+def languages(cat):
+    """en first (it is the fallback every consumer resolves to), then the rest
+    alphabetically, so the output order never depends on dict insertion."""
+    seen = set()
+    for _, v in entries(cat):
+        seen |= set(v)
+    return ["en"] + sorted(seen - {"en"})
+
+
+def validate(domain, cat, *, allow_newline):
+    langs = languages(cat)
+    for key, val in entries(cat):
+        if not isinstance(val, dict) or not val:
+            die(f"{domain}: {key}: value must be a non-empty object of lang → text")
+        # `_`-prefixed keys are per-language METADATA, not a translation pair
+        # (_lang_name is each language's own name, _console_font the VT font only
+        # a non-Latin language needs) — they legitimately exist in one language
+        # and not another. Everything else must be complete, or the UI shows a
+        # raw key to whoever picked the missing language.
+        if not key.startswith("_"):
+            missing = [x for x in langs if x not in val]
+            if missing:
+                die(f"{domain}: {key}: missing translation for {', '.join(missing)}")
+        if not allow_newline:
+            for lang, text in val.items():
+                if "\n" in text:
+                    die(f"{domain}: {key}[{lang}]: real newline in a key=value "
+                        f"target (use a literal \\n if the consumer expands it)")
+            # The translation IS the printf format string at runtime, so a
+            # language that drops or invents a placeholder does not mistranslate
+            # — it breaks the call. Cheap to assert here, invisible until a
+            # notification fires in that language otherwise.
+            ref = PLACEHOLDER.findall(val.get("en", ""))
+            for lang, text in val.items():
+                if lang != "en" and PLACEHOLDER.findall(text) != ref:
+                    die(f"{domain}: {key}[{lang}]: placeholders "
+                        f"{PLACEHOLDER.findall(text)} do not match en's {ref}")
+    return langs
+
+
+# ── Renderers ─────────────────────────────────────────────────────────────────
+def q(text):
+    return json.dumps(text, ensure_ascii=False)
+
+
+def render_json(cat, langs, domain):
+    """QML target. Grouped by the key's first namespace segment with the columns
+    padded per group — the hand formatting these files always had, reproduced
+    deterministically so a regeneration is a no-op diff."""
+    items = entries(cat)
+    groups = []
+    for key, val in items:
+        # Dotless catalogs (the greeter's) are one flat group — grouping them by
+        # the whole key would put a blank line between every single entry.
+        head = key.split(".")[0] if "." in key else ""
+        if not groups or groups[-1][0] != head:
+            groups.append((head, []))
+        groups[-1][1].append((key, val))
+
+    body = []
+    for gi, (_, group) in enumerate(groups):
+        # The colon belongs to the key, the padding goes after it — `"a":   {`,
+        # not `"a"   : {`.
+        kw = max(len(q(k)) + 1 for k, _ in group)
+        firsts = {k: f"{q(langs[0])}: {q(v[langs[0]])}," for k, v in group}
+        fw = max(len(s) for s in firsts.values())
+        for key, val in group:
+            rest = " ".join(f"{q(x)}: {q(val[x])}" for x in langs[1:])
+            body.append(f"  {q(key) + ':':<{kw}} {{ {firsts[key]:<{fw}} {rest} }},")
+        if gi < len(groups) - 1:
+            body.append("")
+    body[-1] = body[-1][:-1]  # the last entry carries no trailing comma
+
+    # The shipped file says so itself: whoever opens it in a running system's
+    # ~/.config must be told where the editable copy lives.
+    head = (f"GENERATED by w-i18n-gen from i18n/{domain}.json — do not edit. "
+            + cat["_comment"])
+    return "\n".join(["{", f"  {q('_comment')}: {q(head)},", ""]
+                     + body + ["}", ""])
+
+
+def wrap_comment(text, prefix="# "):
+    out, line = [], prefix.rstrip()
+    for word in text.split():
+        if len(line) + 1 + len(word) > WIDTH:
+            out.append(line)
+            line = prefix + word
+        else:
+            line = f"{line} {word}" if line.strip("# ") else prefix + word
+    out.append(line)
+    return out
+
+
+def render_conf(cat, lang, domain):
+    """dialog / shell target: `key=value`, value is everything after the first
+    '='. Comment lines are skipped by every parser that reads these, so the
+    canonical file's section markers survive the trip."""
+    out = [f"# GENERATED by w-i18n-gen from i18n/{domain}.json — do not edit.",
+           f"# Language: {lang}.", "#"]
+    out += wrap_comment(cat["_comment"])
+    for key, val in cat.items():
+        if key == "_comment":
+            continue
+        if key.startswith("_section:"):
+            rule = f"# ── {val} "
+            out += ["", rule + "─" * max(0, WIDTH - len(rule))]
+            continue
+        if lang in val:
+            out.append(f"{key}={val[lang]}")
+    return "\n".join(out) + "\n"
+
+
+DESKTOP_KEY = re.compile(r"^([A-Za-z0-9-]+)(\[[^\]]+\])?=(.*)$")
+
+
+def render_desktop(root, cat, langs, path_of):
+    """Desktop Entry target. The unlocalized `Key=` line IS the C/English value
+    per the spec, so it is asserted against the catalog rather than written from
+    it — that assertion is the whole point: it makes an English edit in the
+    .desktop file and a stale catalog impossible to have at the same time."""
+    wanted = {}
+    for key, val in entries(cat):
+        base, _, entry_key = key.rpartition(".")
+        wanted.setdefault(base, {})[entry_key] = val
+
+    rendered = {}
+    for base, keys in wanted.items():
+        path = path_of(base)
+        if not path.is_file():
+            die(f"apps: no such desktop file: {path.relative_to(root)}")
+        out = []
+        for line in path.read_text().splitlines():
+            m = DESKTOP_KEY.match(line)
+            if m and m.group(1) in keys:
+                if m.group(2):
+                    continue  # drop every existing localization; we re-emit below
+                if m.group(3) != keys[m.group(1)]["en"]:
+                    die(f"apps: {path.name}: {m.group(1)}= is "
+                        f"{m.group(3)!r} but i18n/apps.json has "
+                        f"{keys[m.group(1)]['en']!r} — reconcile them")
+                out.append(line)
+                out += [f"{m.group(1)}[{x}]={keys[m.group(1)][x]}"
+                        for x in langs if x != "en"]
+                continue
+            out.append(line)
+        rendered[path] = "\n".join(out) + "\n"
+    return rendered
+
+
+# ── Help domain ───────────────────────────────────────────────────────────────
+ANCHOR = "# w-i18n-src: "
+# An UNESCAPED `$NAME`. `\$NAME` is the author asking for a literal dollar — the
+# heredoc's own convention, which the translation files reuse verbatim.
+HELP_VAR = re.compile(r"(?<!\\)\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
+# A translation may not be WIDER THAN ITS OWN ENGLISH ORIGINAL (nor below the
+# conventional 79, so a narrow help still has room for a longer language). Not a
+# flat cap: these helps are aligned tables that already run to 103 columns, and
+# holding a translation to 79 would force it into a different layout than the
+# text it translates. This invariant instead guarantees the exact thing that
+# matters — the translation renders wherever the English does, in a terminal and
+# in the reference page's fenced block alike.
+
+
+def english_help(root, tool, raw=False):
+    """The tool's own help text, through the one parser that knows where it
+    lives (shared with w-docs-refgen — two copies of that parser would drift
+    about what "the same text as the live help" means)."""
+    extract = root / "devtools/usr/local/bin/w-help-extract"
+    if not extract.is_file():
+        die(f"help: missing {extract.relative_to(root)}")
+    argv = [str(extract)] + (["--raw"] if raw else [])
+    out = subprocess.run(argv + [str(root / "rootfs/usr/bin" / tool)],
+                         capture_output=True, text=True, check=False)
+    if out.returncode != 0:
+        die(f"help: {tool}: {out.stderr.strip()}")
+    return out.stdout
+
+
+def help_tools(root):
+    """The user-facing tools, by w-info's own criterion: an `Info:` line. Same
+    criterion as w-docs-refgen's, so the catalog, the reference and the
+    translations can never disagree about which tools are user-facing."""
+    bindir = root / "rootfs/usr/bin"
+    return sorted(p.name for p in bindir.glob("w-*")
+                  if p.is_file() and any(l.startswith("Info: ")
+                                         for l in p.read_text().splitlines()))
+
+
+def render_help(root):
+    """i18n/help/<lang>/w-<tool>.txt → the shipped tree, anchor line stripped.
+
+    The target is text a user READS, so unlike every other target here it cannot
+    carry a "GENERATED — do not edit" banner; the golden gate is what protects
+    it instead."""
+    src = root / "i18n/help"
+    if not src.is_dir():
+        return {}
+    langs = sorted(p.name for p in src.iterdir() if p.is_dir())
+    if "en" in langs:
+        die("help: i18n/help/en exists — English lives in the tool's usage() "
+            "heredoc, never here (a second original is exactly the bug this "
+            "domain is shaped to prevent)")
+    tools = help_tools(root)
+    rendered = {}
+    for lang in langs:
+        present = sorted(p.name for p in (src / lang).glob("*.txt"))
+        # A partial language means `w-info` prints half its catalog in one
+        # language and half in another. English fallback makes that survivable,
+        # not acceptable — a language lands complete or not at all.
+        missing = [t for t in tools if f"{t}.txt" not in present]
+        if missing:
+            die(f"help: i18n/help/{lang} is missing: {', '.join(missing)}")
+        extra = [p for p in present if p[:-4] not in tools]
+        if extra:
+            die(f"help: i18n/help/{lang}: no such user-facing tool: "
+                f"{', '.join(x[:-4] for x in extra)}")
+
+        for tool in tools:
+            path = src / lang / f"{tool}.txt"
+            lines = path.read_text().splitlines()
+            if not lines or not lines[0].startswith(ANCHOR):
+                die(f"help: {path.relative_to(root)}: first line must be "
+                    f"'{ANCHOR}<sha256>' (run w-i18n-gen --anchors to stamp it)")
+            en = english_help(root, tool)
+            want = hashlib.sha256(en.encode()).hexdigest()
+            got = lines[0][len(ANCHOR):].strip()
+            if got != want:
+                die(f"help: {path.relative_to(root)}: the English help changed "
+                    f"since this translation was written — reconcile it, then "
+                    f"restamp with w-i18n-gen --anchors\n"
+                    f"           anchored {got[:16]}…, now {want[:16]}…")
+            body = lines[1:]
+            # `Info:` is a MARKER, not prose: w-info greps it out of this very
+            # file to build the localized catalog. The text after it is the
+            # translation; the word itself may not be.
+            if not any(l.startswith("Info: ") for l in body):
+                die(f"help: {path.relative_to(root)}: no 'Info: ' line — w-info "
+                    f"builds the catalog from it, and the marker stays English")
+            # A help text names real paths through the variables holding them.
+            # w_help expands those by name lookup at print time, so a translation
+            # that drops `$CONF` prints nothing where English prints a path, and
+            # one that invents a name prints the name back. Same reasoning as the
+            # printf-placeholder parity above: the reference is not decoration.
+            ref = sorted(HELP_VAR.findall(english_help(root, tool, raw=True)))
+            mine = sorted(HELP_VAR.findall("\n".join(body)))
+            if ref != mine:
+                die(f"help: {path.relative_to(root)}: variable references "
+                    f"{mine} do not match the English help's {ref}")
+            cap = max(79, max((len(l) for l in en.splitlines()), default=79))
+            long = [i + 2 for i, l in enumerate(body) if len(l) > cap]
+            if long:
+                die(f"help: {path.relative_to(root)}: line(s) "
+                    f"{', '.join(map(str, long))} exceed {cap} columns — the "
+                    f"widest line of the English help this translates")
+            dest = root / "rootfs/usr/share/w/i18n/help" / lang / f"{tool}.txt"
+            rendered[dest] = "\n".join(body) + "\n"
+    return rendered
+
+
+def stamp_anchors(root):
+    """--anchors: rewrite every translation's anchor to the current English
+    help. Deliberately a SEPARATE mode: doing it inside the normal run would
+    turn the drift gate into a rubber stamp."""
+    src = root / "i18n/help"
+    n = 0
+    for path in sorted(src.glob("*/*.txt")) if src.is_dir() else []:
+        tool = path.stem
+        sha = hashlib.sha256(english_help(root, tool).encode()).hexdigest()
+        lines = path.read_text().splitlines()
+        if lines and lines[0].startswith(ANCHOR):
+            lines = lines[1:]
+        new = f"{ANCHOR}{sha}\n" + "\n".join(lines) + "\n"
+        if path.read_text() != new:
+            path.write_text(new)
+            print(f"  stamped {path.relative_to(root)}")
+            n += 1
+    print(f"  help: {n} anchor(s) updated")
+    return 0
+
+
+# ── Drive ─────────────────────────────────────────────────────────────────────
+def main():
+    check = False
+    if len(sys.argv) > 1:
+        if sys.argv[1] in ("-h", "--help"):
+            print(__doc__ or "see the header comment of this file")
+            return 0
+        if sys.argv[1] == "--anchors":
+            return stamp_anchors(find_root())
+        if sys.argv[1] != "--check":
+            die(f"unknown argument: {sys.argv[1]} (use --check or --anchors)")
+        check = True
+
+    root = find_root()
+    targets = {}  # path -> rendered text
+
+    for domain, dest in (
+        ("shell", "rootfs/etc/skel/.config/quickshell/w/core/i18n.json"),
+        ("greeter", "rootfs/etc/greetd/quickshell/w/core/i18n.json"),
+    ):
+        cat = load(root, domain)
+        langs = validate(domain, cat, allow_newline=True)
+        targets[root / dest] = render_json(cat, langs, domain)
+
+    for domain, dest in (
+        ("installer", "scripts/install/i18n"),
+        ("scripts", "rootfs/usr/share/w/i18n"),
+    ):
+        cat = load(root, domain)
+        langs = validate(domain, cat, allow_newline=False)
+        for lang in langs:
+            targets[root / dest / f"{lang}.conf"] = render_conf(cat, lang, domain)
+
+    cat = load(root, "apps")
+    langs = validate("apps", cat, allow_newline=False)
+    targets.update(render_desktop(
+        root, cat, langs,
+        lambda base: root / "rootfs/usr/share/applications" / f"{base}.desktop"))
+
+    targets.update(render_help(root))
+
+    stale = []
+    for path, text in sorted(targets.items()):
+        rel = path.relative_to(root)
+        current = path.read_text() if path.is_file() else None
+        if current == text:
+            continue
+        if check:
+            stale.append(rel)
+            # stderr, so check.sh can silence the success chatter with `>/dev/null`
+            # and still show the divergence that made the suite red.
+            sys.stderr.writelines(difflib.unified_diff(
+                (current or "").splitlines(keepends=True), text.splitlines(keepends=True),
+                fromfile=f"a/{rel}", tofile=f"b/{rel}", n=1))
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+            print(f"  wrote {rel}")
+
+    if check:
+        if stale:
+            print(f"w-i18n-gen: {len(stale)} generated file(s) stale — "
+                  f"run devtools/usr/local/bin/w-i18n-gen", file=sys.stderr)
+            return 1
+        print(f"  i18n: {len(targets)} generated file(s) match i18n/")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

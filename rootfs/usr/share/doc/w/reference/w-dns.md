@@ -5,7 +5,7 @@ order: 0
 summary: Switch DNS provider and DNS-over-TLS mode (systemd-resolved).
 ---
 
-`w-dns` — Switch DNS provider and DNS-over-TLS mode (systemd-resolved)..
+`w-dns` — Switch DNS provider and DNS-over-TLS mode (systemd-resolved).
 
 ## Usage
 

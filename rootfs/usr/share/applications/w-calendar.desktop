@@ -1,6 +1,8 @@
 [Desktop Entry]
 Name=Calendar
+Name[ru]=Календарь
 Comment=Month view with today highlighted
+Comment[ru]=Месяц с подсветкой сегодняшнего дня
 # NB: no `sh -c` — a .desktop Exec does not treat ' as a quote character, so single
 # quotes are stripped and the shell then chokes on the bare `(`. See quickshell-hub.md.
 Exec=hyprctl dispatch "hl.dsp.global(\"quickshell:calendar\")"
@@ -8,3 +10,4 @@ Icon=office-calendar
 Type=Application
 Categories=Office;Calendar;
 Keywords=calendar;date;month;day;today;
+Keywords[ru]=календарь;дата;месяц;день;сегодня;число;calendar;date;month;day;today;

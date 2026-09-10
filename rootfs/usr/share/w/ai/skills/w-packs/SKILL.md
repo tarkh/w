@@ -2,12 +2,12 @@
 name: w-packs
 description: >-
   Optional software bundles (W-Packs) — opt-in add-ons by direction (containers,
-  dev, gaming, …) installed on top of the base system with `w-pack`. Load this when
+  dev, office, gaming, …) installed on top of the base system with `w-pack`. Load this when
   the user wants to see, install, or reason about optional bundles. Operating an
   already-installed bundle is covered by that bundle's own skill (skills/<bundle>).
 sources:
   - path: .claude/library/packs.md
-    sha256: 83d58d741f78be6eb9bdab294fc288880eead52a7cdc707e3ad737a83e42d7c5
+    sha256: b98c683b8901a93aeb2dde01b086845015c4d39c35cd1f846ddee541098a2774
 tools:
   - w_pack_list
   - w_pack_status
@@ -38,16 +38,16 @@ w-pack status [<bundle>]     # what is installed (all, or one bundle)
 sudo w-pack install <bundle> # install: packages + config + w-style + setup
 w-pack setup <bundle>        # set an installed bundle up for MY account (no sudo)
 sudo w-pack refresh [<b>]    # re-apply INSTALLED bundles, no package operations
+sudo w-pack remove <bundle>  # undo W's wiring for it (packages stay by default)
+w-pack unsetup <bundle>      # undo only MY account's layer (no sudo)
 ```
 
 - **`install` needs root** (it installs packages and touches system paths) and is
   **idempotent** — re-running re-applies safely. Heavy bundles (AUR builds) take a
   while. Dependencies between bundles are resolved automatically.
-- There is **no `remove`** yet — it is a later, deliberately conservative phase
-  (shared pacman deps make automatic removal risky). To revert a bundle's *config*
-  to the W default, use `w-reset <bundle>` — it restores from the bundle's own
-  staged tree, backing up the current copies first, and needs no root for your own
-  home.
+- To revert a bundle's *config* to the W default **without removing it**, use
+  `w-reset <bundle>` — it restores from the bundle's own staged tree, backing up
+  the current copies first, and needs no root for your own home.
 - Bundles are also offered at install time (the TUI bundle checklist) and installed
   on first boot — so a fresh machine can arrive with the chosen bundles ready.
   **Exception:** a bundle can set `INSTALLER=off` in its `meta.conf` to hide itself
@@ -55,6 +55,42 @@ sudo w-pack refresh [<b>]    # re-apply INSTALLED bundles, no package operations
   this skill, the Hub) it is a normal bundle. Used for bundles that only make sense
   from an already-running system (e.g. `ai-extra`, an advanced local-AI stack) —
   never suggest installing one of these during the OS install flow itself.
+
+## Removing a bundle
+
+**`w-pack remove` does not mean "uninstall the software".** `pacman` has always
+been able to do that. What only W can undo is what only W did: the install state,
+the W-owned config, the bundle's w-style theme axes, its curated skill, and
+whatever its `setup.sh` did imperatively (enabled a service, installed a package
+outside `pkgs.txt`, created a symlink).
+
+**This matters when a user says "I removed X by hand".** Uninstalling a bundle's
+packages with `pacman` alone does not stick: `packs.json` still says installed, so
+the next `w-sync update` runs `w-pack refresh`, which replays the bundle's
+`setup.sh` and puts it back — for `ai-extra` that means reinstalling Ollama,
+re-enabling its service and re-pulling a 635MB model. If someone reports a bundle
+"coming back", this is why, and `sudo w-pack remove <bundle>` is the fix.
+
+What remove does **not** touch, by design — say so plainly rather than offering to
+work around it:
+
+- **Packages stay.** The exact `pacman -Rns …` line is printed (already minus
+  anything another installed bundle still lists); `--packages` runs it instead.
+- **Data is never deleted** — model stores, image stores, toolchains, installed
+  Flatpak apps. Their paths and sizes are printed; deleting them is the user's
+  call, and some are btrfs subvolumes that need `btrfs subvolume delete` rather
+  than `rm -rf`.
+- **`user`-class config stays** and is listed at the end. With the packages still
+  installed, deleting a user's own settings for software that is still there would
+  be damage, not a rollback.
+
+`remove` **refuses** while another installed bundle declares it in `DEPS`, naming
+the dependents — remove those first.
+
+**`unsetup` is the rootless half**, and the exact counterpart of `setup`: it undoes
+one account's layer and leaves the machine (and everyone else on it) with the
+bundle. That is what a non-admin wants when they no longer use a bundle someone
+else installed. `w-pack setup <bundle>` puts them back any time.
 
 ## Two layers: the machine's and yours
 
@@ -121,9 +157,20 @@ When `w-mcp` is connected:
   `ai.conf` (`W_AI_TOOL_PACKS`); if disabled, tell the user which switch to flip
   rather than working around it.
 
-There is deliberately **no MCP tool for `w-pack setup`**: it is rootless and touches
-only the caller's own home, so it needs no OS-enforced privilege — run it through
-your normal shell, the same way you would any other user-scope command.
+There is deliberately **no MCP tool for `w-pack setup`** or `unsetup`: both are
+rootless and touch only the caller's own home, so they need no OS-enforced
+privilege — run them through your normal shell, the same way you would any other
+user-scope command.
+
+There is also **no MCP tool for `w-pack remove`**: removal stays something a person
+performs, not something you actuate. Tell the user the exact command (`sudo w-pack
+remove <bundle>`, plus `--packages` if they want the packages gone too) and let them
+run it — or point them at **Hub → Packs**, where every bundle that is on the machine
+carries a Remove button. The panel asks for confirmation first and then offers the
+choice the command makes explicit: take it off the machine (needs an administrator)
+or undo only their own account's layer (`unsetup`, no password). The panel never
+passes `--packages` — the exact `pacman -Rns` line is printed in the terminal for the
+user to decide on, which is also why that terminal waits before closing.
 
 **`refresh` vs `install` vs `setup`.** `refresh` re-applies what an already-installed
 bundle owns — its config files, w-style axis, AI skill and its idempotent setup —

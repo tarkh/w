@@ -5,7 +5,7 @@ order: 0
 summary: Manage Hyprland keybindings — profiles, catalog, custom binds.
 ---
 
-`w-hotkeys` — Manage Hyprland keybindings — profiles, catalog, custom binds..
+`w-hotkeys` — Manage Hyprland keybindings — profiles, catalog, custom binds.
 
 ## Usage
 

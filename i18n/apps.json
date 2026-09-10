@@ -1,0 +1,23 @@
+{
+  "_comment": "Localized Desktop Entry keys for W's own applications. Key = '<desktop file basename>.<Entry key>'. The 'en' value MUST equal the unlocalized key in the .desktop file — per the freedesktop spec that line IS the C/English value, so w-i18n-gen asserts they match instead of writing it twice. Every other language becomes a 'Key[lang]=' line. Keywords keep the Latin terms alongside the translated ones: a user searching the launcher may type either.",
+
+  "w-calendar.Name":     { "en": "Calendar", "ru": "Календарь" },
+  "w-calendar.Comment":  { "en": "Month view with today highlighted", "ru": "Месяц с подсветкой сегодняшнего дня" },
+  "w-calendar.Keywords": { "en": "calendar;date;month;day;today;", "ru": "календарь;дата;месяц;день;сегодня;число;calendar;date;month;day;today;" },
+
+  "w-volume-control.Name":     { "en": "Volume Control", "ru": "Громкость" },
+  "w-volume-control.Comment":  { "en": "W Linux audio control", "ru": "Управление звуком W Linux" },
+  "w-volume-control.Keywords": { "en": "volume;audio;sound;pipewire;mixer;", "ru": "громкость;звук;аудио;микшер;динамик;volume;audio;sound;pipewire;mixer;" },
+
+  "w-power-menu.Name":     { "en": "Power Menu", "ru": "Меню питания" },
+  "w-power-menu.Comment":  { "en": "Lock, log out, suspend, restart or shut down", "ru": "Блокировка, выход, спящий режим, перезагрузка или выключение" },
+  "w-power-menu.Keywords": { "en": "power;logout;log out;lock;suspend;sleep;reboot;restart;shutdown;poweroff;", "ru": "питание;выключение;перезагрузка;выход;блокировка;сон;спящий режим;power;logout;log out;lock;suspend;sleep;reboot;restart;shutdown;poweroff;" },
+
+  "w-screenshot.Name":     { "en": "Screenshot", "ru": "Снимок экрана" },
+  "w-screenshot.Comment":  { "en": "Select a region, then annotate, copy or save it", "ru": "Выделить область, затем разметить, скопировать или сохранить" },
+  "w-screenshot.Keywords": { "en": "screenshot;screen shot;capture;region;area;snip;grab;", "ru": "снимок экрана;скриншот;снимок;экран;область;захват;screenshot;screen shot;capture;region;area;snip;grab;" },
+
+  "w-assistant.Name":     { "en": "W Assistant", "ru": "Ассистент W" },
+  "w-assistant.Comment":  { "en": "Ask W — the OS assistant (Super+W)", "ru": "Спросить W — ассистент системы (Super+W)" },
+  "w-assistant.Keywords": { "en": "ai;assistant;jarvis;chat;goose;w-ai;ask;", "ru": "ассистент;помощник;ии;чат;спросить;джарвис;ai;assistant;jarvis;chat;goose;w-ai;ask;" }
+}

@@ -5,7 +5,7 @@ order: 0
 summary: Set the timezone, the system clock and NTP (systemd-timesyncd).
 ---
 
-`w-time` — Set the timezone, the system clock and NTP (systemd-timesyncd)..
+`w-time` — Set the timezone, the system clock and NTP (systemd-timesyncd).
 
 ## Usage
 

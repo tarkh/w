@@ -5,7 +5,7 @@ order: 0
 summary: List all W tools with a one-line description of each.
 ---
 
-`w-info` — List all W tools with a one-line description of each..
+`w-info` — List all W tools with a one-line description of each.
 
 ## Usage
 

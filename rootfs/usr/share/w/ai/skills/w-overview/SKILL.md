@@ -7,7 +7,7 @@ description: >-
   before answering questions about how W is organized or which command to use.
 sources:
   - path: .claude/library/essentials.md
-    sha256: 8ff2eea0cec41b9f19a08f9476526b4c62dc89550152e68c15e29a5f6ba190c7
+    sha256: 3e11926870e17d3d1c988790a9c93e6811d4725ff7b9ad855022d4b60d173538
 ---
 
 # W Overview
@@ -92,7 +92,20 @@ commands — they encode W's conventions and keep the system consistent. Most su
   administrator's job, but a bundle has a **per-account half** that anyone sets up
   for themselves with `w-pack setup <bundle>` — no root, no prompt. So "installed"
   is machine-wide while the tools may still be missing for the person asking; the
-  listing distinguishes the two. See **w-packs**.
+  listing distinguishes the two. Both halves have an inverse (`w-pack remove`,
+  `w-pack unsetup`), and it undoes W's wiring, not the software: packages and data
+  stay unless asked for. See **w-packs**.
+- `w-locale status|list [--names]|set <locale>` + `w-langpack status|plan|apply` —
+  the system interface language. `w-locale` owns `LANG` and nothing else; everything
+  a language ALSO needs — the Firefox language pack, a spell-checking dictionary,
+  translated man pages, the Linux console font — is `w-langpack`'s. Switching the
+  language deliberately does not install those (it must stay instant and work
+  offline), so "I changed the language but Firefox is still English" is answered by
+  `w-langpack plan`, not by hunting for a setting. Some CLI tools (eza, atuin, helix,
+  micro, yazi, btop) have no translations upstream at all and stay English. The `w-*`
+  commands themselves: **help is translated** (so is `w-info` and the offline command
+  reference), **runtime output is not** — an English error under a Russian help is
+  expected, not a half-finished translation. See **w-input**.
 - `w-kernel` — select the active kernel (`linux-zen` default, vanilla `linux`, or
   `linux-lts`) and toggle the sysctl/cmdline hardening profile. Switching never removes
   a kernel, so every installed one stays bootable. See the w-security skill.

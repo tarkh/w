@@ -87,6 +87,22 @@ import sys
 import time
 import unicodedata
 
+
+def _t(key, fallback):
+    """One translated string for a GRAPHICAL surface (a notification), resolved
+    through the shared catalog — see /usr/lib/w/w-i18n-lib.sh and i18n/scripts.json.
+    Terminal output and --help stay English (config-i18n.md §5), so this is used
+    at exactly the notify-send call sites. Any failure (helper absent, catalog
+    missing) falls back to the English literal the caller passes in — a daemon
+    must not die over a label."""
+    try:
+        out = subprocess.run(["/usr/lib/w/w-i18n", "t", key],
+                             capture_output=True, text=True, check=True).stdout
+        return out or fallback
+    except (OSError, subprocess.CalledProcessError):
+        return fallback
+
+
 # ── Tunables (mechanics, not settings — the settings live in `w-conf session`) ─
 PARK_WORKSPACE = "special:w-restore"   # hidden staging area for phase 1
 PARK_TIMEOUT = 45.0      # the whole of phase 1 gives up after this
@@ -1287,7 +1303,11 @@ def close_windows(workspace=None, timeout=CLOSE_TIMEOUT):
         # The notification lives here rather than in the callers because what the
         # user needs to know is the same in both: the thing they asked for did
         # not happen, and their windows are untouched.
-        subprocess.run(["notify-send", "Session", "Cancelled — windows still open"],
+        # Graphical surface → system language. w-session is Python, so it reaches
+        # the shared catalog through /usr/lib/w/w-i18n rather than a second parser
+        # of its own; a failed lookup degrades to the English literal here.
+        subprocess.run(["notify-send", _t("session.app", "Session"),
+                        _t("session.cancelled", "Cancelled — windows still open")],
                        capture_output=True, check=False)
         return False
     return True
@@ -1877,7 +1897,7 @@ def cmd_layout(args):
         name = " ".join(a for a in rest if not a.startswith("--"))
         scope = "workspace" if "--workspace" in rest else "layout"
         if not name:
-            print(USAGE, file=sys.stderr); return 2
+            print(usage(), file=sys.stderr); return 2
         if not hypr_alive():
             die("no Hyprland session to save")
         return do_layout_save(name, scope)
@@ -1893,7 +1913,7 @@ def cmd_layout(args):
         return do_layout_apply(slug, dry_run="--dry-run" in rest,
                                foreground="--foreground" in rest)
 
-    print(USAGE, file=sys.stderr)
+    print(usage(), file=sys.stderr)
     return 2
 
 
@@ -2018,8 +2038,7 @@ def do_status(porcelain):
 
 USAGE = """Usage: w-session <command> [args]
 
-Info: Remember the graphical session (windows, workspaces, split layout) and
-      put it back at the next login.
+Info: Remember and restore the graphical session (windows, workspaces, split layout).
 
 Commands:
   status [--porcelain]        Show the mode and what is currently saved
@@ -2069,6 +2088,30 @@ Examples:
   w-session layout save 'Работа'
   w-session layout save 'Чтение' --workspace"""
 
+_USAGE_L10N = None
+
+
+def usage():
+    """The help text, localized when a translation exists — resolved through the
+    SAME helper the notification strings use (/usr/lib/w/w-i18n), so the two can
+    never disagree about the active language. English lives in USAGE below and
+    is the fallback for every failure: no translation, no helper, no catalog.
+
+    Lazy and cached on purpose: this file is also the snapshot daemon, and a
+    fork at import time for text nobody prints would be pure waste."""
+    global _USAGE_L10N
+    if _USAGE_L10N is None:
+        _USAGE_L10N = USAGE
+        try:
+            out = subprocess.run(["/usr/lib/w/w-i18n", "help", "w-session"],
+                                 capture_output=True, text=True, check=True).stdout
+            if out.strip():
+                _USAGE_L10N = out.rstrip("\n")
+        except (OSError, subprocess.CalledProcessError):
+            pass
+    return _USAGE_L10N
+
+
 
 def cmd_exclude(args):
     values = conf_load()
@@ -2079,7 +2122,7 @@ def cmd_exclude(args):
         return 0
     action = args[0]
     if action not in ("add", "remove") or len(args) < 2:
-        print(USAGE, file=sys.stderr); return 2
+        print(usage(), file=sys.stderr); return 2
     pattern = args[1]
     try:
         re.compile(pattern)
@@ -2114,7 +2157,7 @@ def restart_daemon():
 
 def main(argv):
     if not argv or argv[0] in ("help", "-h", "--help"):
-        print(USAGE); return 0
+        print(usage()); return 0
     cmd, args = argv[0], argv[1:]
 
     if cmd == "status":
@@ -2163,7 +2206,7 @@ def main(argv):
                 except ValueError:
                     die("--timeout takes a number of seconds")
             else:
-                print(USAGE, file=sys.stderr); return 2
+                print(usage(), file=sys.stderr); return 2
         if not hypr_alive():
             die("no Hyprland session")
         if "--dry-run" in args:
@@ -2183,14 +2226,14 @@ def main(argv):
 
     if cmd == "mode":
         if len(args) != 1 or args[0] not in ("off", "save", "restore"):
-            print(USAGE, file=sys.stderr); return 2
+            print(usage(), file=sys.stderr); return 2
         conf_set("MODE", args[0])
         restart_daemon()
         return 0
 
     if cmd == "autosave":
         if len(args) != 1:
-            print(USAGE, file=sys.stderr); return 2
+            print(usage(), file=sys.stderr); return 2
         try:
             n = int(args[0])
         except ValueError:
@@ -2203,7 +2246,7 @@ def main(argv):
 
     if cmd == "terminal":
         if len(args) != 1 or args[0] not in ("off", "allowlist", "all"):
-            print(USAGE, file=sys.stderr); return 2
+            print(usage(), file=sys.stderr); return 2
         conf_set("TERMINAL_APPS", args[0])
         return 0
 
@@ -2216,7 +2259,7 @@ def main(argv):
     if cmd == "daemon":
         return do_daemon()
 
-    print(USAGE, file=sys.stderr)
+    print(usage(), file=sys.stderr)
     return 2
 
 

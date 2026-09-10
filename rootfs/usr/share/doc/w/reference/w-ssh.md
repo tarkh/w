@@ -5,7 +5,7 @@ order: 0
 summary: Choose the session's SSH agent and generate per-host key selectors from it.
 ---
 
-`w-ssh` — Choose the session's SSH agent and generate per-host key selectors from it..
+`w-ssh` — Choose the session's SSH agent and generate per-host key selectors from it.
 
 ## Usage
 

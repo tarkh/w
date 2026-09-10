@@ -78,7 +78,13 @@ TARGET_USER="$WCONF_TARGET_USER"; TARGET_HOME="$WCONF_TARGET_HOME"
 FRAG="${XDG_CONFIG_HOME:-${TARGET_HOME:-${HOME:-}}/.config}/hypr/monitors.lua"
 STATE="${XDG_STATE_HOME:-${TARGET_HOME:-${HOME:-}}/.local/state}/w/displays.json"
 
+# W_I18N_LIB is a dev/test seam, the same one W_CONF_LIB is: it lets this CLI be
+# sourced from a checkout on a machine with no W installed (scripts/check/tests).
+# shellcheck source=../lib/w/w-i18n-lib.sh
+source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
+
 usage() {
+  if w_help w-monitor; then return 0; fi
   cat <<EOF
 Usage: w-monitor <command> [args]
 

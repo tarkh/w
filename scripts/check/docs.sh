@@ -36,6 +36,12 @@
 #                    library; prose may not (the skill-layer lesson: a shipped
 #                    pointer to a tree the reader does not have).
 #   4. links         relative .md and image targets resolve (both languages).
+#   4a. Info: line  the one-line summary two consumers share — `w-info`'s
+#                   catalog on the machine and every reference page's subtitle,
+#                   `summary:` and TOC entry — is ONE line ending in a period.
+#                   Both read it with `… | head -1`, so a wrapped Info: is not
+#                   an error anywhere: it is silently truncated mid-sentence in
+#                   four places at once (two tools shipped that way).
 #   5. gold          the generated reference is byte-current
 #                    (w-docs-refgen --check — the same script regenerates).
 
@@ -237,6 +243,35 @@ _chk_links() {
   [[ $rc == 0 ]]
 }
 
+# The `Info:` line is a contract between two independent readers: `w-info`
+# builds the on-machine catalog from it (`sed -n 's/^Info: //p' | head -1`) and
+# w-docs-refgen prints it verbatim as a reference page's subtitle, frontmatter
+# `summary:` and index TOC entry. Both take the FIRST line only, so a wrapped
+# Info: loses its tail everywhere with no error — which is exactly how
+# w-langpack and w-session shipped a summary ending in a comma. Checked on the
+# sources the two readers actually parse: the tool's own heredoc for English,
+# the translation canon for every other language.
+#
+# The 96-column cap is the catalog's geometry, not taste: w-info prints the line
+# after a 24-column gutter (`printf '  %-22s %s'`), so 96 keeps the widest row
+# inside 120 columns. Today's longest Info: is 82.
+_chk_info_line() {
+  local rc=0 f line n
+  while IFS= read -r f; do
+    line="$(grep -m1 '^Info: ' "$f")" || continue
+    n="$(grep -n '^Info: ' "$f" | head -1 | cut -d: -f1)"
+    # A continuation is an indented non-empty line directly below.
+    sed -n "$((n + 1))p" "$f" | grep -qE '^[[:space:]]+[^[:space:]]' && {
+      echo "  ${f#./}: Info: wraps onto the next line — both readers keep only the first"; rc=1; }
+    [[ "$line" == *. ]] || {
+      echo "  ${f#./}: Info: does not end in a period (the subtitle prints it verbatim)"; rc=1; }
+    line="${line#Info: }"
+    (( ${#line} <= 96 )) || {
+      echo "  ${f#./}: Info: is ${#line} chars — over 96, w-info's catalog row wraps"; rc=1; }
+  done < <(grep -l '^Info: ' rootfs/usr/bin/w-* i18n/help/*/*.txt 2>/dev/null | sort)
+  [[ $rc == 0 ]]
+}
+
 chk_docs() {
   local rc=0
   [[ -d "$DOCS_DIR" ]] || { echo "  no docs tree at $DOCS_DIR"; return 1; }
@@ -248,6 +283,7 @@ chk_docs() {
   _chk_help_reachable || rc=1
   _chk_dev_bleed || rc=1
   _chk_links || rc=1
+  _chk_info_line || rc=1
 
   devtools/usr/local/bin/w-docs-refgen --check > /dev/null || {
     echo "  generated reference docs are stale (see w-docs-refgen --check above)"; rc=1; }

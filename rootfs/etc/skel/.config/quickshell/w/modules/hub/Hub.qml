@@ -456,9 +456,15 @@ Scope {
                                 active: root.currentPanel !== null
                                 source: root.currentPanel ? root.currentPanel.source : ""
                                 // Hand the route's arguments to the panel that asked for
-                                // them. Panels that declare no `navArgs` are untouched, so
+                                // them, and — for a panel that raises a modal — the card
+                                // that modal has to dim, since a panel cannot reach its own
+                                // Hub. Panels declaring neither property are untouched, so
                                 // this stays invisible to every existing screen.
-                                onLoaded: if (item && item.navArgs !== undefined) item.navArgs = root.currentArgs
+                                onLoaded: {
+                                    if (!item) return;
+                                    if (item.navArgs !== undefined) item.navArgs = root.currentArgs;
+                                    if (item.hubSurface !== undefined) item.hubSurface = card;
+                                }
                             }
 
                             // Wire a panel's optional signals into the Hub:

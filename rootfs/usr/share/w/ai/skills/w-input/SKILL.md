@@ -7,15 +7,21 @@ description: >-
   settings (w-pointer — speed, acceleration, scrolling, tap-to-click, click method,
   disable-while-typing, drag modes, swipe gestures), and the system language /
   locale (w-locale, LANG). Load this for anything about keybindings, remapping keys,
-  keyboard layouts, mouse or touchpad behaviour, the input language, or the system
-  locale.
+  keyboard layouts, mouse or touchpad behaviour, the input language, the system
+  locale, or why part of the interface is still in another language after switching
+  it (language packs, Firefox translations, spell-checking dictionaries, the Linux
+  console font — the w-langpack language profile).
 sources:
   - path: .claude/library/w-hotkeys.md
     sha256: cedb796f65ff1c859ff32b9f37987cfa9d2980fb1d5f7469a56c959d942e4e8e
   - path: .claude/library/w-keyboard.md
     sha256: 13b38a7476f4b3928d2c11bdbe3c0a906b1f0d65b2ec8b84c67adb41c90f85dc
   - path: .claude/library/w-locale.md
-    sha256: f7115aa77613a12c20ac382e5a3e74662b4278a8a811d4755e7da4fc90a8b232
+    sha256: d44d9db19c73ed5c0c355de68fdaf802a2b1eb11152c486910df1adf13f59445
+  - path: .claude/library/w-langpack.md
+    sha256: b56563d3f04a6e5186afb7d702583d668b90eac8fe3bf89703e697e14f3c7bfc
+  - path: .claude/library/config-i18n.md
+    sha256: 412c8f72b60a8e71d531496d3866cfa27ebe6087b423412ead83c8cfbded3039
   - path: .claude/library/w-pointer.md
     sha256: d8344be0c6e6e9e74217ae93f6bb1279480eb2350564b6e00b0f0a60b7c0fe5f
 tools:
@@ -164,13 +170,65 @@ segment only exists on a machine that has one).
 is root** (it edits `/etc/locale.gen`, runs `locale-gen`, writes `LANG`).
 
 - `w-locale status` — current `LANG`.
-- `w-locale list` — selectable UTF-8 locales (~327, from glibc's `SUPPORTED`).
+- `w-locale list [--names]` — selectable UTF-8 locales (~328, from glibc's
+  `SUPPORTED`). `--names` adds each language's **endonym** — its name in itself
+  (`ru_RU.UTF-8 → русский (Россия)`, `ja_JP.UTF-8 → 日本語 (日本)`), which is what the
+  Hub picker shows and what you should quote to the user rather than a bare code.
 - `w-locale set <locale>` — **privileged**; the change takes effect only for sessions
   started *after* it (tell the user to re-login).
 
 In the W Hub this lives in the **System** panel's "Language" section (it is a
 system, relogin-scoped setting, closer to About/Updates than to the layout ring),
 actuated through polkit.
+
+## The language profile — `w-langpack`
+
+**`LANG` is only one fact.** Changing it does NOT by itself make Firefox Russian,
+install a spell-checking dictionary, or stop a TTY from transliterating Cyrillic.
+Everything else the chosen language needs is owned by `w-langpack`, and this is the
+first thing to check when a user says "I switched the language but X is still in
+English".
+
+- `w-langpack status` — the profile of the current locale: which console font it
+  wants, how many language packages are wanted and how many are missing.
+- `w-langpack plan [<locale>] [--porcelain]` — the **missing** packages.
+- `w-langpack apply [<locale>]` — **root**: install them + set the console font.
+- `w-langpack font [<locale>]` — **root**: console font only (offline-safe).
+
+The catalogue is *probed* against pacman's sync db, never hard-coded: candidates are
+derived from the locale (`firefox-i18n-<xx>-<yy>` → `firefox-i18n-<xx>`,
+`hunspell-<xx>_<yy>` → `hunspell-<xx>`, `man-pages-<xx>`) and only what actually
+exists is proposed. English deliberately skips the Firefox pack (en-US is built into
+the browser) but still gets a dictionary — none is installed by default in any
+language.
+
+**`w-locale set` deliberately does NOT install anything.** It applies the console
+font (instant, works offline) and *reports* what is still pending. Delivery is an
+explicit action: the next `apply.sh --langpack`, `sudo w-langpack apply`, or the Hub
+handing the plan to the privileged package installer. Say this plainly when a user
+asks why their new language is half-English — it is a design decision, not a bug.
+
+### What genuinely cannot be translated
+
+Some tools have no internationalization upstream at all — verified, not assumed
+(zero translation catalogues in their packages): **eza** (the `ls` replacement),
+**atuin**, **helix**, **micro**, **yazi**, **btop**, plus
+fzf/bat/starship/zoxide/fastfetch. If a user asks why these stay English, tell them
+the upstream has no translation support rather than looking for a setting.
+
+Two specifics worth having ready, because both look like W bugs and are not:
+
+- **`ls` output is fully localized, but eza's ERROR messages are English.** Its
+  dates follow the locale (chrono), and W's `ll`/`la` aliases deliberately omit
+  `-h` — in eza that flag is `--header`, not human-readable, and that header row
+  was the only English left in a listing. The errors are English for a deeper
+  reason: Rust never calls `setlocale()`, so the process stays in the C locale even
+  though glibc *has* the translation. Nothing W can fix from the outside; lsd was
+  measured as a replacement and is no better.
+- **W's own `w-*` help IS translated** (`w-<tool> help`, and the `w-info` catalog
+  built from it), as is the offline command reference. What stays English is their
+  **runtime terminal output** — errors, status lines, progress. So "the help is
+  Russian but the error is English" is expected, not a half-finished translation.
 
 ## Tools (via `w-mcp`)
 

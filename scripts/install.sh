@@ -173,7 +173,24 @@ packs_list() {
 # ── Language selection (first screen, before anything is localized) ───────────
 # The list shows each language by its own _lang_name; the default follows $LANG.
 select_language() {
+  # $cur picks the default menu item from the INHERITED LANG — capture it before
+  # the override below.
   local items=() code name def="" cur="${LANG%%_*}"
+
+  # This menu is the one screen drawn before a language is known, and both things
+  # it depends on are still wrong at this point:
+  #   • dialog measures multibyte text only under a UTF-8 locale, and the
+  #     installer can be started with LANG unset (a root shell over SSH);
+  #   • on a Linux VT the kernel's built-in font carries Latin only and silently
+  #     maps every missing glyph onto a Latin look-alike — which is why
+  #     `_lang_name=Русский` used to render as "Russkiy" on the ISO.
+  # Fix both up front; the chosen language can still narrow the font afterwards
+  # through `_console_font`. The ISO declares the same font in /etc/vconsole.conf,
+  # so this call covers the other entry point: running the installer from an
+  # already-installed machine's VT. Best-effort — setfont fails harmlessly off a VT.
+  export LANG=C.UTF-8
+  setfont LatArCyrHeb-16 2>/dev/null || true
+
   while IFS=$'\t' read -r code name; do
     items+=("$code" "$name")
     [[ "$code" == "$cur" ]] && def="$code"
@@ -190,10 +207,9 @@ select_language() {
   i18n_load "$sel"
   nav_init
 
-  # dialog needs a UTF-8 locale to render/measure multibyte text; the VT also
-  # needs a font with the language's glyphs (else Cyrillic shows as look-alike
-  # Latin). Both are best-effort — harmless over SSH/graphical terminals.
-  export LANG=C.UTF-8
+  # Narrow the VT font to what the chosen language asks for. The pre-menu load
+  # above already covers every offered language, so this is a no-op unless a
+  # dictionary declares something else; LANG was pinned to C.UTF-8 up there too.
   local font="${MSG[_console_font]:-}"
   [[ -n "$font" ]] && setfont "$font" 2>/dev/null || true
 }

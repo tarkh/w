@@ -5,7 +5,7 @@ order: 0
 summary: Launch or query the configured terminal (single entry point).
 ---
 
-`w-term` — Launch or query the configured terminal (single entry point)..
+`w-term` — Launch or query the configured terminal (single entry point).
 
 ## Usage
 
@@ -22,6 +22,11 @@ Commands:
   set <name>      Set the active terminal (writes user override)
   help            Show this help
 
+Options:
+  --hold          With `-e`: when CMD finishes, ask before closing the window
+                  so its output stays readable. Answering anything but yes hands
+                  the window to an interactive shell instead of closing it
+
 Config: $SYS_CONF (vendor default) + $USER_CONF (user override)
 
 Exit codes:
@@ -30,6 +35,7 @@ Exit codes:
 Examples:
   w-term
   w-term -e btop
+  w-term --hold -e sudo w-pack remove containers
   w-term set ghostty
 ```
 

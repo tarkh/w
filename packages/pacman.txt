@@ -94,6 +94,21 @@ foot
 # Fonts
 inter-font
 ttf-jetbrains-mono-nerd
+# Universal script coverage — the "no tofu, ever" safety net, the same bet macOS
+# makes. Inter and JetBrains cover Latin/Cyrillic/Greek and nothing else, so a
+# Japanese web page, a Telegram emoji or a filename in Hindi renders as empty
+# boxes without these. Fontconfig needs no change to pick them up: the W
+# fonts.conf uses <prefer>, which PREPENDS Inter/JetBrains to the family list and
+# leaves the default fallback chain (these) intact — Noto only fills the gaps.
+#   noto-fonts       ~107 MiB  all of Unicode except CJK
+#   noto-fonts-cjk   ~299 MiB  日本語 / 中文 / 한국어 in one package
+#   noto-fonts-emoji  ~10 MiB  colour emoji
+# noto-fonts-extra (~331 MiB) is deliberately NOT here: it adds weights and
+# widths, not coverage. The ISO does not grow — these ride pacman at install
+# time, not the image (see config-fonts.md / config-i18n.md).
+noto-fonts
+noto-fonts-cjk
+noto-fonts-emoji
 # gucharmap (GNOME Character Map, GTK3 — auto-themed by the W gtk axis): browse a
 # chosen font's glyphs incl. the Nerd Font Private Use Area and copy them, e.g. to
 # pick icon/folded glyphs for the Quickshell bar config (config/bar.json).

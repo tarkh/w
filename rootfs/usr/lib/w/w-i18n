@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# w-i18n — the translation lookup as a command, for callers that are not bash.
+#
+# w-i18n-lib.sh is the real implementation; this is the two-line front so a Python
+# script (w-session) reaches the same catalog through the same parser instead of
+# growing a second one. One fork per notification — irrelevant at that rate, and
+# cheaper than the drift a duplicate parser would cost.
+#
+#   w-i18n t <key> [printf-args…]     one string
+#   w-i18n help <tool>                that tool's translated help (exit 1 if none)
+
+set -euo pipefail
+
+# shellcheck source=w-i18n-lib.sh
+source /usr/lib/w/w-i18n-lib.sh
+
+case "${1:-}" in
+t)
+    [[ $# -ge 2 ]] || { echo "usage: w-i18n t <key> [printf-args…]" >&2; exit 2; }
+    shift
+    w_t "$@"
+    ;;
+help)
+    [[ $# -eq 2 ]] || { echo "usage: w-i18n help <tool>" >&2; exit 2; }
+    w_help "$2"
+    ;;
+*)
+    echo "usage: w-i18n t <key> [printf-args…] | w-i18n help <tool>" >&2
+    exit 2
+    ;;
+esac

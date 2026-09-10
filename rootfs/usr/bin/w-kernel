@@ -65,7 +65,13 @@ declare -A KERNEL_IMG=([zen]=/boot/vmlinuz-linux-zen [vanilla]=/boot/vmlinuz-lin
 err() { echo "w-kernel: $*" >&2; }
 need_root() { [[ $EUID -eq 0 ]] || { err "this command requires root"; exit 1; }; }
 
+# W_I18N_LIB is a dev/test seam, the same one W_CONF_LIB is: it lets this CLI be
+# sourced from a checkout on a machine with no W installed (scripts/check/tests).
+# shellcheck source=../lib/w/w-i18n-lib.sh
+source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
+
 usage() {
+  if w_help w-kernel; then return 0; fi
   cat <<EOF
 Usage: w-kernel <command> [options]
 

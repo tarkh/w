@@ -5,7 +5,7 @@ order: 0
 summary: Toggle the firewall zone between home and public (firewalld).
 ---
 
-`w-firewall` — Toggle the firewall zone between home and public (firewalld)..
+`w-firewall` — Toggle the firewall zone between home and public (firewalld).
 
 ## Usage
 

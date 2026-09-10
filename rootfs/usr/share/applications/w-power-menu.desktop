@@ -1,6 +1,8 @@
 [Desktop Entry]
 Name=Power Menu
+Name[ru]=Меню питания
 Comment=Lock, log out, suspend, restart or shut down
+Comment[ru]=Блокировка, выход, спящий режим, перезагрузка или выключение
 # NB: no `sh -c` — a .desktop Exec does not treat ' as a quote character, so single
 # quotes are stripped and the shell then chokes on the bare `(`. See quickshell-hub.md.
 Exec=hyprctl dispatch "hl.dsp.global(\"quickshell:powermenu\")"
@@ -8,3 +10,4 @@ Icon=system-shutdown
 Type=Application
 Categories=System;
 Keywords=power;logout;log out;lock;suspend;sleep;reboot;restart;shutdown;poweroff;
+Keywords[ru]=питание;выключение;перезагрузка;выход;блокировка;сон;спящий режим;power;logout;log out;lock;suspend;sleep;reboot;restart;shutdown;poweroff;

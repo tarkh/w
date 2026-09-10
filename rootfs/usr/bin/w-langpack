@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+# w-langpack — W Linux language profile: everything a locale needs beyond LANG=
+#
+# `w-locale` owns ONE fact — the value of LANG in /etc/locale.conf. But a language
+# is more than that string, and the rest of it is delivered by other means:
+#
+#   • gettext catalogues (/usr/share/locale/*/LC_MESSAGES) ride the packages that
+#     own them — nothing to do, they are already installed;
+#   • some upstreams ship their translations as a SEPARATE package (Firefox's
+#     firefox-i18n-*, translated man pages) — those have to be asked for;
+#   • no spell-checking dictionary is installed by default, in any language;
+#   • the Linux VT carries the kernel's built-in Latin-only font, and silently
+#     renders every missing glyph as a Latin look-alike ("Русский" → "Russkiy").
+#
+# This is the one place that maps a locale onto that set, so "installed in Russian"
+# and "switched to Russian later from the Hub" cannot diverge. GUI font coverage is
+# deliberately NOT here: noto-fonts{,-cjk,-emoji} are unconditional in
+# packages/pacman.txt, because a browser renders scripts the UI language never
+# mentions. See config-i18n.md.
+#
+# The catalogue is PROBED, not hand-listed: candidate names are derived from the
+# locale and each is checked against pacman's sync db, so all ~330 glibc locales
+# are covered with no table to maintain and nothing is ever proposed that the
+# repositories do not actually carry.
+#
+# Installing is never implicit on a language switch — `w-locale set` calls only the
+# offline-safe `font` subcommand and reports what is still pending. Package delivery
+# is an explicit action (the installer's mod_langpack, or the Hub handing `plan
+# --porcelain` to the pacman-install capability). Changing LANG must stay instant
+# and work with no network.
+
+set -euo pipefail
+
+CONF="/etc/vconsole.conf"
+
+err() { echo "w-langpack: $*" >&2; }
+die() { err "$*"; exit 1; }
+need_root() { [[ $EUID -eq 0 ]] || die "this command requires root"; }
+
+# W_I18N_LIB is a dev/test seam, the same one W_CONF_LIB is: it lets this CLI be
+# sourced from a checkout on a machine with no W installed (scripts/check/tests).
+# shellcheck source=../lib/w/w-i18n-lib.sh
+source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
+
+usage() {
+  if w_help w-langpack; then return 0; fi
+  cat <<EOF
+Usage: w-langpack <command> [args]
+
+Info: Show and deliver what a locale needs beyond LANG (translations, dictionary, font).
+
+Commands:
+  status [--porcelain]     Show the profile of the current system locale
+  plan [<locale>] [--porcelain]
+                           List the missing packages for a locale (default: current)
+  apply [<locale>]         Install the missing packages + set the console font (root)
+  font [<locale>]          Set only the console font (root; offline-safe)
+  help                     Show this help
+
+Config: $CONF (FONT=)   Catalog: pacman sync db
+
+Exit codes: 0 success · 1 runtime/validation error · 2 usage
+
+Examples:
+  w-langpack status
+  w-langpack plan ru_RU.UTF-8 --porcelain
+  sudo w-langpack apply
+EOF
+}
+
+# ── Locale decomposition ──────────────────────────────────────────────────────
+# ru_RU.UTF-8 → lang=ru terr=ru (both lowercased: every package name below is).
+# The codeset and the @modifier are dropped — no package name encodes them.
+LANG_CODE="" TERR_CODE=""
+split_locale() {
+  local loc="${1%%.*}"; loc="${loc%%@*}"
+  [[ "$loc" =~ ^[A-Za-z]{2,3}(_[A-Za-z]{2,3})?$ ]] || die "invalid locale: $1"
+  LANG_CODE="${loc%%_*}"; LANG_CODE="${LANG_CODE,,}"
+  TERR_CODE=""
+  [[ "$loc" == *_* ]] && { TERR_CODE="${loc#*_}"; TERR_CODE="${TERR_CODE,,}"; }
+  return 0
+}
+
+current_locale() {
+  local lang=""
+  [[ -r /etc/locale.conf ]] && lang="$(sed -n 's/^LANG=//p' /etc/locale.conf | tr -d '"' | head -1)"
+  echo "${lang:-en_US.UTF-8}"
+}
+
+# ── Package catalogue ─────────────────────────────────────────────────────────
+# First candidate that exists in the sync db wins, so a language with a
+# region-specific package (firefox-i18n-pt-br, hunspell-en_us) takes it and every
+# other language falls through to the bare code. Nothing is printed when a family
+# has no package for this language — that is the normal case, not an error.
+family_pick() {
+  local c
+  for c in "$@"; do
+    pacman -Si -- "$c" &>/dev/null && { printf '%s\n' "$c"; return 0; }
+  done
+  return 0
+}
+
+# Every package this locale wants, installed or not.
+wanted_pkgs() {
+  local l="$LANG_CODE" t="$TERR_CODE"
+  local -a c=()
+  # Firefox ships en-US inside the binary — a langpack for it would be dead weight.
+  if [[ "$l" != en ]]; then
+    c=(); if [[ -n "$t" ]]; then c+=("firefox-i18n-$l-$t"); fi; c+=("firefox-i18n-$l")
+    family_pick "${c[@]}"
+  fi
+  # No dictionary is installed by default, so English is worth asking for too.
+  c=(); if [[ -n "$t" ]]; then c+=("hunspell-${l}_${t}"); fi; c+=("hunspell-$l")
+  family_pick "${c[@]}"
+  # Translated man pages exist for a handful of languages only.
+  family_pick "man-pages-$l"
+}
+
+missing_pkgs() {
+  local p
+  while read -r p; do
+    [[ -n "$p" ]] || continue
+    pacman -Qq -- "$p" &>/dev/null || printf '%s\n' "$p"
+  done < <(wanted_pkgs)
+}
+
+# ── Linux console font ────────────────────────────────────────────────────────
+# The VT is a 256/512-glyph device: it can carry one script family at a time, and
+# nothing at all for CJK or Indic (those stay tofu on a TTY no matter what — the
+# graphical session is where they render). Empty means the kernel's built-in font
+# already covers the language, i.e. it is Latin-1.
+console_font() {
+  case "$LANG_CODE" in
+    ru|uk|be|bg|sr|mk|kk|ky|tg|mn|he|ar) echo LatArCyrHeb-16 ;;
+    el)                                  echo LatGrkCyr-8x16 ;;
+    pl|cs|sk|hu|hr|sl|ro|sq|bs)          echo lat2-16 ;;
+    lv|lt|et)                            echo lat4-16 ;;
+    tr)                                  echo lat5-16 ;;
+    *)                                   echo "" ;;
+  esac
+}
+
+# Rewrite only the FONT= line. sys_locale (installer) writes KEYMAP= into the same
+# file and the Hub's keyboard section rewrites it later, so truncating here would
+# silently drop the layout that unlocks the disk at every boot.
+write_font() {
+  local font="$1" tmp
+  tmp="$(mktemp)"
+  [[ -r "$CONF" ]] && grep -v '^[[:space:]]*FONT=' "$CONF" > "$tmp" || true
+  [[ -n "$font" ]] && echo "FONT=$font" >> "$tmp"
+  install -Dm644 "$tmp" "$CONF"
+  rm -f "$tmp"
+  # Apply live as well: a TTY already open keeps the old font until it is reloaded,
+  # and setfont fails harmlessly when there is no VT (SSH, a graphical terminal).
+  [[ -n "$font" ]] && setfont "$font" 2>/dev/null || true
+  return 0
+}
+
+current_font() {
+  [[ -r "$CONF" ]] || { echo ""; return 0; }
+  sed -n 's/^[[:space:]]*FONT=//p' "$CONF" | tr -d '"' | head -1
+}
+
+# ── Commands ──────────────────────────────────────────────────────────────────
+cmd_plan() {
+  local loc="" porcelain=""
+  local a
+  for a in "$@"; do
+    case "$a" in --porcelain) porcelain=1 ;; -*) err "plan: unknown option: $a"; exit 2 ;; *) loc="$a" ;; esac
+  done
+  split_locale "${loc:-$(current_locale)}"
+
+  if [[ -n "$porcelain" ]]; then missing_pkgs; return 0; fi
+
+  local -a miss=()
+  mapfile -t miss < <(missing_pkgs)
+  if ((${#miss[@]})); then
+    echo "Missing for ${LANG_CODE}${TERR_CODE:+_${TERR_CODE^^}}:"
+    printf '  %s\n' "${miss[@]}"
+  else
+    echo "Nothing missing — the language profile is complete."
+  fi
+}
+
+cmd_status() {
+  local loc; loc="$(current_locale)"
+  split_locale "$loc"
+  local font want have
+  font="$(console_font)"; have="$(current_font)"
+  local -a all=() miss=()
+  mapfile -t all  < <(wanted_pkgs)
+  mapfile -t miss < <(missing_pkgs)
+  want="${#all[@]}"
+
+  if [[ "${1:-}" == "--porcelain" ]]; then
+    echo "LANG=$loc"
+    echo "FONT_WANTED=$font"
+    echo "FONT_ACTIVE=$have"
+    echo "PKGS_WANTED=$want"
+    echo "PKGS_MISSING=${#miss[@]}"
+    # printf repeats its format once even for an empty array — guard, or a complete
+    # profile reports a phantom nameless missing package.
+    ((${#miss[@]})) && printf 'PKG_MISSING=%s\n' "${miss[@]}"
+    return 0
+  fi
+  echo "Locale:        $loc"
+  echo "Console font:  ${font:-— (kernel default is enough)}${have:+   active: $have}"
+  echo "Packages:      $want wanted, ${#miss[@]} missing"
+  ((${#miss[@]})) && printf '  missing: %s\n' "${miss[@]}"
+  return 0
+}
+
+cmd_font() {
+  need_root
+  split_locale "${1:-$(current_locale)}"
+  local font; font="$(console_font)"
+  write_font "$font"
+  echo "w-langpack: console font ${font:-cleared (kernel default)}"
+}
+
+cmd_apply() {
+  need_root
+  split_locale "${1:-$(current_locale)}"
+  cmd_font "${1:-$(current_locale)}" >/dev/null
+
+  local -a miss=()
+  mapfile -t miss < <(missing_pkgs)
+  if ((${#miss[@]} == 0)); then
+    echo "w-langpack: language profile already complete"
+    return 0
+  fi
+  echo "w-langpack: installing ${#miss[@]} language package(s): ${miss[*]}"
+  # The shared package seam (mirror demotion + retry classification); it never
+  # dies, it returns pacman's status. A language pack that fails to download must
+  # not fail the apply that called us — the system is fully usable without it.
+  # shellcheck source=../lib/w/w-pac-lib.sh
+  source /usr/lib/w/w-pac-lib.sh
+  w_pac -S --needed --noconfirm "${miss[@]}" \
+    || err "language packages not installed (see the pacman output above) — non-fatal"
+  return 0
+}
+
+case "${1:-}" in
+  status) shift; cmd_status "$@" ;;
+  plan)   shift; cmd_plan "$@" ;;
+  apply)  shift; cmd_apply "$@" ;;
+  font)   shift; cmd_font "$@" ;;
+  help|-h|--help) usage ;;
+  "")     usage; exit 2 ;;
+  *)      err "unknown command: $1"; usage; exit 2 ;;
+esac

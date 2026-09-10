@@ -1,0 +1,384 @@
+{
+  "_comment": "W Linux installer strings (bash + dialog, running off the ISO). Format of the generated file: key=value, the value being everything after the first '=' — no quotes, and it is parsed line-wise, never sourced. dialog interprets \\n as a newline and \\Z? as a colour code (--colors). Add a language by adding its code to every entry here; the wizard's language menu discovers the generated <code>.conf on its own and labels it with that language's own _lang_name. Keys starting with '_' are per-language metadata, not translations, and may exist for one language only.",
+  "_lang_name": {
+    "en": "English",
+    "ru": "Русский"
+  },
+  "_console_font": {
+    "ru": "LatArCyrHeb-16"
+  },
+  "_section:1": "Generic UI",
+  "back": {
+    "en": "Back",
+    "ru": "Назад"
+  },
+  "next": {
+    "en": "Next",
+    "ru": "Далее"
+  },
+  "quit": {
+    "en": "Quit",
+    "ru": "Выход"
+  },
+  "yes": {
+    "en": "Yes",
+    "ru": "Да"
+  },
+  "no": {
+    "en": "No",
+    "ru": "Нет"
+  },
+  "ok": {
+    "en": "OK",
+    "ru": "OK"
+  },
+  "please_wait": {
+    "en": "Please wait…",
+    "ru": "Подождите…"
+  },
+  "installing": {
+    "en": "Installing",
+    "ru": "Установка"
+  },
+  "installing_packs": {
+    "en": "Installing software bundles",
+    "ru": "Установка программных паков"
+  },
+  "error": {
+    "en": "Error",
+    "ru": "Ошибка"
+  },
+  "_section:2": "Language / welcome",
+  "lang_title": {
+    "en": "Language",
+    "ru": "Язык"
+  },
+  "lang_prompt": {
+    "en": "Select the installer language:",
+    "ru": "Выберите язык установщика:"
+  },
+  "welcome_title": {
+    "en": "Welcome",
+    "ru": "Добро пожаловать"
+  },
+  "welcome_body": {
+    "en": "\\Zb  W Linux Installer\\Zn  —  Arch-based\\n\\n  This wizard guides you through installing\\n  a minimal, encrypted-capable base system.",
+    "ru": "\\Zb  Установщик W Linux\\Zn  —  на базе Arch\\n\\n  Мастер проведёт через установку минимальной\\n  базовой системы с опцией шифрования."
+  },
+  "_section:3": "Wizard steps",
+  "s_net_title": {
+    "en": "Wi-Fi",
+    "ru": "Wi-Fi"
+  },
+  "s_net_prompt": {
+    "en": "Select a Wi-Fi network to connect (needed to download packages now and after reboot), or skip if you use a wired connection:",
+    "ru": "Выберите сеть Wi-Fi для подключения (нужно, чтобы скачать пакеты сейчас и после перезагрузки), или пропустите при проводном подключении:"
+  },
+  "s_keymap_title": {
+    "en": "Keyboard Layout",
+    "ru": "Раскладка клавиатуры"
+  },
+  "s_keymap_prompt": {
+    "en": "Select the console keyboard layout.\\n\\nThis layout is used to type the disk passphrase at every boot — pick the one that matches your physical keyboard.",
+    "ru": "Выберите консольную раскладку клавиатуры.\\n\\nЭтой раскладкой вводится пароль-фраза диска при каждой загрузке — выберите ту, что соответствует вашей физической клавиатуре."
+  },
+  "s_locale_title": {
+    "en": "System Locale",
+    "ru": "Системная локаль"
+  },
+  "s_locale_prompt": {
+    "en": "Select the system language/locale (LANG). English is always kept as a fallback.",
+    "ru": "Выберите язык/локаль системы (LANG). Английский всегда остаётся запасным."
+  },
+  "s_computer_title": {
+    "en": "Computer Type",
+    "ru": "Тип компьютера"
+  },
+  "s_computer_prompt": {
+    "en": "Is this a laptop or a desktop?\\n\\nIt selects the power preset: a laptop gets battery-aware idle/sleep timers, lid actions and auto power-profile switching; a desktop gets gentler defaults and no battery controls. Auto-detected below — change it with 'w-power mode' later.",
+    "ru": "Это ноутбук или десктоп?\\n\\nОт этого зависит профиль питания: ноутбук получает таймеры простоя/сна с учётом батареи, действия крышки и авто-переключение схемы питания; десктоп — мягкие дефолты без батарейных настроек. Ниже — автоопределение, позже сменить можно через 'w-power mode'."
+  },
+  "s_computer_laptop": {
+    "en": "Laptop",
+    "ru": "Ноутбук"
+  },
+  "s_computer_desktop": {
+    "en": "Desktop",
+    "ru": "Десктоп"
+  },
+  "s_mode_title": {
+    "en": "Update Channel",
+    "ru": "Канал обновлений"
+  },
+  "s_mode_prompt": {
+    "en": "How should this system receive W updates?\\n\\nEdge = track the W git repository and pull updates directly, with a snapshot taken before each one. This is the only channel during the beta.\\n\\nStable (a signed package from the W repo) is not available yet.",
+    "ru": "Как эта система будет получать обновления W?\\n\\nEdge = отслеживать git-репозиторий W и тянуть обновления напрямую, со снапшотом перед каждым. На время беты это единственный канал.\\n\\nStable (подписанный пакет из репозитория W) пока недоступен."
+  },
+  "s_mode_stable": {
+    "en": "Stable",
+    "ru": "Stable"
+  },
+  "s_mode_edge": {
+    "en": "Edge",
+    "ru": "Edge"
+  },
+  "s_edge_title": {
+    "en": "Edge Repository",
+    "ru": "Репозиторий Edge"
+  },
+  "s_edge_prompt": {
+    "en": "Pre-filled with the official W repository — press Enter to accept, or replace it with your own fork (a private one needs credentials in the URL). It is cloned now to check access.",
+    "ru": "Подставлен официальный репозиторий W — нажмите Enter, чтобы принять, или замените своим форком (для приватного нужен логин в URL). Он клонируется сейчас для проверки доступа."
+  },
+  "s_disk_title": {
+    "en": "Select Disk",
+    "ru": "Выбор диска"
+  },
+  "s_disk_prompt": {
+    "en": "Choose the installation target.\\n\\nALL DATA on the selected disk will be ERASED.",
+    "ru": "Выберите целевой диск установки.\\n\\nВСЕ ДАННЫЕ на выбранном диске будут УДАЛЕНЫ."
+  },
+  "s_encrypt_title": {
+    "en": "Disk Encryption",
+    "ru": "Шифрование диска"
+  },
+  "s_encrypt_prompt": {
+    "en": "Encrypt the disk with LUKS2 (Argon2id) and boot via Limine with snapshot support?\\n\\nNo  = standard install (GRUB, unencrypted).\\nYes = encrypted install (LUKS2 + Limine).",
+    "ru": "Зашифровать диск через LUKS2 (Argon2id) и загружаться через Limine со снапшот-загрузкой?\\n\\nНет = обычная установка (GRUB, без шифрования).\\nДа  = зашифрованная установка (LUKS2 + Limine)."
+  },
+  "s_luks_title": {
+    "en": "Disk Passphrase",
+    "ru": "Пароль-фраза диска"
+  },
+  "s_luks_prompt": {
+    "en": "Enter the LUKS disk passphrase (asked at every boot unless a TPM2 unlocks it):",
+    "ru": "Введите пароль-фразу LUKS (спрашивается при каждой загрузке, если не разблокирует TPM2):"
+  },
+  "s_host_title": {
+    "en": "Hostname",
+    "ru": "Имя хоста"
+  },
+  "s_host_prompt": {
+    "en": "Enter the system hostname:",
+    "ru": "Введите имя хоста системы:"
+  },
+  "s_tz_title": {
+    "en": "Timezone",
+    "ru": "Часовой пояс"
+  },
+  "s_tz_prompt": {
+    "en": "Search by city or region (e.g. Moscow, New_York) — leave empty to browse all:",
+    "ru": "Введите город или регион для поиска (напр. Moscow, New_York) — оставьте пустым для полного списка:"
+  },
+  "s_tz_pick_prompt": {
+    "en": "Select your timezone:",
+    "ru": "Выберите часовой пояс:"
+  },
+  "s_root_title": {
+    "en": "Root Password",
+    "ru": "Пароль root"
+  },
+  "s_root_prompt": {
+    "en": "Enter the root password:",
+    "ru": "Введите пароль root:"
+  },
+  "s_user_title": {
+    "en": "Create User",
+    "ru": "Создание пользователя"
+  },
+  "s_user_prompt": {
+    "en": "Enter the username for the primary user:",
+    "ru": "Введите имя основного пользователя:"
+  },
+  "s_userpass_title": {
+    "en": "User Password",
+    "ru": "Пароль пользователя"
+  },
+  "s_userpass_prompt": {
+    "en": "Enter the password for the primary user:",
+    "ru": "Введите пароль основного пользователя:"
+  },
+  "s_packs_title": {
+    "en": "Software Bundles",
+    "ru": "Программные паки"
+  },
+  "s_packs_prompt": {
+    "en": "Select optional software bundles to install on first boot.\\n\\nThese are add-ons by direction (containers, graphics, …) on top of the base system. Toggle with Space; installed automatically after the base setup. Leave all unchecked to install none.",
+    "ru": "Выберите опциональные программные паки для установки при первом запуске.\\n\\nЭто дополнения по направлениям (контейнеры, графика, …) поверх базовой системы. Переключение — пробелом; ставятся автоматически после базовой настройки. Ничего не отмечено — ни один не ставится."
+  },
+  "p_containers": {
+    "en": "Podman rootless containers + Docker CLI + lazydocker",
+    "ru": "Контейнеры Podman rootless + Docker CLI + lazydocker"
+  },
+  "p_dev": {
+    "en": "Development environment: Zed editor, git tooling (delta, lazygit), mise",
+    "ru": "Среда разработки: редактор Zed, git-тулинг (delta, lazygit), mise"
+  },
+  "p_flatpak": {
+    "en": "Sandboxed third-party apps: Flatpak + Flathub, the Bazaar store, Flatseal",
+    "ru": "Изолированные сторонние приложения: Flatpak + Flathub, магазин Bazaar, Flatseal"
+  },
+  "p_office": {
+    "en": "Office and documents: LibreOffice, PDF tools (pdfarranger, xournalpp), Obsidian notes",
+    "ru": "Офис и документы: LibreOffice, PDF-инструменты (pdfarranger, xournalpp), заметки Obsidian"
+  },
+  "_section:4": "Validation / passwords",
+  "pass_confirm": {
+    "en": "Confirm password:",
+    "ru": "Подтвердите пароль:"
+  },
+  "pass_mismatch": {
+    "en": "Passwords do not match or are empty. Try again.",
+    "ru": "Пароли не совпадают или пусты. Попробуйте снова."
+  },
+  "err_invalid": {
+    "en": "Invalid value. Try again.",
+    "ru": "Недопустимое значение. Попробуйте снова."
+  },
+  "err_timezone": {
+    "en": "Unknown timezone. Use a valid zoneinfo path (e.g. Europe/Moscow).",
+    "ru": "Неизвестный часовой пояс. Укажите корректный путь zoneinfo (напр. Europe/Moscow)."
+  },
+  "err_tz_nomatch": {
+    "en": "No timezones match your search. Try a different city or region.",
+    "ru": "Ничего не найдено. Попробуйте другой город или регион."
+  },
+  "err_offline": {
+    "en": "No network connection. Connect a cable or Wi-Fi, then retry — the installer needs internet to download packages.",
+    "ru": "Нет подключения к сети. Подключите кабель или Wi-Fi и повторите — установщику нужен интернет для загрузки пакетов."
+  },
+  "edge_cloning": {
+    "en": "Cloning the repository to verify access…",
+    "ru": "Клонирование репозитория для проверки доступа…"
+  },
+  "err_edge_empty": {
+    "en": "Enter a repository URL, or go back and choose the Stable channel.",
+    "ru": "Введите URL репозитория или вернитесь и выберите канал Stable."
+  },
+  "err_edge_git": {
+    "en": "git is unavailable and could not be installed. Check the network and retry.",
+    "ru": "git недоступен и не удалось установить. Проверьте сеть и повторите."
+  },
+  "err_edge_clone": {
+    "en": "Clone failed. Check the URL, credentials and network, then retry.",
+    "ru": "Не удалось клонировать. Проверьте URL, логин и сеть, затем повторите."
+  },
+  "err_edge_notw": {
+    "en": "This does not look like a W repository (scripts/apply.sh not found).",
+    "ru": "Это не похоже на репозиторий W (не найден scripts/apply.sh)."
+  },
+  "_section:5": "Wi-Fi",
+  "net_scanning": {
+    "en": "Scanning for Wi-Fi networks…",
+    "ru": "Поиск сетей Wi-Fi…"
+  },
+  "net_skip": {
+    "en": "✕  Skip (wired / no Wi-Fi)",
+    "ru": "✕  Пропустить (проводное / без Wi-Fi)"
+  },
+  "net_password": {
+    "en": "Enter the password for network:",
+    "ru": "Введите пароль сети:"
+  },
+  "net_connecting": {
+    "en": "Connecting to",
+    "ru": "Подключение к"
+  },
+  "net_connect_fail": {
+    "en": "Connection failed. Check the password and try again.",
+    "ru": "Не удалось подключиться. Проверьте пароль и попробуйте снова."
+  },
+  "net_none": {
+    "en": "No Wi-Fi networks found. Rescan, or skip.",
+    "ru": "Сети Wi-Fi не найдены. Повторите поиск или пропустите."
+  },
+  "_section:6": "Review hub",
+  "review_title": {
+    "en": "Review",
+    "ru": "Проверка"
+  },
+  "review_prompt": {
+    "en": "Review your choices. Select an entry to change it, or proceed.",
+    "ru": "Проверьте выбор. Выберите пункт для изменения или продолжите."
+  },
+  "review_proceed": {
+    "en": "▸  Proceed with installation",
+    "ru": "▸  Продолжить установку"
+  },
+  "_section:7": "Confirm / summary",
+  "summary_title": {
+    "en": "Installation Summary",
+    "ru": "Сводка установки"
+  },
+  "confirm_title": {
+    "en": "Confirm Installation",
+    "ru": "Подтверждение установки"
+  },
+  "confirm_prompt": {
+    "en": "Proceed with installation?\\n\\nThis will ERASE all data on the target disk.",
+    "ru": "Продолжить установку?\\n\\nЭто УДАЛИТ все данные на целевом диске."
+  },
+  "quit_title": {
+    "en": "Quit",
+    "ru": "Выход"
+  },
+  "quit_prompt": {
+    "en": "Quit the installer? No changes have been written to disk yet.",
+    "ru": "Выйти из установщика? Изменения на диск ещё не записаны."
+  },
+  "_section:8": "Work phases",
+  "phase_disk": {
+    "en": "Preparing disk",
+    "ru": "Подготовка диска"
+  },
+  "phase_base": {
+    "en": "Installing base system",
+    "ru": "Установка базовой системы"
+  },
+  "phase_config": {
+    "en": "Configuring system",
+    "ru": "Настройка системы"
+  },
+  "phase_boot": {
+    "en": "Installing bootloader",
+    "ru": "Установка загрузчика"
+  },
+  "phase_services": {
+    "en": "Enabling services",
+    "ru": "Включение сервисов"
+  },
+  "_section:9": "Done",
+  "done_title": {
+    "en": "Installation complete.",
+    "ru": "Установка завершена."
+  },
+  "done_reboot": {
+    "en": "Remove the installation media, then reboot.\\n  The rest of the setup finishes automatically on first boot.",
+    "ru": "Извлеките установочный носитель, затем перезагрузитесь.\\n  Остальная настройка завершится автоматически при первой загрузке."
+  },
+  "done_luks_notice": {
+    "en": "Your disk is encrypted: on the next boot you will be asked to enter\\n  the decryption passphrase you set during installation before W can start.",
+    "ru": "Диск зашифрован: при следующей загрузке потребуется ввести пароль\\n  расшифровки диска, заданный при установке, — без него W не запустится."
+  },
+  "done_secureboot_notice": {
+    "en": "Secure Boot and TPM2 disk auto-unlock (booting without typing the\\n  passphrase) are turned on from Hub → Security once installed, in that order.",
+    "ru": "Secure Boot и авторазблокировку диска через TPM2 (загрузка без ввода\\n  пароля) включает Хаб → Security в установленной системе — в этом порядке."
+  },
+  "reboot": {
+    "en": "Reboot",
+    "ru": "Перезагрузить"
+  },
+  "_section:10": "Firstboot (Session 2)",
+  "firstboot_title": {
+    "en": "Configuration complete.",
+    "ru": "Настройка завершена."
+  },
+  "firstboot_done": {
+    "en": "Rebooting automatically in a few seconds.\\n  Press Reboot to continue now.",
+    "ru": "Автоматическая перезагрузка через несколько секунд.\\n  Нажмите «Перезагрузить», чтобы продолжить сейчас."
+  },
+  "firstboot_failed": {
+    "en": "First-boot configuration failed. Check the log:",
+    "ru": "Ошибка настройки при первой загрузке. Проверьте лог:"
+  }
+}

@@ -30,7 +30,15 @@ FILENAME_FMT="W-%Y-%m-%d_%H-%M-%S.png"   # strftime; shared by satty + --save
 err()  { echo "w-screenshot: $*" >&2; }
 note() { command -v notify-send >/dev/null 2>&1 && notify-send -a "W Screenshot" "$@" || true; }
 
+# Notification text is a GRAPHICAL surface, so it follows the system language
+# (config-i18n.md); err()/usage() above stay English like every other w-* CLI.
+# W_I18N_LIB is a dev/test seam, the same one W_CONF_LIB is: it lets this CLI be
+# sourced from a checkout on a machine with no W installed (scripts/check/tests).
+# shellcheck source=../lib/w/w-i18n-lib.sh
+source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
+
 usage() {
+  if w_help w-screenshot; then return 0; fi
   cat <<EOF
 Usage: w-screenshot <mode> [action]
 
@@ -111,13 +119,13 @@ main() {
       ;;
     --copy)
       "${GRIM[@]}" - | wl-copy
-      note "Copied to clipboard"
+      note "$(w_t screenshot.copied)"
       ;;
     --save)
       mkdir -p "$SCREENSHOT_DIR"
       local out; out="$SCREENSHOT_DIR/$(date +"$FILENAME_FMT")"
       "${GRIM[@]}" "$out"
-      note "Saved" "$out"
+      note "$(w_t screenshot.saved)" "$out"
       ;;
     *)
       usage; exit 2

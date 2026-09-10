@@ -12,9 +12,9 @@ sources:
   - path: .claude/library/w-conf.md
     sha256: 002069840e569db3a750c268458c12fc7ef2396539f4438e3f7068bb43ec729f
   - path: .claude/library/w-reset.md
-    sha256: f16d6d8101c3e66a006de216d3a834bc8d8c89af28c4fb9e69cb8fc42ce18017
+    sha256: e882e72c78a9be4989c82dd53e44de66080282ed44a0f24c86d122990d6827e1
   - path: .claude/library/update-system.md
-    sha256: b13aee29dd9adafa424f03dcbea7e60869ef31dd19ae1d56b1e5272ea87a842d
+    sha256: c5e94bc4938b9ec6e8e741434003313f62704028df5e3b1aa369252851556503
   - path: .claude/library/w-rollback.md
     sha256: 9c9d1deab14153a4d60dab390f7ef42c86dba88bb59cf5ada4d7e8a213b715a5
 tools:
@@ -317,16 +317,18 @@ a bug. Work down this list before suspecting the update:
    that one file to the current W default with `w-reset <module> <file>` (it makes
    a pre-backup first; personal edits to that file are lost, so read the diff or
    merge by hand if they matter).
-   ⚠️ `w-reset` only knows base-system modules (`w-reset list`). Config seeded by a
-   **W-Pack bundle** is not covered — there, restoring means editing the file by
-   hand, or deleting it and re-running `sudo w-pack install <bundle>`, which
-   re-seeds only what is missing.
+   `w-reset` covers **installed W-Pack bundles too**, by bundle name and in the
+   same one namespace — `w-reset dev` just works, and `w-reset list` shows bundles
+   in their own section. A bundle is the sturdier case: its pristine copies ship
+   inside its own staged tree, so the restore works offline even where a module's
+   system paths would need the edge checkout.
 2. **It needs a new session.** Session env (`/etc/w/env.d/*.sh`) applies from the
    next **login**; interactive-shell hooks (`/etc/w/zshrc.d/*.zsh`) from the next
    **new shell**. Nothing to fix — log out and back in.
-3. **A bundle needs re-installing.** `w-sync` restages the bundle *tree* but never
-   installs or re-runs a bundle's `setup.sh`. After an update that changed a
-   bundle, run `sudo w-pack install <bundle>` (idempotent) to pick it up.
+3. **A bundle needs re-applying.** If a bundle's config or theme looks stale after
+   an update, `sudo w-pack refresh <bundle>` replays what it owns from the staged
+   tree — offline, in seconds, without touching packages. Reach for
+   `sudo w-pack install <bundle>` only to deliberately re-pull its packages.
 4. **An optional bundle is on the machine but not set up for this account.** A
    W-Pack has two layers: the *machine* part (packages, services — installed once,
    by an administrator) and the *per-user* part (its tools in `~/.local/bin`, its

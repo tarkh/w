@@ -180,7 +180,33 @@ cmd_status() {
 }
 
 # ── Usage (subsystem list generated from the axis registry) ───────────────────
+# The subsystem table is computed (it reads every module's DESC), so it reaches the
+# help as ONE MORE VARIABLE rather than as a second heredoc between two halves of
+# the text. That is not cosmetic: usage() must stay a single heredoc, because
+# w-help-extract reads the first one and every consumer downstream — the reference
+# page, w-info's Info: line, the translations' drift anchor — is that heredoc.
+# Split in two, the tail silently never reached the reference page at all.
+subsystem_table() {
+  local band token kind dir desc
+  while IFS=$'\t' read -r band token kind; do
+    if [[ "$kind" == module ]]; then
+      dir="$(module_dir "$token")" && desc="$( ( source "$dir/module.sh"; echo "${DESC:-}" ) )" || desc=""
+      printf '  %-11s %s\n' "$token" "$desc"
+    else
+      printf '  %-11s [%s]\n' "$token" "${kind#legacy:}"
+    fi
+  done < <(axes_sorted)
+}
+
+# W_I18N_LIB is a dev/test seam, the same one W_CONF_LIB is: it lets this CLI be
+# sourced from a checkout on a machine with no W installed (scripts/check/tests).
+# shellcheck source=../lib/w/w-i18n-lib.sh
+source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
+
 usage() {
+  local SUBSYSTEMS
+  SUBSYSTEMS="$(subsystem_table)"
+  if w_help w-style; then return 0; fi
   cat <<EOF
 Usage: w-style <command> [options]
 
@@ -192,17 +218,7 @@ Commands:
   status                         Show key resolved colors (system theme)
 
 Subsystems (in apply order — [scope] user | system | dual):
-EOF
-  local band token kind dir desc
-  while IFS=$'\t' read -r band token kind; do
-    if [[ "$kind" == module ]]; then
-      dir="$(module_dir "$token")" && desc="$( ( source "$dir/module.sh"; echo "${DESC:-}" ) )" || desc=""
-      printf '  %-11s %s\n' "$token" "$desc"
-    else
-      printf '  %-11s [%s]\n' "$token" "${kind#legacy:}"
-    fi
-  done < <(axes_sorted)
-  cat <<EOF
+$SUBSYSTEMS
 
   user   = all user-scope axes into \$HOME (or /etc/skel as root); login render, no system work
   all    = user-scope (skel) + system axes; requires root (install-time)

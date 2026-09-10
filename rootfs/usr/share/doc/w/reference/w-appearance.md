@@ -5,7 +5,7 @@ order: 0
 summary: Per-user overrides that beat the active theme (W Hub -> Appearance -> Settings).
 ---
 
-`w-appearance` — Per-user overrides that beat the active theme (W Hub -> Appearance -> Settings)..
+`w-appearance` — Per-user overrides that beat the active theme (W Hub -> Appearance -> Settings).
 
 ## Usage
 

@@ -89,6 +89,11 @@ die() { err "$*"; exit 1; }
 
 # shellcheck source=../lib/w/w-conf-lib.sh
 source /usr/lib/w/w-conf-lib.sh
+# Notification strings only — the CLI output stays English (config-i18n.md).
+# W_I18N_LIB is a dev/test seam, the same one W_CONF_LIB is: it lets this CLI be
+# sourced from a checkout on a machine with no W installed (scripts/check/tests).
+# shellcheck source=../lib/w/w-i18n-lib.sh
+source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
 
 # `--user <name>` may appear anywhere in the command line: mod_nightlight renders
 # for every account of the machine and calls us once per user. Root-only,
@@ -180,6 +185,7 @@ MAX_RESTARTS=2
 PREVIEW_HOLD_SEC=300
 
 usage() {
+  if w_help w-nightlight; then return 0; fi
   cat <<EOF
 Usage: w-nightlight <command> [value]
 
@@ -819,7 +825,16 @@ cmd_toggle() {
   if [[ -t 1 ]]; then
     echo "Night light: $new ($detail)"
   elif command -v w-notify >/dev/null 2>&1; then
-    w-notify send -a "W Night light" "Night light: $new" "$detail" >/dev/null 2>&1 || true
+    # The terminal branch above stays English (every w-* CLI does, config-i18n.md);
+    # the notification is a graphical surface, so it is translated — mode word and
+    # detail included, or a Russian title would carry an English "schedule".
+    local t_mode t_detail
+    t_mode="$(w_t "nightlight.mode.$new")"
+    if is_active; then t_detail="$(w_t nightlight.detail.filtering)";
+    else t_detail="$(w_t nightlight.detail.neutral "$(start_now)")"; fi
+    [[ "$new" == off ]] && t_detail="$(w_t nightlight.detail.disabled)"
+    w-notify send -a "$(w_t nightlight.app)" "$(w_t nightlight.title "$t_mode")" \
+      "$t_detail" >/dev/null 2>&1 || true
   fi
   return 0
 }

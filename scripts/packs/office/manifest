@@ -1,0 +1,28 @@
+# office bundle — config ownership (deploy.sh SDK + w-reset).
+# TSV: <path>\t<class>. Absolute path → config/root<path> (always managed);
+# home-relative → config/skel/<path>. class: user = seed-if-absent, managed =
+# overwrite (W owns it). A trailing '/' marks a directory tree.
+#
+# This bundle deliberately owns almost nothing. Every app it ships is themed by
+# EXISTING w-style axes: LibreOffice/pdfarranger/xournalpp render through the
+# gtk3 backend and ride the `gtk` axis (band 200, adw-gtk3 + W_GTK_* named
+# colours), all of them — plus Obsidian's adaptive base theme — follow the
+# `appearance` axis (band 300) for light/dark. That is the whole theming story;
+# there is no wstyle/ directory and no bundle axis.
+#
+# Deliberately NOT owned:
+#   ~/.config/libreoffice/4/user/registrymodifications.xcu — LibreOffice rewrites
+#     the file itself on every exit (two writers on one file), and its defaults
+#     already do the right thing: the automatic icon theme pairs
+#     colibre/colibre_dark on a generic desktop like Hyprland, and UI dark mode
+#     follows the GTK theme since LO 7.5.
+#   Obsidian per-vault settings (<vault>/.obsidian/) — user data, unknown paths.
+#   ~/.config/mimeapps.list — owned by the base `files` module (one writer per
+#     file); the bundle does not hijack the .docx default association.
+
+# Session env: pins LibreOffice to the gtk3 VCL backend. Unpinned, LO
+# auto-detects its UI backend and may pick the Qt6 one on this system (qt6-base
+# is installed for Quickshell), which has documented Wayland scroll-lag and
+# would style the suite through Kvantum instead of the W GTK theme. Sourced by
+# env-hyprland at graphical-session-pre → active from the next login.
+/etc/w/env.d/office.sh	managed

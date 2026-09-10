@@ -5,7 +5,7 @@ order: 0
 summary: Track the W dev repo (edge channel) and apply updates, keeping user config intact.
 ---
 
-`w-sync` — Track the W dev repo (edge channel) and apply updates, keeping user config intact..
+`w-sync` — Track the W dev repo (edge channel) and apply updates, keeping user config intact.
 
 ## Usage
 

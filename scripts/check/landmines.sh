@@ -22,11 +22,12 @@ chk_landmines() {
   local rc=0 f hits
 
   # 1. rsync --chown in everything that deploys onto the target as root.
-  #    The bundle glob is setup*.sh, not setup.sh: a bundle's per-account half
-  #    lives in setup-user.sh, and the narrower glob would have left every one of
-  #    those outside the rule the moment the layer split landed.
+  #    The bundle glob is every *.sh in the bundle, not setup*.sh: the layer split
+  #    added setup-user.sh and phase 7 added the teardown pair, and each narrowing
+  #    of this glob has had to be widened again afterwards. A bundle script is a
+  #    bundle script — the rule applies to all of them.
   for f in scripts/apply.sh scripts/install/lib/deploy.sh \
-           scripts/install/modules/*.sh scripts/packs/*/setup*.sh; do
+           scripts/install/modules/*.sh scripts/packs/*/*.sh; do
     [[ -f "$f" ]] || continue
     # Join backslash-continued lines so multi-line rsync invocations are one
     # record, strip comments, then flag rsync calls without --chown.
@@ -86,12 +87,16 @@ chk_landmines() {
   #    The command-position anchors are narrower here than "any whitespace": half
   #    the W tools carry a `(pacman -S <pkg>)` hint inside an error string, and a
   #    rule that flags prose teaches people to ignore it.
+  #    The read-only SYNC QUERIES are out of scope for the same reason `-U` is:
+  #    -Si/-Ss/-Sg/-Sl/-Sp answer from the local sync db, start no transaction and
+  #    touch no mirror, so there is nothing for the seam to retry or demote.
+  #    w-langpack probes its whole package catalogue with `pacman -Si`.
   for f in "${pac_files[@]}"; do
     [[ -f "$f" ]] || continue
     hits="$(awk '/\\$/ { sub(/\\$/, ""); buf = buf $0; next }
                  { print FNR ": " buf $0; buf = "" }' "$f" \
             | grep -vE '^[0-9]+: [[:space:]]*#' \
-            | grep -E '(^[0-9]+:[[:space:]]*|[;&|]+[[:space:]]*|=\()pacman[[:space:]]+-S' || true)"
+            | grep -E '(^[0-9]+:[[:space:]]*|[;&|]+[[:space:]]*|=\()pacman[[:space:]]+-S([^isglp]|$)' || true)"
     [[ -z "$hits" ]] || { echo "  $f: bare pacman -S (use the w_pac seam):"; echo "$hits" | sed 's/^/    /'; rc=1; }
   done
 

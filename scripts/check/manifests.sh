@@ -79,6 +79,28 @@ chk_manifests() {
       rc=1
     fi
 
+    # A setup half with no teardown half is the asymmetry packs.md phase 7 closed:
+    # `setup.sh` is imperative, so nothing in the tree records that it enabled a
+    # service or installed a package outside pkgs.txt (ai-extra's GPU-matched
+    # Ollama is exactly that), and `w-pack remove` has no way to derive the
+    # inverse. The rule is mechanical on purpose — "this bundle has nothing to
+    # undo" is a claim its author states in a two-line teardown, not one a reader
+    # infers from a missing file.
+    local half
+    for half in "" "-user"; do
+      if [[ -f "$bdir/setup$half.sh" && ! -f "$bdir/teardown$half.sh" ]]; then
+        echo "  packs/$bname: has setup$half.sh but no teardown$half.sh"
+        echo "    (w-pack remove cannot undo an imperative setup it was never told about)"
+        rc=1
+      fi
+      # The reverse is a copy-paste slip, not a design choice: a teardown for a
+      # setup that does not exist undoes something nothing ever did.
+      if [[ -f "$bdir/teardown$half.sh" && ! -f "$bdir/setup$half.sh" ]]; then
+        echo "  packs/$bname: has teardown$half.sh but no setup$half.sh"
+        rc=1
+      fi
+    done
+
     bm="$bdir/manifest"
     [[ -f "$bm" ]] || continue
     n=0

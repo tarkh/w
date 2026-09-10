@@ -5,7 +5,7 @@ order: 0
 summary: Manage the keyboard-layout ring of the Wayland session (XKB).
 ---
 
-`w-keyboard` — Manage the keyboard-layout ring of the Wayland session (XKB)..
+`w-keyboard` — Manage the keyboard-layout ring of the Wayland session (XKB).
 
 ## Usage
 

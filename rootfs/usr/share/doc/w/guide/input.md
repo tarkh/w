@@ -9,7 +9,7 @@ sources:
   - path: .claude/library/w-pointer.md
     sha256: d8344be0c6e6e9e74217ae93f6bb1279480eb2350564b6e00b0f0a60b7c0fe5f
   - path: .claude/library/w-locale.md
-    sha256: f7115aa77613a12c20ac382e5a3e74662b4278a8a811d4755e7da4fc90a8b232
+    sha256: d44d9db19c73ed5c0c355de68fdaf802a2b1eb11152c486910df1adf13f59445
 ---
 
 **Hub → Input** is where the hardware you type and point with is configured. It
@@ -115,3 +115,43 @@ it lives in **Hub → System → Language** and asks for your password. It appli
 to sessions started afterwards, so log out and back in to see it. Adding a
 *layout* to type in that language is the Keyboard tab above; the two are
 independent.
+
+The list shows each language under its own name — «русский», 日本語, Deutsch —
+with its locale code beside it. Searching matches either, so you can type `рус`
+or `ru_RU`, whichever your current keyboard can produce.
+
+### After you switch, some things stay English for a while
+
+Changing the language is instant and works with no network, which means it does
+not download anything. A few parts of the system need an extra package before
+they can speak your language — the Firefox interface, the spell checker, the
+translated manual pages. They arrive on the next system update, or immediately
+with:
+
+```
+sudo w-langpack apply
+```
+
+`w-langpack status` says what is missing before you run it. Nothing is broken in
+the meantime: anything without its language pack simply stays in English.
+
+### What will not translate
+
+Some of the terminal programs W ships have no translations at all — not missing
+from W, absent from the programs themselves. The file lister (`eza`), the shell
+history search (`atuin`), the editors (`helix`, `micro`), the file manager
+(`yazi`) and the system monitor (`btop`) are English-only whatever your language
+is. Their *dates and numbers* do follow your locale; only their own words do not.
+So `ls` shows you Russian month names, but if you list a directory you may not
+read, the refusal comes back in English — that message belongs to the program,
+not to W.
+
+W's own `w-` commands are a different case, and worth knowing the shape of:
+their **help is translated** — `w-<command> help`, the `w-info` catalog, and the
+whole command reference in this documentation. What stays English is what they
+print *while working*: errors, status lines, progress. An English error under a
+Russian help page is expected, not a half-finished translation.
+
+For the same reason a Japanese or Chinese web page shows real characters rather
+than empty boxes: W installs full Unicode font coverage regardless of the
+language you picked.

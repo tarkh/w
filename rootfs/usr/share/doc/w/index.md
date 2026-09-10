@@ -63,6 +63,7 @@ W machine with `w-info`.
 - [`w-kbdlight`](reference/w-kbdlight.md) — Keyboard backlight — level, media keys, and light at the LUKS prompt.
 - [`w-kernel`](reference/w-kernel.md) — Select the active kernel and toggle the hardening profile.
 - [`w-keyboard`](reference/w-keyboard.md) — Manage the keyboard-layout ring of the Wayland session (XKB).
+- [`w-langpack`](reference/w-langpack.md) — Show and deliver what a locale needs beyond LANG (translations, dictionary, font).
 - [`w-locale`](reference/w-locale.md) — Show and switch the system UI language (LANG).
 - [`w-logs`](reference/w-logs.md) — Set how long W keeps logs (journal + /var/log + W's own logs), one policy.
 - [`w-mirrors`](reference/w-mirrors.md) — Keep the pacman mirrorlist fresh — rank mirrors on a schedule or on demand.
@@ -76,7 +77,7 @@ W machine with `w-info`.
 - [`w-rollback`](reference/w-rollback.md) — Roll the system back to a btrfs snapshot, on either boot path.
 - [`w-screenshot`](reference/w-screenshot.md) — Capture the screen — region/window/output, annotate/copy/save.
 - [`w-secureboot`](reference/w-secureboot.md) — Set up and manage Secure Boot (sbctl keys + Limine hash).
-- [`w-session`](reference/w-session.md) — Remember the graphical session (windows, workspaces, split layout) and
+- [`w-session`](reference/w-session.md) — Remember and restore the graphical session (windows, workspaces, split layout).
 - [`w-ssh`](reference/w-ssh.md) — Choose the session's SSH agent and generate per-host key selectors from it.
 - [`w-style`](reference/w-style.md) — Render the active theme across all themed subsystems.
 - [`w-sync`](reference/w-sync.md) — Track the W dev repo (edge channel) and apply updates, keeping user config intact.

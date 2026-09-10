@@ -5,7 +5,7 @@ order: 0
 summary: Enrol, list and delete the fingerprints of the current user.
 ---
 
-`w-fingerprint` — Enrol, list and delete the fingerprints of the current user..
+`w-fingerprint` — Enrol, list and delete the fingerprints of the current user.
 
 ## Usage
 

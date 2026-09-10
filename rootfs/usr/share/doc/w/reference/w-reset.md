@@ -5,7 +5,7 @@ order: 0
 summary: Force-restore any W module's or bundle's config to its default.
 ---
 
-`w-reset` — Force-restore any W module's or bundle's config to its default..
+`w-reset` — Force-restore any W module's or bundle's config to its default.
 
 ## Usage
 

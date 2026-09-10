@@ -5,7 +5,7 @@ order: 0
 summary: Choose which status-bar blocks show on which monitor (W Hub -> Appearance -> Bar).
 ---
 
-`w-bar` — Choose which status-bar blocks show on which monitor (W Hub -> Appearance -> Bar)..
+`w-bar` — Choose which status-bar blocks show on which monitor (W Hub -> Appearance -> Bar).
 
 ## Usage
 

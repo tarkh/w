@@ -30,7 +30,13 @@ is_blacklisted() {
   return 1
 }
 
+# W_I18N_LIB is a dev/test seam, the same one W_CONF_LIB is: it lets this CLI be
+# sourced from a checkout on a machine with no W installed (scripts/check/tests).
+# shellcheck source=../lib/w/w-i18n-lib.sh
+source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
+
 usage() {
+  if w_help w-info; then return 0; fi
   cat <<EOF
 Usage: w-info [help]
 
@@ -68,11 +74,17 @@ main() {
 
     is_blacklisted "$name" && continue
 
-    # Read the Info: line straight from the file — it's a static line in the
-    # help heredoc, so parsing beats executing every tool (faster, no side
-    # effects, no runtime deps); a missing Info: line self-excludes the tool.
-    local info
-    info=$(sed -n 's/^Info: //p' "$script" | head -1) || true
+    # Read the Info: line straight from a FILE — never by executing the tool:
+    # parsing is faster, has no side effects and needs no runtime deps, and a
+    # missing Info: line self-excludes the tool. Which file depends on the
+    # language: a translated help carries its own `Info:` (the marker itself is
+    # never translated, w-i18n-gen asserts it), and the English original lives
+    # in the tool's own usage() heredoc. Per-tool fallback, not per-catalog — a
+    # tool a translation has not reached yet shows its English line rather than
+    # dropping out of the list.
+    local info src
+    src="$(w_help_file "$name")" || src="$script"
+    info=$(sed -n 's/^Info: //p' "$src" | head -1) || true
 
     [[ -z "$info" ]] && continue
 
@@ -81,16 +93,19 @@ main() {
   done
 
   if ((total == 0)); then
-    echo "No w-* tools with Info: descriptions found." >&2
-    echo "Run 'w-<tool> help' on a specific tool for usage." >&2
+    w_t info.none >&2; echo >&2
+    w_t info.hint >&2; echo >&2
     exit 1
   fi
 
-  echo "W Linux — available tools (run '<tool> help' for details):"
+  # The catalog's frame follows its contents: every line below is a translated
+  # Info:, so this is the one w-* command whose terminal output is localized
+  # too (i18n/scripts.json says why).
+  w_t info.header; echo
   echo ""
   printf '%s\n' "${entries[@]}" | sort
   echo ""
-  echo "$total tool(s)"
+  w_t info.count "$total"; echo
 }
 
 main "$@"

@@ -50,7 +50,12 @@ Item {
     // grow the card further (menuLayer.menuBottom) — same contract as DisplaysPanel.
     // +8 mirrors the Flickable's contentHeight padding below (focus-wash bleed slack,
     // quickshell-hub.md gotcha 6).
-    implicitHeight: Math.max(topCol.implicitHeight + 12 + col.implicitHeight + 8, menuLayer.menuBottom)
+    implicitHeight: Math.max(topCol.implicitHeight + 12 + col.implicitHeight + 8,
+                             menuLayer.menuBottom, confirm.contentBottom)
+
+    // The Hub card, handed over by Hub.qml on load — the removal confirmation dims it,
+    // and needs its real rectangle and corner radius to do that without square corners.
+    property Item hubSurface: null
 
     // Drill into a deeper Hub route (the layout picker).
     // Up on the topmost roving position hands the cursor to the header's "?" button
@@ -400,6 +405,9 @@ Item {
 
     focus: true
     Keys.onPressed: (e) => {
+        // While the confirmation is up it owns the keyboard — including Escape and
+        // Backspace, which close IT rather than navigating the Hub (Ф-Keyboard gotcha 14).
+        if (confirm.open) { confirm.handleKey(e); return; }
         // An entry field holds real Qt focus — let it keep arrow/Enter/Space for
         // text editing instead of stealing the roving cursor mid-edit (same guard
         // as PowerPanel's IdleRow / SystemPanel's retRow).
@@ -443,13 +451,13 @@ Item {
             e.accepted = true;
             return;
         }
-        // Removes the focused layout — mirrors the row's own × button, only meaningful
-        // on a layout row and only when it isn't the last one. The physical key is the
-        // `menu_delete` token (default Delete, i3-vim X), same single-key-per-profile
-        // contract as the roving arrows above.
+        // Asks to remove the focused layout — mirrors the row's own × button, only
+        // meaningful on a layout row and only when it isn't the last one. The physical
+        // key is the `menu_delete` token (default Delete, i3-vim X), same
+        // single-key-per-profile contract as the roving arrows above.
         case HubNavKeys.del: {
             const d = root.contentDesc[root.focusIdx];
-            if (d && d.kind === "layout" && root.codes.length > 1) root.removeLayout(d.code);
+            if (d && d.kind === "layout" && root.codes.length > 1) root.askRemoveLayout(d.code);
             e.accepted = true;
             return;
         }
@@ -511,6 +519,18 @@ Item {
     Process { id: kbdProc; onExited: root.probeRing() }
     function runKbd(args) { kbdProc.command = args; kbdProc.running = true; }
     function removeLayout(code) { root.runKbd(["w-keyboard", "remove", code]); }
+    // Both the row's × and HubNavKeys.del route through the Hub's shared confirmation.
+    // The layout is named in full (variant included) — "Russian (Macintosh)" and plain
+    // "Russian" can sit in the same ring, and the bare code would not tell them apart.
+    property string askCode: ""
+    function askRemoveLayout(code) {
+        root.askCode = code;
+        confirm.ask({
+            title:   Strings.t("hub.kbdRemoveTitle").replace("%n%", Xkb.label(code, root.variantFor(code))),
+            message: Strings.t("hub.kbdRemoveBody"),
+            actions: [{ key: "remove", label: Strings.t("hub.kbdRemove") }],
+        });
+    }
     function setDefault(code)   { root.runKbd(["w-keyboard", "set-default", code]); }
     function setToggle(id)      { root.runKbd(["w-keyboard", "set-toggle", id]); }
     function setRepeat(rate, delay) { root.runKbd(["w-keyboard", "set-repeat", String(rate), String(delay)]); }
@@ -1029,7 +1049,7 @@ Item {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: rmBtn.canRemove ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                onClicked: if (rmBtn.canRemove) root.removeLayout(lrow.modelData)
+                                onClicked: if (rmBtn.canRemove) root.askRemoveLayout(lrow.modelData)
                             }
                         }
                     }
@@ -1313,4 +1333,12 @@ Item {
     // into and was drawn past the card's edge. The flip only fires when a menu really
     // does not fit downward, so every other row here is unaffected.
     HubDropdown { id: menuLayer; anchors.fill: parent; flipUp: true; returnFocusTo: root }
+
+    // ── Removal confirmation (tints the whole Hub card, above the rows) ──────────
+    HubConfirm {
+        id: confirm
+        anchors.fill: parent
+        surface: root.hubSurface
+        onChose: root.removeLayout(root.askCode)
+    }
 }

@@ -5,7 +5,7 @@ order: 0
 summary: Power profiles, idle policy (lock/display/suspend), lid/power key, charge limit.
 ---
 
-`w-power` — Power profiles, idle policy (lock/display/suspend), lid/power key, charge limit..
+`w-power` — Power profiles, idle policy (lock/display/suspend), lid/power key, charge limit.
 
 ## Usage
 

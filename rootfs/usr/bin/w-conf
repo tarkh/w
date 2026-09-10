@@ -44,7 +44,13 @@ resolve_target_user() { # <name|"">
 MAGENTA='\033[1;35m'; DIM='\033[2m'; NC='\033[0m'
 err() { echo "w-conf: $*" >&2; }
 
+# W_I18N_LIB is a dev/test seam, the same one W_CONF_LIB is: it lets this CLI be
+# sourced from a checkout on a machine with no W installed (scripts/check/tests).
+# shellcheck source=../lib/w/w-i18n-lib.sh
+source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
+
 usage() {
+  if w_help w-conf; then return 0; fi
   cat <<EOF
 Usage: w-conf <command> [options]
 

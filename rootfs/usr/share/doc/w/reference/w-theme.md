@@ -5,7 +5,7 @@ order: 0
 summary: Switch, add and manage W themes with seamless crossfade.
 ---
 
-`w-theme` — Switch, add and manage W themes with seamless crossfade..
+`w-theme` — Switch, add and manage W themes with seamless crossfade.
 
 ## Usage
 

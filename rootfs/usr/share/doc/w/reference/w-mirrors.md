@@ -5,7 +5,7 @@ order: 0
 summary: Keep the pacman mirrorlist fresh — rank mirrors on a schedule or on demand.
 ---
 
-`w-mirrors` — Keep the pacman mirrorlist fresh — rank mirrors on a schedule or on demand..
+`w-mirrors` — Keep the pacman mirrorlist fresh — rank mirrors on a schedule or on demand.
 
 ## Usage
 

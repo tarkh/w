@@ -10,7 +10,7 @@ sources:
   - path: .claude/library/w-notify.md
     sha256: 6f1eba564188c4f3b28b3b2d4d48924c3015136f7f8f2ec895f0e72a8806fa7c
   - path: .claude/library/quickshell-notifications.md
-    sha256: 7ad1815bd1d0d0561eed99420ffb2d7530f5504371878fdac3ba24424fc02a2d
+    sha256: 6e5b84c107724c7c5d8737cc4801bb9f43a9bd275deaecb2bfb250aa35516a31
 tools:
   - w_notifications_status
   - w_notifications_history
@@ -54,6 +54,10 @@ click or dismiss an entry. Do not offer to.
 
 `w_notifications_history` takes `limit` and `missed_only`. For "did anything happen
 while I was away", `missed_only=True` is usually the honest answer, not the whole list.
+
+In **Hub → Notifications** the same records are listed grouped by day — a divider reads
+"Today" / "Yesterday" / the date, and each row carries only the time. Worth mentioning
+when you point someone at the list to find something older than today.
 
 ## Muting an app
 

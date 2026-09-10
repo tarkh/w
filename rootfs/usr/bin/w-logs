@@ -44,7 +44,13 @@ err() { echo "w-logs: $*" >&2; }
 need_root() { [[ $EUID -eq 0 ]] || { err "this command requires root"; exit 1; }; }
 need_conf() { wconf_has logs RETENTION_DAYS || { err "no log-retention policy in any layer (vendor file missing — run: sudo apply.sh --rootfs)"; exit 1; }; }
 
+# W_I18N_LIB is a dev/test seam, the same one W_CONF_LIB is: it lets this CLI be
+# sourced from a checkout on a machine with no W installed (scripts/check/tests).
+# shellcheck source=../lib/w/w-i18n-lib.sh
+source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
+
 usage() {
+  if w_help w-logs; then return 0; fi
   cat <<EOF
 Usage: w-logs <command>
 

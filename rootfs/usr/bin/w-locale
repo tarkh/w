@@ -20,7 +20,13 @@ err() { echo "w-locale: $*" >&2; }
 die() { err "$*"; exit 1; }
 need_root() { [[ $EUID -eq 0 ]] || die "this command requires root"; }
 
+# W_I18N_LIB is a dev/test seam, the same one W_CONF_LIB is: it lets this CLI be
+# sourced from a checkout on a machine with no W installed (scripts/check/tests).
+# shellcheck source=../lib/w/w-i18n-lib.sh
+source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
+
 usage() {
+  if w_help w-locale; then return 0; fi
   cat <<EOF
 Usage: w-locale <command> [args]
 
@@ -28,7 +34,9 @@ Info: Show and switch the system UI language (LANG).
 
 Commands:
   status [--porcelain]   Show the current LANG
-  list [--porcelain]     List selectable UTF-8 locales
+  list [--porcelain] [--names]
+                         List selectable UTF-8 locales (--names adds each
+                         language's own name and country, tab-separated)
   set <locale>           Switch LANG (root; generates the locale; needs relogin)
   help                   Show this help
 
@@ -56,8 +64,60 @@ cmd_status() {
   else echo "${lang:-—}"; fi
 }
 
+# Endonyms for the whole catalogue, one `code<TAB>language<TAB>country` line each.
+#
+# glibc gives no list of human language names, but every locale SOURCE file carries
+# them in LC_ADDRESS as `lang_name` / `country_name` — and they are ENDONYMS, the
+# language's name in itself: ru_RU → «русский»/«Россия», ja_JP → 日本語. That is what
+# a language picker should show, and it needs no extra package (iso-codes would
+# translate names into the CURRENT language instead, which is the wrong thing for a
+# list you use to LEAVE the current language).
+#
+# One awk pass over the whole locale source directory rather than a grep per locale
+# (328 of them). Four files define no names of their own and `copy` another locale's
+# — resolved with a single hop, which is enough for all four. A name still missing,
+# or written in glibc's <Uxxxx> escape notation (one file does), falls back to empty
+# and the caller shows the bare code.
+list_names() {
+  local dir="/usr/share/i18n/locales"
+  [[ -d "$dir" ]] || { list_locales | sed 's/$/\t\t/'; return 0; }
+  list_locales | awk -v dir="$dir" '
+    function val(line,   v) { v = line; sub(/^[a-z_]+[ \t]+"/, "", v); sub(/".*/, "", v)
+                              return (v ~ /<U/) ? "" : v }
+    function scan(f,   line) {
+      if (f in seen) return
+      seen[f] = 1
+      while ((getline line < (dir "/" f)) > 0) {
+        if (line ~ /^lang_name[ \t]/    && !(f in ln)) ln[f] = val(line)
+        else if (line ~ /^country_name[ \t]/ && !(f in cn)) cn[f] = val(line)
+        else if (line ~ /^copy[ \t]/    && !(f in cp)) cp[f] = val(line)
+      }
+      close(dir "/" f)
+      if (cp[f] != "") { scan(cp[f]); if (ln[f] == "") ln[f] = ln[cp[f]]
+                                      if (cn[f] == "") cn[f] = cn[cp[f]] }
+    }
+    { base = $0; sub(/\.[^@]*/, "", base)   # drop the codeset, keep any @modifier
+      scan(base)
+      printf "%s\t%s\t%s\n", $0, ln[base], cn[base] }'
+}
+
 cmd_list() {
-  if [[ "${1:-}" == "--porcelain" ]]; then list_locales
+  local porcelain="" names="" a
+  for a in "$@"; do
+    case "$a" in
+      --porcelain) porcelain=1 ;;
+      --names)     names=1 ;;
+      *) err "list: unknown option: $a"; exit 2 ;;
+    esac
+  done
+  if [[ -n "$names" ]]; then
+    if [[ -n "$porcelain" ]]; then list_names
+    else list_names | while IFS=$'\t' read -r l lang country; do
+           printf '  %-20s %s\n' "$l" "${lang:+$lang${country:+ ($country)}}"
+         done; fi
+    return 0
+  fi
+  if [[ -n "$porcelain" ]]; then list_locales
   else list_locales | while read -r l; do echo "  $l"; done; fi
 }
 
@@ -76,6 +136,19 @@ cmd_set() {
   fi
   locale-gen
   echo "LANG=$loc" > "$CONF"
+
+  # A language is more than LANG: see w-langpack. The console font is applied here
+  # (a file write plus a setfont — offline-safe and instant), package delivery is
+  # deliberately NOT. Switching language must never block on the network, so what is
+  # still missing is only REPORTED, and installing it stays an explicit action:
+  # mod_langpack on the next apply, or the Hub handing `w-langpack plan --porcelain`
+  # to the pacman-install capability. See config-i18n.md.
+  if command -v w-langpack >/dev/null 2>&1; then
+    w-langpack font "$loc" >/dev/null 2>&1 || true
+    local -a pending=()
+    mapfile -t pending < <(w-langpack plan "$loc" --porcelain 2>/dev/null) || true
+    ((${#pending[@]})) && echo "w-locale: language packages pending: ${pending[*]} (install: sudo w-langpack apply)"
+  fi
   echo "w-locale: LANG set to $loc (log back in to apply)"
 }
 

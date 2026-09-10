@@ -1,0 +1,28 @@
+# w-i18n-src: 1b3361efd4e4cb77d8d61b1ee224cc48de8f154c70f3755beff62b108e91a017
+Использование: w-kernel <команда> [параметры]
+
+Info: Выбор активного ядра и переключение профиля защиты.
+
+Команды:
+  list [--porcelain]        Известные ядра, какие установлены, ядро по умолчанию
+                            и запущенное
+  set <zen|vanilla|lts>     Установить ядро (+парные headers) и сделать основным
+  remove <zen|vanilla|lts>  Удалить ядро (+headers); откажется трогать запущенное
+                            или основное
+  harden <on|off|status>    Переключить весь профиль защиты (sysctl + cmdline)
+                            (status принимает --porcelain)
+  help                      Показать эту справку
+
+Porcelain:
+  list --porcelain          TSV, заголовок + строка на ядро:
+                            name  pkg  version  installed  default  running
+  harden status --porcelain TSV, заголовок + строка: state(on|off|mixed) pending(yes|no
+
+Коды выхода:
+  0  Успех
+  1  Ошибка выполнения
+  2  Ошибка вызова
+
+Примеры:
+  sudo w-kernel set lts
+  sudo w-kernel harden on

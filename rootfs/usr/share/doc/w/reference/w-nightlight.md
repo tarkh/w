@@ -5,7 +5,7 @@ order: 0
 summary: Night light — warm the screen on a schedule to cut blue light in the evening.
 ---
 
-`w-nightlight` — Night light — warm the screen on a schedule to cut blue light in the evening..
+`w-nightlight` — Night light — warm the screen on a schedule to cut blue light in the evening.
 
 ## Usage
 

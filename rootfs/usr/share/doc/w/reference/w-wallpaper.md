@@ -5,7 +5,7 @@ order: 0
 summary: Select the wallpaper for the current resolution tier.
 ---
 
-`w-wallpaper` — Select the wallpaper for the current resolution tier..
+`w-wallpaper` — Select the wallpaper for the current resolution tier.
 
 ## Usage
 

@@ -5,7 +5,7 @@ order: 0
 summary: Read and write W's layered configuration (vendor → admin → user).
 ---
 
-`w-conf` — Read and write W's layered configuration (vendor → admin → user)..
+`w-conf` — Read and write W's layered configuration (vendor → admin → user).
 
 ## Usage
 

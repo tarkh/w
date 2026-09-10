@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# w-help-extract — W Linux DEV tool: print a w-* command's ENGLISH help text.
+#
+# One implementation of "where does the English help live", because three dev
+# tools now need the same answer and a second copy of this parser would drift:
+#
+#   • w-docs-refgen  renders reference/w-<cmd>.md from it;
+#   • w-i18n-gen     hashes it, so a translated help whose English original
+#                    changed underneath is a red check rather than a silent lie;
+#   • check/i18n.sh  reaches it through w-i18n-gen.
+#
+# The English text is NOT in the translation canon and never will be: it lives
+# in the tool itself, which is what `w-<cmd> help` prints when no catalog is
+# installed and what w-info parses for its `Info:` line. i18n/help/<lang>/ holds
+# translations only (config-i18n.md §5a).
+#
+# Two shapes by language, both the first help block in the file:
+#   bash    the heredoc inside usage()  — all 35 bash tools use `cat <<EOF`
+#   python  the USAGE triple-quoted constant (w-session is the precedent)
+#
+# Usage: w-help-extract [--raw] <path-to-w-tool>
+#
+# --raw keeps the heredoc's own escaping (`\$` for a literal dollar) instead of
+# resolving it. Only the variable-parity check wants that: after unescaping, a
+# `$HOME` the author wrote as `\$HOME` to print literally is indistinguishable
+# from a `$CONF` the shell expands, and a translation has to tell them apart.
+#
+# DEV-ONLY: lives in devtools/, reads rootfs/usr/bin from the repo, never ships.
+set -euo pipefail
+
+raw=0
+case "${1:-}" in
+-h | --help)
+    sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+    ;;
+--raw)
+    raw=1
+    shift
+    ;;
+"")
+    echo "w-help-extract: usage: w-help-extract [--raw] <path-to-w-tool>" >&2
+    exit 2
+    ;;
+esac
+
+file="${1:-}"
+[[ -r "$file" ]] || { echo "w-help-extract: cannot read: $file" >&2; exit 2; }
+
+if head -1 "$file" | grep -q python; then
+    python3 - "$file" <<'PYEOF'
+import re, sys
+src = open(sys.argv[1]).read()
+m = re.search(r'USAGE\s*=\s*(?:"""|\'\'\')(.*?)(?:"""|\'\'\')', src, re.S)
+print(m.group(1).strip() if m else "")
+PYEOF
+    exit 0
+fi
+
+# The heredoc is read as SOURCE, so the shell escaping an UNQUOTED heredoc needs
+# (\` \$ \\) is still in it, while `w-<cmd> help` prints those characters bare.
+# Undo exactly those three — every consumer claims to be the same text as the
+# live help, and it has to be. Only unquoted heredocs reach here: the opener
+# pattern below does not match `<<'EOF'`.
+extract() {
+    awk '
+        st == 0 && /^usage\(.*\{/ { st = 1; next }
+        st == 1 && /<<-?[ \t]*EOF/ { st = 2; next }
+        st == 2 && /^EOF[ \t]*$/ { st = 3 }
+        st == 2 { print }
+    ' "$file"
+}
+
+if ((raw)); then
+    extract
+else
+    extract | sed 's/\\\([$`\\]\)/\1/g'
+fi

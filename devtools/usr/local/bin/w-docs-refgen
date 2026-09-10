@@ -16,7 +16,11 @@
 #   <!-- W-DOCS:reference-toc END -->
 #
 # A page's markdown keeps Bash/awk out of its prose: the generated body is
-# exactly "`w-<cmd>` — <Info summary>." + the help text in a fenced block.
+# exactly "`w-<cmd>` — <Info summary>" + the help text in a fenced block. The
+# subtitle prints the Info: line VERBATIM — no punctuation of its own — so the
+# page, its frontmatter `summary:` and the index TOC entry are the same string
+# three times over. An `Info:` that ends in a period (they all do, and the docs
+# suite enforces it) therefore reads as one sentence in all three places.
 #
 # Modes:
 #   w-docs-refgen            regenerate reference/ and the index TOC block
@@ -60,46 +64,67 @@ done
 [[ -n "$ROOT" ]] || { err "not inside the W repo; this is a dev-only tool"; exit 2; }
 BINDIR="$ROOT/rootfs/usr/bin"
 DOCS="$ROOT/rootfs/usr/share/doc/w"
-REF="$DOCS/reference"
-
-out="$REF"
-if ((check)); then
-    out="$(mktemp -d /tmp/w-docs-refgen.XXXXXX)"
-    trap 'rm -rf "$out"' EXIT
-fi
-mkdir -p "$out"
 
 # ── One page per user-facing command (w-info's own criterion: has `Info:`) ────
-# The help text lives in two shapes by language — bash: the first heredoc inside
-# usage(); python: the USAGE triple-quoted string (w-session is the precedent).
-extract_help() { # $1 = binary path
-    if head -1 "$1" | grep -q python; then
-        python3 - "$1" <<'PYEOF'
-import re, sys
-src = open(sys.argv[1]).read()
-m = re.search(r'USAGE\s*=\s*(?:"""|\'\'\')(.*?)(?:"""|\'\'\')', src, re.S)
-sql = m.group(1).strip() if m else ""
-print(sql)
-PYEOF
-        return
-    fi
-    # The heredoc is read as SOURCE, so the shell escaping an UNQUOTED heredoc
-    # needs (\` \$ \\) is still in it, while `w-<cmd> help` prints those
-    # characters bare. Undo exactly those three — the page claims to be the same
-    # text as the live help, and it has to be. Only unquoted heredocs reach here:
-    # the opener pattern below does not match `<<'EOF'`.
-    awk '
-        st == 0 && /^usage\(.*\{/ { st = 1; next }
-        st == 1 && /<<-?[ \t]*EOF/ { st = 2; next }
-        st == 2 && /^EOF[ \t]*$/ { st = 3 }
-        st == 2 { print }
-    ' "$1" | sed 's/\\\([$`\\]\)/\1/g'
+# Where the English help lives — and how the two file shapes are unwrapped — is
+# w-help-extract's single answer, shared with w-i18n-gen so the two cannot drift
+# in their idea of what the "same text as the live help" is.
+EXTRACT="$(dirname "$self")/w-help-extract"
+[[ -x "$EXTRACT" ]] || die "w-help-extract not found next to this tool"
+
+# ── Languages ────────────────────────────────────────────────────────────────
+# English comes from each tool's own usage() heredoc; every other language from
+# its translated help. Reading the SHIPPED copy of the translations rather than
+# the canon under i18n/ is deliberate and matches how this tool finds everything
+# else: it also runs on the published tree, and w-i18n-gen's golden gate already
+# proves the shipped copy equals the canon.
+HELP_L10N="$ROOT/rootfs/usr/share/w/i18n/help"
+langs=(en)
+if [[ -d "$HELP_L10N" ]]; then
+    for d in "$HELP_L10N"/*/; do
+        [[ -d "$d" ]] && langs+=("$(basename "$d")")
+    done
+fi
+
+# Where a language's tree lives: English at the root, translations under <lang>/.
+lang_docs() { if [[ "$1" == en ]]; then echo "$DOCS"; else echo "$DOCS/$1"; fi; }
+
+# The one sentence a reference page carries that is NOT the command's own help.
+# It belongs to this generator, not to the product, which is why it lives here
+# and not in the translation catalog. An unknown language is a hard error rather
+# than a silently English footer on an otherwise translated page.
+page_footer() { # $1 = lang, $2 = command
+    case "$1" in
+    en) cat <<FOOT
+This page is generated from the command's own help text (w-docs-refgen). The
+live version of the same text on a W machine: \`$2 help\`.
+FOOT
+        ;;
+    ru) cat <<FOOT
+Эта страница генерируется из собственной справки команды (w-docs-refgen). Живая
+версия того же текста на машине с W: \`$2 help\`.
+FOOT
+        ;;
+    *) die "no reference-page footer for language '$1' — add one here" ;;
+    esac
 }
 
-gen_page() { # $1 = binary path, $2 = command name, $3 = Info line
-    local file="$1" cmd="$2" info="$3" help
-    help="$(extract_help "$file")"
-    [[ -n $help ]] || { err "no usage heredoc in $file"; return 1; }
+# The heading above the fenced help block, per language.
+page_heading() {
+    case "$1" in
+    en) echo "Usage" ;;
+    ru) echo "Использование" ;;
+    *) die "no reference-page heading for language '$1' — add one here" ;;
+    esac
+}
+
+# A command's help text and its Info: line, in one language.
+help_text() { # $1 = lang, $2 = binary path, $3 = command
+    if [[ "$1" == en ]]; then "$EXTRACT" "$2"; else cat "$HELP_L10N/$1/$3.txt"; fi
+}
+
+gen_page() { # $1 = lang, $2 = command, $3 = Info line, $4 = help text
+    local lang="$1" cmd="$2" info="$3" help="$4"
     cat >"$out/$cmd.md" <<POST
 ---
 title: $cmd
@@ -108,66 +133,82 @@ order: 0
 summary: $info
 ---
 
-\`$cmd\` — $info.
+\`$cmd\` — $info
 
-## Usage
+## $(page_heading "$lang")
 
 \`\`\`
 $help
 \`\`\`
 
-This page is generated from the command's own help text (w-docs-refgen). The
-live version of the same text on a W machine: \`$cmd help\`.
+$(page_footer "$lang" "$cmd")
 POST
 }
 
 mapfile -t files < <(grep -l '^Info: ' "$BINDIR"/w-* | sort)
-toc="$out/.toc"
-: >"$toc"
-for f in "${files[@]}"; do
-    c="$(basename "$f")"
-    info="$(grep -m1 '^Info: ' "$f" | sed 's/^Info: //')"
-    [[ -n $info ]] || continue
-    gen_page "$f" "$c" "$info"
-    printf -- '- [`%s`](reference/%s.md) — %s\n' "$c" "$c" "$info" >>"$toc"
+fails=0
+diff="$(mktemp /tmp/w-docs-refgen-XXXXXX)"
+trap 'rm -f "$diff"' EXIT
+count=0
+
+for lang in "${langs[@]}"; do
+    ldocs="$(lang_docs "$lang")"
+    lref="$ldocs/reference"
+    out="$lref"
+    ((check)) && { out="$(mktemp -d /tmp/w-docs-refgen.XXXXXX)"; }
+    mkdir -p "$out"
+
+    toc="$out/.toc"
+    : >"$toc"
+    for f in "${files[@]}"; do
+        c="$(basename "$f")"
+        help="$(help_text "$lang" "$f" "$c")"
+        [[ -n $help ]] || { err "no help text for $c ($lang)"; exit 1; }
+        # The Info: line comes out of the SAME text as the page body, so a page
+        # and its TOC entry can never describe the command differently.
+        info="$(printf '%s\n' "$help" | grep -m1 '^Info: ' | sed 's/^Info: //')"
+        [[ -n $info ]] || { err "no Info: line for $c ($lang)"; exit 1; }
+        gen_page "$lang" "$c" "$info" "$help"
+        printf -- '- [`%s`](reference/%s.md) — %s\n' "$c" "$c" "$info" >>"$toc"
+        count=$((count + 1))
+    done
+
+    # ── index.md: committed head and tail around the managed TOC block ───────
+    start="$(grep -n 'W-DOCS:reference-toc START' "$ldocs/index.md" | cut -d: -f1)" || true
+    end="$(grep -n 'W-DOCS:reference-toc END' "$ldocs/index.md" | cut -d: -f1)" || true
+    [[ -n ${start:-} && -n ${end:-} ]] || die "$lang: index.md lacks the reference-toc markers"
+
+    pages="$out/pages"
+    mkdir -p "$pages"
+    mv "$out"/w-*.md "$pages/"
+    # The rebuilt index goes to a temp file, NOT into $out: on a real run $out IS
+    # reference/, and an index.md written there is a stray page that the golden
+    # check then reports as a divergence of the tree against itself.
+    idx="$(mktemp /tmp/w-docs-refgen-idx.XXXXXX)"
+    head -n "$start" "$ldocs/index.md" >"$idx"
+    cat "$toc" >>"$idx"
+    tail -n "+$end" "$ldocs/index.md" >>"$idx"
+
+    if ((check)); then
+        if ! diff -r "$lref" "$pages" >>"$diff"; then
+            sed -n '1,20p' "$diff" >&2
+            fails=1
+        fi
+        if ! diff -u "$ldocs/index.md" "$idx" >>"$diff"; then
+            sed -n '/reference-toc/,$p' "$diff" | sed -n '1,15p' >&2
+            fails=1
+        fi
+        rm -rf "$out" "$idx"
+    else
+        mv "$pages"/*.md "$lref/"
+        cp "$idx" "$ldocs/index.md"
+        rm -rf "$pages" "$toc" "$idx"
+    fi
 done
 
-# ── index.md: committed head and tail around the managed TOC block ───────────
-start="$(grep -n 'W-DOCS:reference-toc START' "$DOCS/index.md" | cut -d: -f1)" || true
-end="$(grep -n 'W-DOCS:reference-toc END' "$DOCS/index.md" | cut -d: -f1)" || true
-[[ -n ${start:-} && -n ${end:-} ]] || die "index.md lacks the reference-toc markers"
-
-# Candidates: reference pages (compare against $REF) and the rebuilt index.md
-# (compare against the committed one).
-pages="$out/pages"
-mkdir -p "$pages"
-mv "$out"/w-*.md "$pages/"
-# The rebuilt index goes to a temp file, NOT into $out: on a real run $out IS
-# reference/, and an index.md written there is a stray page that the golden
-# check then reports as a divergence of the tree against itself.
-idx="$(mktemp /tmp/w-docs-refgen-idx.XXXXXX)"
-head -n "$start" "$DOCS/index.md" >"$idx"
-cat "$toc" >>"$idx"
-tail -n "+$end" "$DOCS/index.md" >>"$idx"
-
 if ((check)); then
-    diff="$(mktemp /tmp/w-docs-refgen-XXXXXX)"
-    fails=0
-    if ! diff -r "$REF" "$pages" >"$diff"; then
-        sed -n '1,20p' "$diff" >&2
-        fails=1
-    fi
-    if ! diff -u "$DOCS/index.md" "$idx" >>"$diff"; then
-        sed -n '/reference-toc/,$p' "$diff" | sed -n '1,15p' >&2
-        fails=1
-    fi
     ((fails)) && die "reference docs diverged — run devtools/usr/local/bin/w-docs-refgen and commit"
-    rm -f "$diff"
-    echo "docs reference: in sync"
+    echo "docs reference: in sync (${#langs[@]} language(s))"
     exit 0
 fi
-
-mv "$pages"/*.md "$REF/"
-cp "$idx" "$DOCS/index.md"
-rm -rf "$pages" "$toc" "$idx"
-echo "generated $(find "$REF" -name 'w-*.md' | wc -l) reference pages + index TOC"
+echo "generated $count reference pages + index TOC across ${#langs[@]} language(s)"

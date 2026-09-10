@@ -33,7 +33,8 @@ Item {
     // the Flickable's own contentHeight padding below (focus-wash bleed slack, gotcha #6 — without
     // it `flick` is permanently 8px shorter than its own contentHeight). menuLayer.menuBottom grows
     // the card under the open profile dropdown when it would otherwise clip.
-    implicitHeight: Math.max(topCol.implicitHeight + 12 + listCol.implicitHeight + 8, menuLayer.menuBottom)
+    implicitHeight: Math.max(topCol.implicitHeight + 12 + listCol.implicitHeight + 8,
+                             menuLayer.menuBottom, promptLayer.contentBottom, confirm.contentBottom)
 
     // Emitted when chord capture ends or a prompt closes: the Hub re-grabs keyboard focus on its
     // card so Esc / Backspace navigate again (during capture / a prompt we hold focus elsewhere).
@@ -42,6 +43,11 @@ Item {
     // (Hub.qml's focusHeaderHelp). A route with no `help` entry has no button and the
     // Hub answers false — the cursor simply stays where it is.
     signal focusHeader()
+
+    // The Hub card, handed over by Hub.qml on load — the prompt and the removal
+    // confirmation dim it, and need its real rectangle and corner radius to do that
+    // without square corners poking out.
+    property Item hubSurface: null
 
 
     // The shared pill (core/WPill.qml) with the Hub's outline width — used across
@@ -200,6 +206,31 @@ Item {
     function saveCurrent()         { saveCurrentProc.command = ["w-hotkeys", "profile-new", activeProfile, "--from", "current"]; saveCurrentProc.running = true; }
     function deleteProfile(name)   { delProfileProc.command = ["w-hotkeys", "profile-rm", name]; delProfileProc.running = true; }
     function removeCustom(chord)   { customRmProc.command = ["w-hotkeys", "custom-rm", chord]; customRmProc.running = true; }
+
+    // ── Removal: ask first (both row kinds share one HubConfirm) ────────────────────
+    // Which kind is being removed lives in askKind, because one modal serves two lists
+    // and the chosen action key alone ("remove") cannot say which. The custom action's
+    // command goes in `note` verbatim — it is the user's own text, and seeing it is what
+    // makes "delete the action on SUPER + C" a decidable question.
+    property string askKind: ""    // "" | "custom" | "profile"
+    property string askArg: ""
+    function askRemoveCustom(chord, exec) {
+        root.askKind = "custom"; root.askArg = chord;
+        confirm.ask({
+            title:   Strings.t("hotkeys.customRmTitle").replace("%n%", chord),
+            message: Strings.t("hotkeys.customRmBody"),
+            note:    exec,
+            actions: [{ key: "remove", label: Strings.t("hotkeys.deleteCustom") }],
+        });
+    }
+    function askDeleteProfile(name) {
+        root.askKind = "profile"; root.askArg = name;
+        confirm.ask({
+            title:   Strings.t("hotkeys.profileRmTitle").replace("%n%", name),
+            message: Strings.t("hotkeys.profileRmBody"),
+            actions: [{ key: "remove", label: Strings.t("hotkeys.deleteProfile") }],
+        });
+    }
     function saveProfile(name)     {
         saveProc.pendingName = name;
         saveProc.command = ["w-hotkeys", "profile-new", name, "--from", "current"];
@@ -384,7 +415,7 @@ Item {
             arr.push({ field: "discardAll", key: "discardAll", fixed: true });
         }
         for (const c of root.customActions)
-            arr.push({ field: "customDel", key: "custom:" + c.chord, chord: c.chord });
+            arr.push({ field: "customDel", key: "custom:" + c.chord, chord: c.chord, exec: c.exec });
         arr.push({ field: "addCustom", key: "addCustom" });
         for (const name of root.userProfiles)
             arr.push({ field: "profileDel", key: "userProfile:" + name, name: name });
@@ -463,6 +494,9 @@ Item {
 
     focus: true
     Keys.onPressed: (e) => {
+        // The confirmation is checked ahead of the prompt: it is the topmost surface,
+        // and while it is up it owns Escape/Backspace too (Ф-Keyboard gotcha 14).
+        if (confirm.open) { confirm.handleKey(e); return; }
         if (root.promptMode !== "") { root.handlePromptKey(e); return; }
         const cd = root.contentDesc;
         if (cd.length === 0) return;
@@ -473,11 +507,10 @@ Item {
             root.focusRow(root.focusIndex - 1); e.accepted = true; return;
         case HubNavKeys.del: {
             const d = cd[root.focusIndex];
-            // Mirrors the mouse's × exactly on both row kinds — that click removes with
-            // no confirm step either, so keyboard doesn't invent a two-step arm/confirm
-            // (gotcha #14 doesn't apply the way it does to AppearancePanel's tiles).
-            if (d && d.field === "customDel") root.removeCustom(d.chord);
-            else if (d && d.field === "profileDel") root.deleteProfile(d.name);
+            // Mirrors the mouse's × exactly on both row kinds — both raise the shared
+            // confirmation, so there is no keyboard-only two-step arm/confirm to invent.
+            if (d && d.field === "customDel") root.askRemoveCustom(d.chord, d.exec);
+            else if (d && d.field === "profileDel") root.askDeleteProfile(d.name);
             e.accepted = true;
             return;
         }
@@ -518,7 +551,7 @@ Item {
     // ── Prompt-local roving (save-as name / custom-action form) — separate small list,
     // guarded ahead of the main switch above (root.promptMode !== ""). Escape/Backspace
     // close the prompt LOCALLY instead of bubbling to Hub.qml's card.back(), same shape
-    // as every other panel's prompt/pendingDelete guard this session.
+    // as every other modal guard in the Hub (HubConfirm's included).
     property int promptFocusIndex: 0
     function promptMaxIndex() { return root.promptMode === "custom" ? 3 : 2; }
     function promptItemAt(i) {
@@ -728,7 +761,7 @@ Item {
                             id: cDelMa
                             anchors.fill: parent; anchors.margins: -4
                             hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                            onClicked: root.removeCustom(crow.modelData.chord)
+                            onClicked: root.askRemoveCustom(crow.modelData.chord, crow.modelData.exec)
                         }
                     }
                     Rectangle {
@@ -811,7 +844,7 @@ Item {
                                 id: pDelMa
                                 anchors.fill: parent; anchors.margins: -4
                                 hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                                onClicked: root.deleteProfile(prow.modelData)
+                                onClicked: root.askDeleteProfile(prow.modelData)
                             }
                         }
                     }
@@ -985,144 +1018,141 @@ Item {
     // ── Dropdown overlay layer (above the rows) ─────────────────────────────────────
     HubDropdown { id: menuLayer; anchors.fill: parent; returnFocusTo: root }
 
-    // ── Prompt overlay layer (save-as name / custom-action form) ────────────────────
-    Item {
+    // ── Prompt overlay layer (save-as name / custom-action form) ────────────────
+    // Chrome (the tint over the Hub card, the surface card, the outside-click) is
+    // HubPrompt's; this file keeps only the two forms and their own roving list, which
+    // is where the two modals actually differ. `open` is derived rather than set: the
+    // panel already tracks which form is up in promptMode, and a second boolean saying
+    // the same thing is a second thing to get wrong.
+    HubPrompt {
         id: promptLayer
         anchors.fill: parent
-        z: 101
-        visible: root.promptMode !== ""
+        surface: root.hubSurface
+        open: root.promptMode !== ""
+        onDismissed: root.closePrompt()
 
-        // Click outside the card cancels.
-        MouseArea { anchors.fill: parent; onClicked: root.closePrompt() }
-
-        Rectangle {
-            id: promptCard
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: 8
-            width: parent.width - 24
-            radius: Geometry.radiusSm
-            color: Colors.surface
-            border.width: HubConfig.border; border.color: Colors.border
-            implicitHeight: promptCol.implicitHeight + 24
-            // Swallow clicks so they don't fall through to the cancelling backdrop.
-            MouseArea { anchors.fill: parent }
-
-            Column {
-                id: promptCol
-                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
-                spacing: 10
-
-                // Save current edits as a user profile.
-                Column {
-                    id: savePromptCol
-                    visible: root.promptMode === "save"
-                    width: parent.width
-                    spacing: 8
-                    readonly property bool reserved: root.isReserved(nameField.text)
-                    readonly property bool nameOk: /^[a-z0-9-]+$/.test(nameField.text) && !reserved
-                    Text {
-                        text: Strings.t("hotkeys.saveAs")
-                        color: Colors.text; font.family: Fonts.family; font.pixelSize: 14; font.weight: Font.Medium
-                    }
-                    WTextBox {
-                        id: nameField
-                        width: parent.width
-                        placeholder: Strings.t("hotkeys.profileName")
-                        onAccepted: if (parent.nameOk) root.saveProfile(text)
-                        // Tab/Esc hand off to the prompt's own local roving list instead
-                        // of typing a tab char or bubbling Esc up to Hub.back() — same
-                        // reasoning as every field wrapper elsewhere in the Hub.
-                        input.Keys.onTabPressed: root.promptFocusRow(1)
-                        input.Keys.onEscapePressed: root.closePrompt()
-                    }
-                    Text {
-                        width: parent.width
-                        text: parent.reserved ? Strings.t("hotkeys.reserved") : Strings.t("hotkeys.nameHint")
-                        color: parent.reserved ? Colors.dangerBorder : Colors.muted
-                        font.family: Fonts.family; font.pixelSize: 11
-                    }
-                    Row {
-                        spacing: 8
-                        Pill {
-                            id: savePromptSavePill
-                            label: Strings.t("hotkeys.save")
-                            enabled: parent.parent.nameOk
-                            focused: root.promptMode === "save" && root.promptFocusIndex === 1
-                            onClicked: root.saveProfile(nameField.text)
-                        }
-                        Pill {
-                            id: savePromptCancelPill
-                            label: Strings.t("hotkeys.cancel")
-                            focused: root.promptMode === "save" && root.promptFocusIndex === 2
-                            onClicked: root.closePrompt()
-                        }
-                    }
+        // Save current edits as a user profile.
+        Column {
+            id: savePromptCol
+            visible: root.promptMode === "save"
+            width: parent.width
+            spacing: 8
+            readonly property bool reserved: root.isReserved(nameField.text)
+            readonly property bool nameOk: /^[a-z0-9-]+$/.test(nameField.text) && !reserved
+            Text {
+                text: Strings.t("hotkeys.saveAs")
+                color: Colors.text; font.family: Fonts.family; font.pixelSize: 14; font.weight: Font.Medium
+            }
+            WTextBox {
+                id: nameField
+                width: parent.width
+                placeholder: Strings.t("hotkeys.profileName")
+                onAccepted: if (parent.nameOk) root.saveProfile(text)
+                // Tab/Esc hand off to the prompt's own local roving list instead
+                // of typing a tab char or bubbling Esc up to Hub.back() — same
+                // reasoning as every field wrapper elsewhere in the Hub.
+                input.Keys.onTabPressed: root.promptFocusRow(1)
+                input.Keys.onEscapePressed: root.closePrompt()
+            }
+            Text {
+                width: parent.width
+                text: parent.reserved ? Strings.t("hotkeys.reserved") : Strings.t("hotkeys.nameHint")
+                color: parent.reserved ? Colors.dangerBorder : Colors.muted
+                font.family: Fonts.family; font.pixelSize: 11
+            }
+            Row {
+                spacing: 8
+                Pill {
+                    id: savePromptSavePill
+                    label: Strings.t("hotkeys.save")
+                    enabled: parent.parent.nameOk
+                    focused: root.promptMode === "save" && root.promptFocusIndex === 1
+                    onClicked: root.saveProfile(nameField.text)
                 }
-
-                // Add a custom action: capture a chord, type a command.
-                Column {
-                    visible: root.promptMode === "custom"
-                    width: parent.width
-                    spacing: 8
-                    Text {
-                        text: Strings.t("hotkeys.addCustom")
-                        color: Colors.text; font.family: Fonts.family; font.pixelSize: 14; font.weight: Font.Medium
-                    }
-                    Rectangle {
-                        id: capChip
-                        readonly property bool capturing: root.captureCustom && root.captureToken !== ""
-                        // Roving cursor on this bespoke (non-WPill) button — same bespoke
-                        // ring treatment as NetworkPanel's connBtn, since it carries no
-                        // shared `focused` contract of its own.
-                        readonly property bool roving: root.promptMode === "custom" && root.promptFocusIndex === 0 && !capChip.capturing
-                        width: capChordLbl.implicitWidth + 20
-                        height: 28
-                        radius: Geometry.radiusSm
-                        color: (capMa.containsMouse || capChip.roving) && !capChip.capturing ? Colors.hover : Colors.alpha(Colors.hover, 0)
-                        border.width: (capChip.capturing || capChip.roving) ? 2 : HubConfig.border
-                        border.color: (capChip.capturing || root.customChord !== "" || capChip.roving) ? Colors.accentInk : Colors.border
-                        Text {
-                            id: capChordLbl
-                            anchors.centerIn: parent
-                            text: capChip.capturing ? Strings.t("hotkeys.capturing")
-                                  : root.customChord !== "" ? root.customChord
-                                  : Strings.t("hotkeys.setChord")
-                            color: (capChip.capturing || root.customChord !== "") ? Colors.accentInk : Colors.muted
-                            font.family: root.customChord !== "" ? Fonts.mono : Fonts.family
-                            font.pixelSize: 12
-                        }
-                        MouseArea {
-                            id: capMa
-                            anchors.fill: parent
-                            hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                            onClicked: root.startCaptureCustom()
-                        }
-                    }
-                    WTextBox {
-                        id: cmdField
-                        width: parent.width
-                        placeholder: Strings.t("hotkeys.command")
-                        input.Keys.onTabPressed: root.promptFocusRow(2)
-                        input.Keys.onEscapePressed: root.closePrompt()
-                    }
-                    Row {
-                        spacing: 8
-                        Pill {
-                            id: customPromptAddPill
-                            label: Strings.t("hotkeys.add")
-                            enabled: root.customChord !== "" && cmdField.text.trim() !== ""
-                            focused: root.promptMode === "custom" && root.promptFocusIndex === 2
-                            onClicked: root.addCustom(root.customChord, cmdField.text.trim())
-                        }
-                        Pill {
-                            id: customPromptCancelPill
-                            label: Strings.t("hotkeys.cancel")
-                            focused: root.promptMode === "custom" && root.promptFocusIndex === 3
-                            onClicked: root.closePrompt()
-                        }
-                    }
+                Pill {
+                    id: savePromptCancelPill
+                    label: Strings.t("hotkeys.cancel")
+                    focused: root.promptMode === "save" && root.promptFocusIndex === 2
+                    onClicked: root.closePrompt()
                 }
             }
+        }
+
+        // Add a custom action: capture a chord, type a command.
+        Column {
+            visible: root.promptMode === "custom"
+            width: parent.width
+            spacing: 8
+            Text {
+                text: Strings.t("hotkeys.addCustom")
+                color: Colors.text; font.family: Fonts.family; font.pixelSize: 14; font.weight: Font.Medium
+            }
+            Rectangle {
+                id: capChip
+                readonly property bool capturing: root.captureCustom && root.captureToken !== ""
+                // Roving cursor on this bespoke (non-WPill) button — same bespoke
+                // ring treatment as NetworkPanel's connBtn, since it carries no
+                // shared `focused` contract of its own.
+                readonly property bool roving: root.promptMode === "custom" && root.promptFocusIndex === 0 && !capChip.capturing
+                width: capChordLbl.implicitWidth + 20
+                height: 28
+                radius: Geometry.radiusSm
+                color: (capMa.containsMouse || capChip.roving) && !capChip.capturing ? Colors.hover : Colors.alpha(Colors.hover, 0)
+                border.width: (capChip.capturing || capChip.roving) ? 2 : HubConfig.border
+                border.color: (capChip.capturing || root.customChord !== "" || capChip.roving) ? Colors.accentInk : Colors.border
+                Text {
+                    id: capChordLbl
+                    anchors.centerIn: parent
+                    text: capChip.capturing ? Strings.t("hotkeys.capturing")
+                          : root.customChord !== "" ? root.customChord
+                          : Strings.t("hotkeys.setChord")
+                    color: (capChip.capturing || root.customChord !== "") ? Colors.accentInk : Colors.muted
+                    font.family: root.customChord !== "" ? Fonts.mono : Fonts.family
+                    font.pixelSize: 12
+                }
+                MouseArea {
+                    id: capMa
+                    anchors.fill: parent
+                    hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                    onClicked: root.startCaptureCustom()
+                }
+            }
+            WTextBox {
+                id: cmdField
+                width: parent.width
+                placeholder: Strings.t("hotkeys.command")
+                input.Keys.onTabPressed: root.promptFocusRow(2)
+                input.Keys.onEscapePressed: root.closePrompt()
+            }
+            Row {
+                spacing: 8
+                Pill {
+                    id: customPromptAddPill
+                    label: Strings.t("hotkeys.add")
+                    enabled: root.customChord !== "" && cmdField.text.trim() !== ""
+                    focused: root.promptMode === "custom" && root.promptFocusIndex === 2
+                    onClicked: root.addCustom(root.customChord, cmdField.text.trim())
+                }
+                Pill {
+                    id: customPromptCancelPill
+                    label: Strings.t("hotkeys.cancel")
+                    focused: root.promptMode === "custom" && root.promptFocusIndex === 3
+                    onClicked: root.closePrompt()
+                }
+            }
+        }
+    }
+
+    // ── Removal confirmation (above the prompt layer, tints the whole Hub card) ─
+    // One instance for both destructive lists — askKind says which, since the action
+    // key is "remove" either way.
+    HubConfirm {
+        id: confirm
+        anchors.fill: parent
+        surface: root.hubSurface
+        onChose: {
+            if (root.askKind === "custom") root.removeCustom(root.askArg);
+            else if (root.askKind === "profile") root.deleteProfile(root.askArg);
         }
     }
 }

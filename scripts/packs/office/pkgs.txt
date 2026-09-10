@@ -1,0 +1,42 @@
+# office bundle — packages (all in the official extra repo, no AUR).
+# One per line; '#' comments and blank lines ignored. Installed by w-pack via yay
+# (repo + AUR in one pass) as the build user; pacman fallback if yay is absent.
+#
+# Excluded on purpose: onlyoffice-bin (AUR-only .deb repackage, duplicates
+# LibreOffice), evince (the base system already ships zathura as the PDF/EPUB
+# viewer), calligra/gnumeric/abiword (suite duplicates), calibre (e-library
+# management — a different direction), gImageReader/tesseract (OCR — not the
+# everyday core). Spell-check dictionaries are not listed either: w-langpack
+# already owns hunspell-<lang> for the system locale and LibreOffice reads
+# /usr/share/hunspell natively.
+
+libreoffice-fresh     # Writer/Calc/Impress/Draw/Math, feature branch (26.x) —
+                      # matches W's rolling base. Ships the en-US UI built in
+                      # (provides libreoffice-en-US); other UI languages are
+                      # added per system locale by setup.sh. GTK3 VCL backend
+                      # pinned via /etc/w/env.d/office.sh so the suite rides the
+                      # w-style gtk/appearance axes instead of Kvantum.
+ttf-liberation        # metric-compatible replacements for Arial / Times New
+                      # Roman / Courier New. Arch builds LibreOffice
+                      # --without-fonts, so a docx authored on Windows renders
+                      # with broken layout unless these are present.
+ttf-carlito           # metric-compatible replacement for Calibri — the default
+                      # font of every modern .docx, same story as above.
+
+pdfarranger           # merge / split / reorder / rotate / crop PDF pages
+                      # (GTK3+python-pikepdf; auto-themed by the w-style gtk
+                      # axis). Viewing is already covered by base-system
+                      # zathura — this is the "change the pages" half.
+xournalpp             # PDF annotation + handwriting notetaking with stylus
+                      # support (GTK3; auto-themed). The paper-margin companion
+                      # to zathura's reading and pdfarranger's page surgery.
+
+obsidian              # markdown knowledge base on local folders of plain text
+                      # files — vaults stay user data. Official extra package
+                      # (freeware, LicenseRef-Obsidian — see meta.conf). Base
+                      # theme "adaptive" follows the system colour scheme, which
+                      # W's appearance axis serves via the portal.
+
+gst-plugins-base-libs # multimedia content embedded in Impress presentations
+                      # (a documented LibreOffice optdep; nothing in the W base
+                      # pulls it in).

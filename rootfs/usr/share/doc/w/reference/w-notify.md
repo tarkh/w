@@ -5,7 +5,7 @@ order: 0
 summary: Control desktop notifications — Do Not Disturb, history, per-app mute.
 ---
 
-`w-notify` — Control desktop notifications — Do Not Disturb, history, per-app mute..
+`w-notify` — Control desktop notifications — Do Not Disturb, history, per-app mute.
 
 ## Usage
 

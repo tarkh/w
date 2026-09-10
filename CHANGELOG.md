@@ -8,6 +8,80 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.9.0
+
+- **W speaks Russian.** Choose Russian as the system language and everything W
+  draws itself follows: the desktop shell and the login screen, the Hub, every
+  notification the W tools send, the W entries in the launcher (searchable in
+  Cyrillic), the built-in help of all 36 `w-*` commands, the `w-info` catalog and
+  the offline reference in **Hub → System → Documentation** — 36 reference pages
+  now exist in Russian next to the guides translated in v0.8.0. What the commands
+  print to the terminal stays English, and so do third-party programs that ship
+  no translation. Any other language, or `LANG=C`, falls back to English.
+
+- **A language is more than `LANG`: new `w-langpack`.** It knows what a locale
+  needs beyond the setting itself — Firefox in that language, a spell-check
+  dictionary, translated man pages, a console font that can draw it — and
+  installs what is missing (`w-langpack plan`, `sudo w-langpack apply`).
+  Switching language with `w-locale set` or in **Hub → Input** sets the font at
+  once and offers the packages. The profile also runs on every update, so the
+  next `w-sync update` fills in what your current locale is missing.
+
+- **No more empty boxes.** The Noto font family (about 415 MiB: all scripts,
+  CJK, colour emoji) is now part of the base system, so a Japanese web page, a
+  Telegram emoji or a Hindi filename renders instead of showing tofu — and
+  Japanese renders with Japanese glyphs, not Korean ones. Installed machines
+  get the fonts on the next update.
+
+- **Fixed: an update could reset the text-console keymap to US.** The keymap
+  chosen at install lives in `/etc/vconsole.conf`, and since v0.1.0 every
+  update that touched the system files overwrote it with the stock `us`. The
+  file is now yours; updates leave it alone. Check with `cat /etc/vconsole.conf`
+  and, if it says `us` and you chose something else, set it back with
+  `localectl set-keymap <map>`.
+
+- **Bundles can be removed.** `sudo w-pack remove <bundle>` is the declared
+  reverse of `install`: it takes W's own wiring out — services, managed config
+  (backed up first), theming, AI skill — and leaves the packages unless you add
+  `--packages`. Your data is never deleted, and paths that hold any are listed.
+  `w-pack unsetup <bundle>` does the same for your own account. Until now
+  removing a bundle's packages by hand did not stick: the next `w-sync update`
+  put the bundle back — for `ai-extra` that meant the service and a 635 MB
+  model. The **Packs** panel in the Hub has a **Remove** button for both; the
+  irreversible package half is deliberately terminal-only.
+
+- **New bundle: office.** LibreOffice (with the metric-compatible fonts that
+  keep Windows-authored documents laid out as intended), pdfarranger and
+  xournalpp for cutting up and annotating PDFs, and Obsidian for notes — the
+  first freeware pick in a bundle, fetched by your own pacman from Arch's
+  servers, never shipped in the ISO. Obsidian gets the W colour theme as a
+  snippet in each of your vaults, switched on unless you have chosen your own
+  snippets. A checkbox in the installer, or `sudo w-pack install office`.
+
+- **The Hub asks before it deletes anything.** One confirmation dialog for every
+  destructive action — a theme, a layout, a hotkey or profile, an AI profile, a
+  bundle — that tells you what actually happens (which theme takes over, that
+  keys stay in the keyring) and starts on *Cancel*, so a stray Enter cannot
+  confirm. The notification history is grouped by day.
+
+- **`w-term --hold -e <command>`** keeps the terminal window open after the
+  command finishes and asks before closing — for commands whose output is the
+  point. `w-locale list --names` prints each language's own name and country;
+  the Hub language picker shows them.
+
+- **Fixed: reference pages.** Every page's subtitle ended in a double full stop
+  since the reference appeared; the `w-session` summary was cut off at a comma
+  in the catalog and the docs; the `w-style` page was missing the second half
+  of its help, examples included.
+
+- **`ll` and `la` no longer print a header row.** In `eza` that `-h` is
+  `--header`, not human-readable sizes, and the header was the one English line
+  left in a listing on a translated system. Existing `~/.zshrc` files are
+  untouched; the change reaches you on a new install or with `w-reset shell`.
+
+- **New ISO:** the language menu shows names in their own script («Русский»,
+  not «Russkiy»). Installed systems are not affected.
+
 ## v0.8.0
 
 - **The documentation now covers every Hub panel — and speaks Russian.** Six new

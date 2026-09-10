@@ -5,7 +5,7 @@ order: 0
 summary: Capture the screen — region/window/output, annotate/copy/save.
 ---
 
-`w-screenshot` — Capture the screen — region/window/output, annotate/copy/save..
+`w-screenshot` — Capture the screen — region/window/output, annotate/copy/save.
 
 ## Usage
 

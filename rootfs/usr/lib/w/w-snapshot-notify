@@ -47,12 +47,18 @@ command -v notify-send &>/dev/null || exit 0
 #
 # The icon is a THEME NAME, not a path, so it follows the active icon theme instead of
 # pinning one file — `document-revert` is Papirus's revert arrow.
+# The action IDs (`default`, `restore`) are protocol, never translated — only the
+# button LABELS and the two text lines are. Catalog: i18n/scripts.json.
+# shellcheck source=w-i18n-lib.sh
+source /usr/lib/w/w-i18n-lib.sh
+restore_label="$(w_t snapshot.restore)"
+
 action="$(notify-send --urgency=critical --app-name="W" --expire-time=0 \
   --icon=document-revert \
-  --action="default=Restore this snapshot" \
-  --action="restore=Restore this snapshot" \
-  "Running from snapshot #${booted_snapshot}" \
-  "Recovery boot — the system is read-only and changes outside /home are lost." \
+  --action="default=$restore_label" \
+  --action="restore=$restore_label" \
+  "$(w_t snapshot.title "$booted_snapshot")" \
+  "$(w_t snapshot.body)" \
   2>/dev/null)" || exit 0
 
 [[ "$action" == "default" || "$action" == "restore" ]] || exit 0

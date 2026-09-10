@@ -14,7 +14,9 @@
 // notification daemon that writes it lives in this same process, so a FileView watch
 // is both cheaper and more immediate than `w-notify history`. Entries are records,
 // not live notifications: their actions died with the popup, so rows are read-only
-// by design (see quickshell-notifications.md).
+// by design (see quickshell-notifications.md). The list is grouped by day — a divider
+// carries the date, a row carries only HH:mm — so the time column has one fixed width
+// for every entry no matter how old.
 //
 // Loaded via HubRegistry as a subdir file → shared components via `import qs.modules.hub`.
 import QtQuick
@@ -61,6 +63,10 @@ Item {
     }
 
     readonly property int historyShown: 30
+    // Named once: the Repeater's model AND the source each row reaches back into for
+    // its "is this a new day?" comparison, which must be the same array (re-slicing per
+    // row would rebuild it on every delegate).
+    readonly property var historyList: root.history.slice(0, root.historyShown)
 
     // Apps worth offering a mute switch for: everything seen recently, plus everything
     // already muted (so an app can be un-muted after it went quiet and aged out).
@@ -161,12 +167,41 @@ Item {
         return Strings.t("notif.on");
     }
 
-    function stamp(ts) {
+    // ── History stamps ─────────────────────────────────────────────────────────────
+    // A row carries the time and NOTHING else; the date rides a divider above each
+    // day's group. This is not only tidier — it is what makes the left column a fixed
+    // width the text can be anchored to. The previous single stamp switched to
+    // "dd.MM HH:mm" for anything older than today and overran its own column (a Text
+    // paints past its width, it does not shrink), sliding under the summary beside it.
+    function hhmm(ts) { return Qt.formatTime(new Date(ts * 1000), "HH:mm"); }
+    // Calendar-day identity, built from the Date's own fields rather than a formatter —
+    // it is only ever compared to another key, so it must be unambiguous, not pretty.
+    function dayKey(ts) {
+        const d = new Date(ts * 1000);
+        return d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate();
+    }
+    // Month names come from Qt.locale(), never from our dictionary (core/Strings.qml) —
+    // only "Today"/"Yesterday" are ours. The year shows only when it isn't this one.
+    //
+    // Through `Qt.locale().toString()`, NOT Qt.formatDate(): the latter renders textual
+    // fields (MMMM, ddd) with C-locale English names whatever the system locale is —
+    // measured on a ru_RU session, where it answered "10 September". Same idiom as
+    // Calendar.qml, which reaches month and weekday names the same way.
+    function dayLabel(ts) {
         const d = new Date(ts * 1000);
         const now = new Date();
-        const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
-            && d.getDate() === now.getDate();
-        return sameDay ? Qt.formatTime(d, "HH:mm") : Qt.formatDateTime(d, "dd.MM HH:mm");
+        // Yesterday from calendar fields, not "now minus 86400s": JS normalises a day-0
+        // or negative date across the month and year boundary, and no arithmetic on a
+        // timestamp has to be right about a DST day that is 23 or 25 hours long.
+        const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+        if (root.sameDay(d, now)) return Strings.t("notif.today");
+        if (root.sameDay(d, y))   return Strings.t("notif.yesterday");
+        return Qt.locale().toString(d, d.getFullYear() === now.getFullYear() ? "d MMMM"
+                                                                            : "d MMMM yyyy");
+    }
+    function sameDay(a, b) {
+        return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth()
+            && a.getDate() === b.getDate();
     }
 
     // ── Row components ─────────────────────────────────────────────────────────────
@@ -249,51 +284,126 @@ Item {
         }
     }
 
-    // History entry: a record, not a live notification — no click target on purpose.
-    component HistoryRow: Item {
-        id: hRow
-        required property var entry
+    // Width of the time column, measured rather than guessed: "00:00" in the row's own
+    // font plus a gutter. A hardcoded 46 is exactly what broke this list before, and a
+    // themed font change would have broken it again — TextMetrics lives outside the item
+    // tree, so reading it here cannot feed back into any layout it depends on.
+    TextMetrics {
+        id: hTimeMetrics
+        font.family: Fonts.family
+        font.pixelSize: 12
+        text: "00:00"
+    }
+    readonly property real timeColW: Math.ceil(hTimeMetrics.width) + 10
 
-        width: parent.width
-        implicitHeight: 40
+    // Day divider between history groups. Same shape as HubSection (muted caption +
+    // hairline rule) but deliberately one step quieter — no caps, no DemiBold — so it
+    // reads as a subdivision of "History" rather than a second section beside it.
+    component HistoryDay: Item {
+        id: hDay
+        required property string label
 
-        readonly property bool critical: (hRow.entry.urgency || "") === "critical"
+        // Asymmetric on purpose: 6px under the caption, and the 12px the enclosing
+        // Column already spaces rows by plus another 6 above it. A group label that sits
+        // equally far from both neighbours reads as belonging to neither.
+        implicitHeight: dayLbl.implicitHeight + 12
 
         Text {
-            id: hTime
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            width: 46
-            text: root.stamp(hRow.entry.ts || 0)
+            id: dayLbl
+            anchors { left: parent.left; top: parent.top; topMargin: 6 }
+            text: hDay.label
             color: Colors.muted
-            font.family: Fonts.family; font.pixelSize: 12
+            font.family: Fonts.family
+            font.pixelSize: 11
+            font.letterSpacing: 0.3
         }
-        Column {
+        Rectangle {
             anchors {
-                left: hTime.right; leftMargin: 8
+                left: dayLbl.right; leftMargin: 8
                 right: parent.right
-                verticalCenter: parent.verticalCenter
+                verticalCenter: dayLbl.verticalCenter
             }
-            spacing: 2
+            height: 1
+            color: Colors.border
+            opacity: 0.3
+        }
+    }
+
+    // History entry: a record, not a live notification — no click target on purpose.
+    // Carries its own day divider instead of the panel building a second, interleaved
+    // model: the entries are a plain JS array, so "am I the first of my day?" is one
+    // comparison against the previous element and needs no grouping pass.
+    component HistoryRow: Column {
+        id: hRow
+        required property var entry
+        required property var prevEntry      // null for the first row
+
+        width: parent.width
+        spacing: 0
+
+        readonly property bool critical: (hRow.entry.urgency || "") === "critical"
+        readonly property bool startsDay: !hRow.prevEntry
+            || root.dayKey(hRow.entry.ts || 0) !== root.dayKey(hRow.prevEntry.ts || 0)
+
+        // A Column skips invisible children outright (no slot, no spacing), so this
+        // needs no height juggling to disappear mid-group.
+        HistoryDay {
+            width: parent.width
+            visible: hRow.startsDay
+            label: root.dayLabel(hRow.entry.ts || 0)
+        }
+
+        Item {
+            width: parent.width
+            implicitHeight: 40
+
             Text {
-                width: parent.width
-                text: hRow.entry.summary || ""
-                color: hRow.critical ? Colors.dangerBorder : Colors.text
-                font.family: Fonts.family; font.pixelSize: 13
-                font.weight: hRow.critical ? Font.Medium : Font.Normal
-                elide: Text.ElideRight
-                maximumLineCount: 1
-            }
-            Text {
-                width: parent.width
-                // The dot marks what DND or a mute kept off the screen — the whole point
-                // of recording suppressed alerts is being able to see them here later.
-                text: (hRow.entry.suppressed ? "· " : "") + (hRow.entry.app || "")
-                      + ((hRow.entry.body || "").length > 0 ? "  —  " + hRow.entry.body : "")
+                id: hTime
+                anchors.left: parent.left
+                // Aligned to the summary's baseline, not the row's middle: the entry is
+                // two lines of different sizes, and a centred stamp floats between them.
+                // Anchored to the text COLUMN, whose baseline is republished below as the
+                // summary's — an anchor reaches only a sibling or the parent, and hSummary
+                // is a nephew of this stamp.
+                anchors.baseline: hText.baseline
+                width: root.timeColW
+                text: root.hhmm(hRow.entry.ts || 0)
                 color: Colors.muted
-                font.family: Fonts.family; font.pixelSize: 11
-                elide: Text.ElideRight
-                maximumLineCount: 1
+                font.family: Fonts.family; font.pixelSize: 12
+            }
+            Column {
+                id: hText
+                anchors {
+                    left: hTime.right; leftMargin: 8
+                    right: parent.right
+                    verticalCenter: parent.verticalCenter
+                }
+                spacing: 2
+                // An Item's baseline is `y + baselineOffset`, and a Column's own offset is
+                // 0 by default. Republishing the summary's (it is the first child, so its
+                // y is 0) gives the stamp beside this Column a real baseline to anchor to.
+                baselineOffset: hSummary.baselineOffset
+                Text {
+                    id: hSummary
+                    width: parent.width
+                    text: hRow.entry.summary || ""
+                    color: hRow.critical ? Colors.dangerBorder : Colors.text
+                    font.family: Fonts.family; font.pixelSize: 13
+                    font.weight: hRow.critical ? Font.Medium : Font.Normal
+                    elide: Text.ElideRight
+                    maximumLineCount: 1
+                }
+                Text {
+                    width: parent.width
+                    // The dot marks what DND or a mute kept off the screen — the whole point
+                    // of recording suppressed alerts is being able to see them here later.
+                    text: (hRow.entry.suppressed ? "· " : "") + (hRow.entry.app || "")
+                          + ((hRow.entry.body || "").length > 0 ? "  —  " + hRow.entry.body : "")
+                    color: Colors.muted
+                    font.family: Fonts.family; font.pixelSize: 11
+                    elide: Text.ElideRight
+                    maximumLineCount: 1
+                }
             }
         }
     }
@@ -481,11 +591,15 @@ Item {
                 onClicked: root.run(["w-notify", "history", "clear"])
             }
             Repeater {
-                model: root.history.slice(0, root.historyShown)
+                model: root.historyList
                 HistoryRow {
                     required property var modelData
+                    required property int index
                     width: col.width
                     entry: modelData
+                    // The row draws its own day divider, which needs the entry above it;
+                    // the model is a plain array, so it is one index back.
+                    prevEntry: index > 0 ? root.historyList[index - 1] : null
                 }
             }
         }

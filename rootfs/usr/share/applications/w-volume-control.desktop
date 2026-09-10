@@ -1,6 +1,8 @@
 [Desktop Entry]
 Name=Volume Control
+Name[ru]=Громкость
 Comment=W Linux audio control
+Comment[ru]=Управление звуком W Linux
 # NB: no `sh -c` — a .desktop Exec does not treat ' as a quote character, so single
 # quotes are stripped and the shell then chokes on the bare `(`. See quickshell-hub.md.
 Exec=hyprctl dispatch "hl.dsp.global(\"quickshell:volumecontrol\")"
@@ -8,3 +10,4 @@ Icon=audio-volume-high
 Type=Application
 Categories=AudioVideo;Audio;
 Keywords=volume;audio;sound;pipewire;mixer;
+Keywords[ru]=громкость;звук;аудио;микшер;динамик;volume;audio;sound;pipewire;mixer;

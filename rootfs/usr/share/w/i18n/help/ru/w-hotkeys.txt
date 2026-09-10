@@ -1,0 +1,31 @@
+Использование: w-hotkeys <команда> [аргументы]
+
+Info: Управление горячими клавишами Hyprland — профили, каталог, свои бинды.
+
+Команды:
+  status [--porcelain]        Активный профиль + действующие бинды
+  catalog [--porcelain]       Список токенов (токен / категория / дефолт / аккорд / источник / аккорд п
+  profiles [--porcelain]      Список профилей (встроенные + свои), активный помечен
+  use <профиль>               Сменить активный профиль (сразу и постоянно)
+  set <токен> <аккорд>        Переназначить действие (пустой аккорд "" снимает бинд)
+  reset <токен|--all>         Вернуть токен(ы) к аккорду активного профиля
+  custom [--porcelain]        Список своих действий (аккорд → команда)
+  custom-add <аккорд> <exec>  Добавить своё действие (любой аккорд → команда шелла)
+  custom-rm <аккорд>          Удалить своё действие по его аккорду
+  profile-new <имя> [--from <профиль|current>]    Сохранить свой профиль
+  profile-rm <имя>            Удалить свой профиль
+  help                        Показать эту справку
+
+Активный фрагмент: $FRAG
+Каталог:           $TOKENS      Свои профили: $USER_PROFILES
+
+Коды выхода: 0 успех · 1 ошибка выполнения/проверки · 2 ошибка вызова
+
+Примеры:
+  w-hotkeys use i3-vim
+  w-hotkeys set launcher "SUPER + Space"
+  w-hotkeys set launcher ""            # снять бинд
+  w-hotkeys reset launcher
+  w-hotkeys custom-add "SUPER + C" "gnome-calculator"
+  w-hotkeys custom-rm "SUPER + C"
+  w-hotkeys profile-new mine --from current

@@ -102,8 +102,15 @@ chk_publish() {
   (( dead )) && echo "  → remove the stale rule(s) from $EXCLUDE_FILE."
 
   # 3. The gate itself must stay published, or the public check.sh calls an
-  #    undefined chk_publish.
-  if ! printf '%s\n' "${published[@]}" | grep -qx "scripts/check/publish.sh"; then
+  #    undefined chk_publish. Matched in-shell rather than `printf … | grep -qx`:
+  #    grep -q exits on its first match and closes the pipe, so the writer takes
+  #    SIGPIPE (141) on the paths it had not flushed yet — under pipefail that is
+  #    the pipeline's status and reads as "excluded" in ~2% of runs.
+  local self="scripts/check/publish.sh" kept=0
+  for f in "${published[@]}"; do
+    if [[ "$f" == "$self" ]]; then kept=1; break; fi
+  done
+  if (( ! kept )); then
     echo "  scripts/check/publish.sh is excluded — the public check.sh would break"
     echo "  (check.sh sources every suite and SUITES lists 'publish')."
     rc=1

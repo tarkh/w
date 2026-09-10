@@ -48,7 +48,7 @@ Item {
     // permanently 8px shorter than its own contentHeight. menuLayer.menuBottom grows
     // the card under an open downward dropdown (0 when closed/flipped up).
     implicitHeight: Math.max(col.implicitHeight + 8, menuLayer.menuBottom,
-                              root.promptOpen ? 8 + promptCard.implicitHeight : 0)
+                              promptLayer.contentBottom, confirm.contentBottom)
 
     // The shared pill (core/WPill.qml) with the Hub's outline width — Use/Delete/
     // Create/Cancel, plus the flat "based on" chips (`flat`+`selected`). Was a
@@ -121,6 +121,21 @@ Item {
         rmProc.running = true;
     }
     Process { id: rmProc; onExited: root.reload() }
+
+    // Both the row's × and HubNavKeys.del route through the Hub's shared confirmation.
+    // The note is the part people actually need: the API key does NOT go with the
+    // profile (it is provider-scoped, in the keyring), and removing the profile in use
+    // does not tear down the running configuration.
+    property string askName: ""
+    function askRemoveProfile(name) {
+        root.askName = name;
+        confirm.ask({
+            title:   Strings.t("hub.aiProfileRmTitle").replace("%n%", name),
+            message: Strings.t("hub.aiProfileRmBody"),
+            note:    Strings.t("hub.aiProfileRmKeeps"),
+            actions: [{ key: "remove", label: Strings.t("hub.aiProfileRm") }],
+        });
+    }
 
     // ── Provider API keys (gnome-keyring via `w-ai key`) ─────────────────────────────
     // Keys are provider-scoped and global (attribute w-ai-provider=<provider>), shared
@@ -246,6 +261,11 @@ Item {
     }
 
     // ── New-profile prompt ────────────────────────────────────────────────────────
+    // The Hub card, handed over by Hub.qml on load — the prompt and the removal
+    // confirmation dim it, and need its real rectangle and corner radius to do that
+    // without square corners poking out.
+    property Item hubSurface: null
+
     property bool promptOpen: false
     property string newFrom: ""       // "" = blank template
     property string pendingNewName: ""
@@ -458,9 +478,9 @@ Item {
     }
 
     // ── New-profile prompt: separate local roving list (nameField → "based on" pills
-    // → Create/Cancel), guarded ahead of the main switch below — same shape as
-    // AppearancePanel's pendingDelete-armed guard hijacking Escape/Backspace locally
-    // instead of the panel's usual meaning.
+    // → Create/Cancel), guarded ahead of the main switch below — same shape as every
+    // modal guard in the Hub (HubConfirm's included), hijacking Escape/Backspace
+    // locally instead of leaving them the panel's usual meaning.
     property int promptFocusIndex: 0
     readonly property int promptTailStart: root.profiles.length > 0 ? 2 + root.profiles.length : 1
     readonly property int promptMaxIndex: root.promptTailStart + 1
@@ -470,10 +490,10 @@ Item {
         else root.forceActiveFocus();   // real Qt focus back on root so its Keys.onPressed keeps receiving events
     }
     function handlePromptKey(e) {
-        // Backspace closes the prompt too (not just Escape) — same reasoning as
-        // AppearancePanel's pendingDelete guard: without intercepting it here, the
-        // fixed "back" alias bubbles to Hub.qml's card and pops the WHOLE panel
-        // while the prompt is still visually open on top of it.
+        // Backspace closes the prompt too (not just Escape) — same reasoning as the
+        // confirmation's guard above: without intercepting it here, the fixed "back"
+        // alias bubbles to Hub.qml's card and pops the WHOLE panel while the prompt is
+        // still visually open on top of it.
         if (e.key === HubNavKeys.back || e.key === Qt.Key_Escape || e.key === Qt.Key_Backspace) {
             root.closePrompt(); e.accepted = true; return;
         }
@@ -508,6 +528,10 @@ Item {
 
     focus: true
     Keys.onPressed: (e) => {
+        // The confirmation is checked ahead of the prompt and the text-edit gate: it is
+        // the topmost surface, and while it is up it owns Escape/Backspace too
+        // (Ф-Keyboard gotcha 14).
+        if (confirm.open) { confirm.handleKey(e); return; }
         if (root.promptOpen) { root.handlePromptKey(e); return; }
         if (root.editingText) return;
         const cd = root.contentDesc;
@@ -519,10 +543,9 @@ Item {
             root.focusRow(root.focusIndex - 1); e.accepted = true; return;
         case HubNavKeys.del: {
             const d = cd[root.focusIndex];
-            // Mirrors the mouse's × exactly — that click removes the profile with no
-            // confirm step either, so keyboard doesn't invent a two-step arm/confirm
-            // gotcha #14 doesn't apply here the way it does to AppearancePanel's tiles.
-            if (d && d.field === "header") root.removeProfile(d.name);
+            // Mirrors the mouse's × exactly — both raise the shared confirmation, so
+            // there is no keyboard-only two-step arm/confirm to invent.
+            if (d && d.field === "header") root.askRemoveProfile(d.name);
             e.accepted = true;
             return;
         }
@@ -700,7 +723,7 @@ Item {
                                     id: delMa
                                     anchors.fill: parent
                                     hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                                    onClicked: root.removeProfile(prow.modelData.name)
+                                    onClicked: root.askRemoveProfile(prow.modelData.name)
                                 }
                             }
                         }
@@ -1113,102 +1136,103 @@ Item {
     HubDropdown { id: menuLayer; anchors.fill: parent; flipUp: true; returnFocusTo: root }
 
     // ── New-profile prompt ─────────────────────────────────────────────────────────
-    Item {
+    // Chrome (tint over the Hub card, surface card, outside-click, entrance) is
+    // HubPrompt's; what stays here is the form and its own local roving list. promptCol
+    // remains a panel-declared Column rather than dissolving into HubPrompt's, because
+    // it carries the form's validation state (`taken` / `nameOk`) that its own children
+    // and root.handlePromptKey read by that id.
+    HubPrompt {
+        id: promptLayer
         anchors.fill: parent
-        z: 101
-        visible: root.promptOpen
-        MouseArea { anchors.fill: parent; onClicked: root.closePrompt() }
+        surface: root.hubSurface
+        open: root.promptOpen
+        onDismissed: root.closePrompt()
 
-        Rectangle {
-            id: promptCard
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: 8
-            width: parent.width - 24
-            radius: Geometry.radiusSm
-            color: Colors.surface
-            border.width: HubConfig.border; border.color: Colors.border
-            implicitHeight: promptCol.implicitHeight + 24
-            MouseArea { anchors.fill: parent }
+        Column {
+            id: promptCol
+            width: parent.width
+            spacing: 8
+            readonly property bool taken: root.profiles.some(p => p.name === nameField.text)
+            readonly property bool nameOk: /^[a-z0-9-]+$/.test(nameField.text) && !taken
 
-            Column {
-                id: promptCol
-                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
-                spacing: 8
+            Text {
+                text: Strings.t("hub.aiNew")
+                color: Colors.text; font.family: Fonts.family; font.pixelSize: 14; font.weight: Font.Medium
+            }
+            WTextBox {
+                id: nameField
+                width: parent.width
+                onAccepted: if (promptCol.nameOk) root.createProfile(text)
+                // Tab/Esc hand focus to the prompt's own local roving list
+                // (root.handlePromptKey) instead of typing a tab char or bubbling
+                // Esc up to Hub.back() — same reasoning as every other field wrapper
+                // in this file, and the reason Escape closes the prompt locally too.
+                input.Keys.onTabPressed: root.promptFocusRow(1)
+                input.Keys.onEscapePressed: root.closePrompt()
+            }
+            Text {
+                width: parent.width
+                text: promptCol.taken ? Strings.t("hub.aiNameTaken") : Strings.t("hub.aiNameHint")
+                color: promptCol.taken ? Colors.dangerBorder : Colors.muted
+                font.family: Fonts.family; font.pixelSize: 11
+            }
 
-                readonly property bool taken: root.profiles.some(p => p.name === nameField.text)
-                readonly property bool nameOk: /^[a-z0-9-]+$/.test(nameField.text) && !taken
-
-                Text {
-                    text: Strings.t("hub.aiNew")
-                    color: Colors.text; font.family: Fonts.family; font.pixelSize: 14; font.weight: Font.Medium
+            Text {
+                visible: root.profiles.length > 0
+                text: Strings.t("hub.aiNewFrom")
+                color: Colors.muted; font.family: Fonts.family; font.pixelSize: 11
+            }
+            Flow {
+                visible: root.profiles.length > 0
+                width: parent.width
+                spacing: 6
+                Pill {
+                    id: blankPill
+                    flat: true
+                    label: Strings.t("hub.aiNewBlank")
+                    selected: root.newFrom === ""
+                    focused: root.promptOpen && root.promptFocusIndex === 1
+                    onClicked: root.newFrom = ""
                 }
-                WTextBox {
-                    id: nameField
-                    width: parent.width
-                    onAccepted: if (promptCol.nameOk) root.createProfile(text)
-                    // Tab/Esc hand focus to the prompt's own local roving list
-                    // (root.handlePromptKey) instead of typing a tab char or bubbling
-                    // Esc up to Hub.back() — same reasoning as every other field wrapper
-                    // in this file, and the reason Escape closes the prompt locally too.
-                    input.Keys.onTabPressed: root.promptFocusRow(1)
-                    input.Keys.onEscapePressed: root.closePrompt()
-                }
-                Text {
-                    width: parent.width
-                    text: promptCol.taken ? Strings.t("hub.aiNameTaken") : Strings.t("hub.aiNameHint")
-                    color: promptCol.taken ? Colors.dangerBorder : Colors.muted
-                    font.family: Fonts.family; font.pixelSize: 11
-                }
-
-                Text {
-                    visible: root.profiles.length > 0
-                    text: Strings.t("hub.aiNewFrom")
-                    color: Colors.muted; font.family: Fonts.family; font.pixelSize: 11
-                }
-                Flow {
-                    visible: root.profiles.length > 0
-                    width: parent.width
-                    spacing: 6
-                    Pill {
-                        id: blankPill
+                Repeater {
+                    id: basedOnRepeater
+                    model: root.profiles
+                    delegate: Pill {
+                        required property var modelData
+                        required property int index
                         flat: true
-                        label: Strings.t("hub.aiNewBlank")
-                        selected: root.newFrom === ""
-                        focused: root.promptOpen && root.promptFocusIndex === 1
-                        onClicked: root.newFrom = ""
-                    }
-                    Repeater {
-                        id: basedOnRepeater
-                        model: root.profiles
-                        delegate: Pill {
-                            required property var modelData
-                            required property int index
-                            flat: true
-                            label: modelData.name
-                            selected: root.newFrom === modelData.name
-                            focused: root.promptOpen && root.promptFocusIndex === (2 + index)
-                            onClicked: root.newFrom = modelData.name
-                        }
-                    }
-                }
-
-                Row {
-                    spacing: 8
-                    Pill {
-                        id: createPill
-                        label: Strings.t("hub.aiCreate")
-                        enabled: promptCol.nameOk
-                        focused: root.promptOpen && root.promptFocusIndex === root.promptTailStart
-                        onClicked: root.createProfile(nameField.text)
-                    }
-                    Pill {
-                        id: cancelPill
-                        label: Strings.t("hub.cancel")
-                        focused: root.promptOpen && root.promptFocusIndex === root.promptTailStart + 1
-                        onClicked: root.closePrompt()
+                        label: modelData.name
+                        selected: root.newFrom === modelData.name
+                        focused: root.promptOpen && root.promptFocusIndex === (2 + index)
+                        onClicked: root.newFrom = modelData.name
                     }
                 }
             }
+
+            Row {
+                spacing: 8
+                Pill {
+                    id: createPill
+                    label: Strings.t("hub.aiCreate")
+                    enabled: promptCol.nameOk
+                    focused: root.promptOpen && root.promptFocusIndex === root.promptTailStart
+                    onClicked: root.createProfile(nameField.text)
+                }
+                Pill {
+                    id: cancelPill
+                    label: Strings.t("hub.cancel")
+                    focused: root.promptOpen && root.promptFocusIndex === root.promptTailStart + 1
+                    onClicked: root.closePrompt()
+                }
+            }
         }
+    }
+
+    // ── Removal confirmation (above the prompt layer, tints the whole Hub card) ─
+    HubConfirm {
+        id: confirm
+        anchors.fill: parent
+        surface: root.hubSurface
+        onChose: root.removeProfile(root.askName)
     }
 }

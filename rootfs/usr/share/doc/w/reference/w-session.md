@@ -2,18 +2,17 @@
 title: w-session
 section: reference
 order: 0
-summary: Remember the graphical session (windows, workspaces, split layout) and
+summary: Remember and restore the graphical session (windows, workspaces, split layout).
 ---
 
-`w-session` — Remember the graphical session (windows, workspaces, split layout) and.
+`w-session` — Remember and restore the graphical session (windows, workspaces, split layout).
 
 ## Usage
 
 ```
 Usage: w-session <command> [args]
 
-Info: Remember the graphical session (windows, workspaces, split layout) and
-      put it back at the next login.
+Info: Remember and restore the graphical session (windows, workspaces, split layout).
 
 Commands:
   status [--porcelain]        Show the mode and what is currently saved

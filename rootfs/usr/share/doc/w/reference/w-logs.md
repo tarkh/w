@@ -5,7 +5,7 @@ order: 0
 summary: Set how long W keeps logs (journal + /var/log + W's own logs), one policy.
 ---
 
-`w-logs` — Set how long W keeps logs (journal + /var/log + W's own logs), one policy..
+`w-logs` — Set how long W keeps logs (journal + /var/log + W's own logs), one policy.
 
 ## Usage
 
