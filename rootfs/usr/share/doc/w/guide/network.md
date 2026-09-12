@@ -5,7 +5,7 @@ order: 7
 summary: Connecting to Wi-Fi and ethernet, the machine's name, encrypted DNS, and switching the firewall zone for an untrusted network.
 sources:
   - path: .claude/library/security.md
-    sha256: 46eddc9d5ae01864fb5551e3a55e97e55855193aaaaa16c99b3556fa8aa66e8c
+    sha256: 00644ba70977365d102fba6b571108558d7d8eec0f1ad422253b12e3e1533ddd
   - path: .claude/library/quickshell-bar.md
     sha256: 535ef9874fedc06b73a9f2224283306e498bbdcde4d892a292f5b7b4c9263e6c
 ---
@@ -53,6 +53,11 @@ leaving you unable to open a page on a hotel network that mangles DNS. Choose
 
 DNS is one setting for the whole machine — there is no per-user resolver. From a
 terminal it is `w-dns`.
+
+If every page takes ten seconds to even start loading while the connection itself
+is fine, the encrypted resolver is what is stuck: `w-dns off` hands DNS back to
+the network right away (unencrypted), and `w-dns status` shows what the machine
+is currently using.
 
 On a machine managed by someone else, either control may show *Set by site
 policy*; then it is pinned centrally and there is no local way around it.

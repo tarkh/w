@@ -10,7 +10,7 @@ description: >-
   turning off blur/animations/moving the bar for just one user.
 sources:
   - path: .claude/library/w-theme.md
-    sha256: 7696febbee08eeb6447e61aa53d84edd476a47fd1daf53e38069ce1b71e6bbe4
+    sha256: 8129831ee50d35c6ee17608fa1962b5437bb115341ed2b6eb846f04fb2963587
   - path: .claude/library/w-style.md
     sha256: 7350147300f509e5f4d1f89b8ee03506f48061a96b72011dc63135275ef2717d
   - path: .claude/library/w-wallpaper.md
@@ -200,6 +200,10 @@ fill a panel of that size. The boot splash uses it so the brand mark keeps one s
 across the splash, the login screen and the desktop: the logo is rendered for the panel
 when the initramfs is built, so **a monitor swap or a resolution change wants a
 `sudo w-style apply plymouth`** to re-render it (a theme switch does this anyway).
+The mark's colour follows the theme too: a theme without its own `logo/` inherits the
+brand vector tinted in `W_PLYMOUTH_LOGO` / `W_GRUB_LOGO` (the accent container; light
+themes use the accent itself), while a theme that ships `logo/W-logo.svg` owns the mark
+verbatim, colour included.
 
 ## `w-appearance` — per-user overrides that beat the theme
 

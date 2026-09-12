@@ -48,14 +48,20 @@ scrub_install_conf() {
 # uses, so progress_modules drives the gauge by bundle count; `w-pack install`
 # does packages + config + w-style + setup per bundle (deps resolved internally).
 # Runs only after apply --all succeeded — packs sit on top of a finished base.
+# Bundles are independent of each other, so one failing does not stop the rest
+# (a mirror timeout on the first bundle used to leave every later one untouched);
+# the phase still fails at the end, naming the bundles to retry by hand.
 run_packs() {
-  local sel b; read -ra sel <<< "$packs"
+  local sel b failed=(); read -ra sel <<< "$packs"
   local n=${#sel[@]} i=0
   for b in "${sel[@]}"; do
     i=$((i + 1))
     echo "@@WFB $i $n $b@@"
-    w-pack install "$b" || return 1
+    w-pack install "$b" || failed+=("$b")
   done
+  (( ${#failed[@]} == 0 )) && return 0
+  echo "w-firstboot: bundle(s) failed: ${failed[*]} — retry: sudo w-pack install <bundle>"
+  return 1
 }
 
 # Re-runs (manual `systemctl start` after a fix, or a stray unit left enabled)

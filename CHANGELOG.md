@@ -8,6 +8,36 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.13.0
+
+- **Fixed: DNS lookups timing out for 10+ seconds on some networks** — since
+  v0.1.0, and until now only on certain Wi-Fi/router combinations (seen on a
+  MacBook's Broadcom Wi-Fi behind a home router). W's resolver reaches its
+  DNS-over-TLS servers with TCP Fast Open, and on such paths those streams
+  complete the handshake and then silently drop every byte; about one in five
+  still worked, so the resolver never fell back to plain DNS and every lookup
+  simply hung — `pacman` reported *Resolving timed out* on every mirror, and
+  app bundles failed to install during first boot. TCP Fast Open is now off
+  system-wide (`/etc/sysctl.d/80-w-dns.conf`; nothing else on a W desktop uses
+  it client-side, and `w-kernel harden off` leaves it alone). Arrives with
+  `w-sync` and takes effect immediately, no reboot. The DNS step now also runs
+  a resolve probe after applying the policy and logs a warning if it fails.
+  The network guide and the on-box assistant describe the change.
+  **New installs additionally:** a failing app bundle at first boot no longer
+  cancels the ones after it — the failed ones are listed in the log and retried
+  on the next boot as before.
+
+- **The boot logo follows the theme's colour.** A theme without a `logo/` of
+  its own inherits W's brand mark and now gets it painted in the theme's accent
+  on both the Plymouth splash and the GRUB menu (the primary container colour
+  on dark themes, the primary colour itself on light ones, where the container
+  is too pale to read on the canvas). The built-in `w` theme renders
+  byte-for-byte as before. Themes generated with `w-theme new` from now on
+  carry the two new keys (`W_PLYMOUTH_LOGO`, `W_GRUB_LOGO`); a theme you
+  generated earlier keeps the plain mark until you rebuild its palette with
+  `w-theme edit <name>`. A theme that ships its own `logo/` is untouched. The
+  theming guide and the on-box assistant know about it.
+
 ## v0.12.0
 
 - **The scratchpad has a button in the bar.** The workspaces block now shows

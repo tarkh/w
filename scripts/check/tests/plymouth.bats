@@ -17,9 +17,9 @@ load helpers
 
 setup() {
   W_WALLPAPER_BIN="$REPO/rootfs/usr/bin/w-wallpaper"
-  W_PLYMOUTH_BASE_THEME="$REPO/rootfs/etc/w/themes/w"
   # shellcheck source=/dev/null
   source "$REPO/rootfs/usr/lib/w/plymouth-logo.sh"
+  W_PLYMOUTH_BASE_THEME="$REPO/rootfs/etc/w/themes/w"   # the helper hardcodes /etc; point at the repo copy
   DRM="$BATS_TEST_TMPDIR/drm"
   mkdir -p "$DRM"
 }
@@ -87,6 +87,35 @@ drm_connector() {
   [[ "$(plymouth_logo_source_png "$theme")" == "$W_PLYMOUTH_BASE_THEME/$W_PLYMOUTH_LOGO_PNG_REL" ]]
   touch "$theme/$W_PLYMOUTH_LOGO_PNG_REL"
   [[ "$(plymouth_logo_source_png "$theme")" == "$theme/$W_PLYMOUTH_LOGO_PNG_REL" ]]
+}
+
+# The tint contract: a theme without a logo/ inherits the brand vector and gets
+# it in its own W_PLYMOUTH_LOGO; a theme with its own mark keeps it untouched.
+# Both need ImageMagick (the renderer) — skipped where it is absent.
+ink_pixel()  { magick "$1" -format '%[hex:p{128,128}]' info:; } # centre of the mark (256px)
+
+@test "plymouth_logo_install: inherited mark is tinted in W_PLYMOUTH_LOGO, alpha intact" {
+  command -v magick &>/dev/null || skip "imagemagick not installed"
+  local theme="$BATS_TEST_TMPDIR/theme" out="$BATS_TEST_TMPDIR"
+  mkdir -p "$theme"
+  plymouth_logo_install "$theme" "$out/plain.png" 1920x1080 >/dev/null
+  W_PLYMOUTH_LOGO="#2e7d32" plymouth_logo_install "$theme" "$out/tint.png" 1920x1080 >/dev/null
+  [[ "$(ink_pixel "$out/tint.png")" == "2E7D32FF" ]]
+  [[ "$(ink_pixel "$out/plain.png")" == "643670FF" ]]
+  # tinting only touches RGB: the anti-aliased edge (alpha) is the same raster
+  local ae; ae="$(magick compare -metric AE \( "$out/plain.png" -alpha extract \) \
+                                         \( "$out/tint.png" -alpha extract \) null: 2>&1)"
+  [[ "${ae%% *}" == "0" ]]   # "0 (0)" — absolute error count, then normalised
+}
+
+@test "plymouth_logo_install: a theme's own mark is never tinted" {
+  command -v magick &>/dev/null || skip "imagemagick not installed"
+  local theme="$BATS_TEST_TMPDIR/theme" out="$BATS_TEST_TMPDIR/own.png"
+  mkdir -p "$theme/logo"
+  sed 's/fill:#643670/fill:#0000ff/' "$W_PLYMOUTH_BASE_THEME/$W_PLYMOUTH_LOGO_SVG_REL" \
+    > "$theme/$W_PLYMOUTH_LOGO_SVG_REL"
+  W_PLYMOUTH_LOGO="#2e7d32" plymouth_logo_install "$theme" "$out" 1920x1080 >/dev/null
+  [[ "$(ink_pixel "$out")" == "0000FFFF" ]]
 }
 
 @test "w.script: its tier ladder still matches w-wallpaper's" {

@@ -5,15 +5,15 @@ order: 2
 summary: Switching themes, creating a theme from a wallpaper, wallpaper sets, and the Appearance panel.
 sources:
   - path: .claude/library/w-theme.md
-    sha256: 7696febbee08eeb6447e61aa53d84edd476a47fd1daf53e38069ce1b71e6bbe4
+    sha256: 8129831ee50d35c6ee17608fa1962b5437bb115341ed2b6eb846f04fb2963587
   - path: .claude/library/w-wallpaper.md
     sha256: 7cdb354e1eb86ed817b8bb5356db0a35b05a7fa05020e2c126217c83b65b7b68
 ---
 
 A theme in W is one palette that the system renders onto every surface: the
 Hyprland UI, the Quickshell shell, GTK and Qt applications, the terminal, GRUB,
-Plymouth, the login greeter. Switching a theme re-skins all of them at once,
-with a live crossfade.
+Plymouth, the login greeter. Switching a theme re-skins all of them at once —
+down to the colour of the boot logo — with a live crossfade.
 
 ## Switching themes
 

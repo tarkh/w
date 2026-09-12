@@ -126,6 +126,17 @@ PY
   [ "$status" -eq 0 ]
 }
 
+@test "render: boot marks keep the container in dark and take the accent in light" {
+  python3 "$PALETTE" render "$MG" "$TEMPLATE" --appearance dark --name unit \
+    >"$BATS_TEST_TMPDIR/dark.conf"
+  python3 "$PALETTE" render "$MG" "$TEMPLATE" --appearance light --name unit \
+    >"$BATS_TEST_TMPDIR/light.conf"
+  for tok in W_PLYMOUTH_LOGO W_GRUB_LOGO; do
+    grep -q "^$tok=\"\$W_PRIMARY_CONTAINER\"" "$BATS_TEST_TMPDIR/dark.conf"
+    grep -q "^$tok=\"\$W_PRIMARY\""           "$BATS_TEST_TMPDIR/light.conf"
+  done
+}
+
 @test "render: light mode flips the canvas and the icon theme" {
   python3 "$PALETTE" render "$MG" "$TEMPLATE" --appearance light --name unit \
     >"$BATS_TEST_TMPDIR/light.conf"

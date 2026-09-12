@@ -38,8 +38,10 @@ render_system() {
   # Render the active theme's logo (baseline fallback) into the Plymouth theme dir at
   # the size this machine's panel needs — the same on-screen size the wallpapers give
   # the mark baked into them, so it does not change size when the splash hands over to
-  # the greeter. Sizing and source preference live in the shared helper; the caller
-  # only says which theme. /usr/lib/w is not on PATH — absolute path by policy.
+  # the greeter. Sizing, source preference and the W_PLYMOUTH_LOGO tint of an
+  # inherited mark live in the shared helper (it reads the token from the theme.conf
+  # load_conf sourced above); the caller only says which theme. /usr/lib/w is not on
+  # PATH — absolute path by policy.
   # shellcheck source=/dev/null
   source /usr/lib/w/plymouth-logo.sh
   plymouth_logo_install "$(w_system_theme_dir)" "$PLYMOUTH_DIR/logo.png"

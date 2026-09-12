@@ -15,6 +15,12 @@
 # ImageMagick rasterises the vector master at the target size. The theme's w.script
 # keeps a fallback rescale for the case where the display changed since this ran.
 #
+# Colour: a theme that ships its own logo/ owns the mark verbatim. A theme
+# without one inherits the brand vector and gets it tinted in its own accent —
+# W_PLYMOUTH_LOGO from theme.conf, visible here when the caller has sourced the
+# theme (w-style's load_conf). Unset → the inherited mark keeps its baked fill,
+# which is what apply.sh and the installer want for the baseline.
+#
 # Sourced by: w-style's 900-plymouth module (theme switch), apply.sh (--plymouth)
 # and the installer's mod_plymouth (install-time initramfs). Callers that are not
 # on a live W system point W_WALLPAPER_BIN at their own copy of w-wallpaper.
@@ -103,17 +109,22 @@ plymouth_logo_source_png() { # <theme dir>
 # own PNG (a theme that ships a recoloured mark must not be rendered from another
 # theme's vector) → the baseline vector → the baseline PNG. PNG sources go through
 # Lanczos; the vector is rasterised at >=2x the target and downsampled, which keeps
-# the curved edges clean at any size.
+# the curved edges clean at any size. An inherited baseline is tinted with
+# W_PLYMOUTH_LOGO when set: -colorize 100 replaces every pixel's RGB and leaves the
+# alpha alone, so the anti-aliased edge survives and the ink is one flat colour.
 plymouth_logo_install() { # <theme dir> <dest> [WIDTHxHEIGHT]
-  local dir="$1" dest="$2" panel="${3:-}" px src density
+  local dir="$1" dest="$2" panel="${3:-}" px src density tint=()
 
   px=$(plymouth_logo_px "$dir" "$panel")
 
   if   [[ -f "$dir/$W_PLYMOUTH_LOGO_SVG_REL" ]]; then src="$dir/$W_PLYMOUTH_LOGO_SVG_REL"
   elif [[ -f "$dir/$W_PLYMOUTH_LOGO_PNG_REL" ]]; then src="$dir/$W_PLYMOUTH_LOGO_PNG_REL"
-  elif [[ -f "$W_PLYMOUTH_BASE_THEME/$W_PLYMOUTH_LOGO_SVG_REL" ]]; then
-    src="$W_PLYMOUTH_BASE_THEME/$W_PLYMOUTH_LOGO_SVG_REL"
-  else src=$(plymouth_logo_source_png "$dir"); fi
+  else
+    if [[ -f "$W_PLYMOUTH_BASE_THEME/$W_PLYMOUTH_LOGO_SVG_REL" ]]; then
+      src="$W_PLYMOUTH_BASE_THEME/$W_PLYMOUTH_LOGO_SVG_REL"
+    else src=$(plymouth_logo_source_png "$dir"); fi
+    [[ -z "${W_PLYMOUTH_LOGO:-}" ]] || tint=(-fill "$W_PLYMOUTH_LOGO" -colorize 100)
+  fi
 
   if [[ "$src" == *.svg ]]; then
     # 96 dpi renders the master at its natural size; scale the dpi so the raster is
@@ -121,10 +132,10 @@ plymouth_logo_install() { # <theme dir> <dest> [WIDTHxHEIGHT]
     density=$(awk -v px="$px" 'BEGIN { d = 96 * 2 * px / 998; if (d < 96) d = 96; printf "%d\n", d + 1 }')
     magick -background none -density "$density" "$src" \
       -filter Lanczos -resize "${px}x${px}" \
-      -background none -gravity center -extent "${px}x${px}" "PNG32:$dest"
+      -background none -gravity center -extent "${px}x${px}" "${tint[@]}" "PNG32:$dest"
   else
     magick "$src" -background none -filter Lanczos -resize "${px}x${px}" \
-      -background none -gravity center -extent "${px}x${px}" "PNG32:$dest"
+      -background none -gravity center -extent "${px}x${px}" "${tint[@]}" "PNG32:$dest"
   fi
-  echo "  logo: ${px}px (${panel:-$(plymouth_panel_geometry || echo 'panel unknown')})"
+  echo "  logo: ${px}px (${panel:-$(plymouth_panel_geometry || echo 'panel unknown')})${tint[1]:+, tint ${tint[1]}}"
 }

@@ -663,6 +663,15 @@ ROLE_OVERRIDES = {
     "W_BG": "$W_PALETTE_CANVAS",
 }
 
+# Boot marks — the brand glyph alone on the splash / menu canvas. The dark
+# container is the mark's own look (theme `w` paints it #643670 on black); the
+# light container is a pale plaque, ~1.6:1 against the canvas, in which a lone
+# glyph all but vanishes — so a light theme draws the mark in the accent itself.
+LIGHT_OVERRIDES = {
+    "W_PLYMOUTH_LOGO": "$W_PRIMARY",
+    "W_GRUB_LOGO": "$W_PRIMARY",
+}
+
 
 class TemplateMismatch(RuntimeError):
     """The template asks for pigments this engine does not produce."""
@@ -718,6 +727,8 @@ def render(
             out.append(f'W_ICON_FOLDER="{ICON_FOLDER[appearance]}"{comment}')
         elif token in ROLE_OVERRIDES:
             out.append(f'{token}="{ROLE_OVERRIDES[token]}"{comment}')
+        elif appearance == "light" and token in LIGHT_OVERRIDES:
+            out.append(f'{token}="{LIGHT_OVERRIDES[token]}"{comment}')
         elif token.startswith("W_PALETTE_"):
             slot = token[len("W_PALETTE_") :]
             seen.add(slot)

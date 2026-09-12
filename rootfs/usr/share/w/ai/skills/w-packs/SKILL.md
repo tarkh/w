@@ -7,7 +7,7 @@ description: >-
   already-installed bundle is covered by that bundle's own skill (skills/<bundle>).
 sources:
   - path: .claude/library/packs.md
-    sha256: bd349cb3e68549c98add90316a45d89cadcafca001745435172c8132347c3079
+    sha256: 7729deb8225e6173cb7c2aeba67b7fa521849e2e74d71849c3ca89d6fa52c2e1
 tools:
   - w_pack_list
   - w_pack_status
@@ -50,7 +50,10 @@ w-pack unsetup <bundle>      # undo only MY account's layer (no sudo)
   `w-reset <bundle>` — it restores from the bundle's own staged tree, backing up
   the current copies first, and needs no root for your own home.
 - Bundles are also offered at install time (the TUI bundle checklist) and installed
-  on first boot — so a fresh machine can arrive with the chosen bundles ready.
+  on first boot — so a fresh machine can arrive with the chosen bundles ready. Bundles
+  are independent there: one failing (typically a mirror/DNS timeout) does not stop the
+  rest; `/var/log/w/firstboot.log` ends with `bundle(s) failed: <names>` and the fix is
+  simply `sudo w-pack install <name>` for each one listed.
   **Exception:** a bundle can set `INSTALLER=off` in its `meta.conf` to hide itself
   from that TUI checklist only — everywhere else (`w-pack list/install/status`,
   this skill, the Hub) it is a normal bundle. Used for bundles that only make sense

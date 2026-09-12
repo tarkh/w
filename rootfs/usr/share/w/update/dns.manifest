@@ -12,7 +12,9 @@
 #
 # The rendered /etc/systemd/resolved.conf.d/10-w-dns.conf is w-dns output
 # (regenerate with `sudo w-dns apply`), not tracked here. The NetworkManager and
-# mDNS drop-ins are static W-owned system files.
+# mDNS drop-ins are static W-owned system files, and so is the sysctl drop-in that
+# turns client-side TCP Fast Open off for resolved's DoT streams (deliberately NOT
+# in w-kernel's hardening profile: `harden off` must not bring the DNS hang back).
 #
 # Format: <path>\t<class>   class: managed | override
 /usr/share/w/defaults/dns.conf	managed
@@ -20,3 +22,4 @@
 /etc/w/dns.conf	override
 /etc/NetworkManager/conf.d/10-w-dns.conf	managed
 /etc/systemd/resolved.conf.d/20-w-mdns.conf	managed
+/etc/sysctl.d/80-w-dns.conf	managed

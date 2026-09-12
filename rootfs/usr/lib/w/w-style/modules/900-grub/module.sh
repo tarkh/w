@@ -27,8 +27,17 @@ render_system() {
     -e "s|^\(\s*\)selected_item_color = .*|\1selected_item_color = \"$W_GRUB_ITEM_SELECTED\"|" \
     "$GRUB_THEME_TXT"
 
-  # Pull the active theme's logo (baseline fallback) into the GRUB theme dir
-  cp "$(resolve_theme_file "$(w_system_theme_dir)" "$THEME_LOGO_REL")" "$GRUB_THEME_DIR/logo.png"
+  # Pull the active theme's logo into the GRUB theme dir. A theme's own mark is
+  # copied verbatim; the inherited baseline is tinted in the theme's W_GRUB_LOGO
+  # (-colorize 100 swaps every pixel's RGB, alpha — the anti-aliased edge — stays).
+  # No W_GRUB_LOGO (a theme.conf generated before the key existed) → the baseline
+  # mark as is, same as plymouth-logo.sh — never an unbound variable under set -u.
+  local own; own="$(w_system_theme_dir)/$THEME_LOGO_REL"
+  if [[ -f "$own" ]]; then cp "$own" "$GRUB_THEME_DIR/logo.png"
+  elif [[ -n "${W_GRUB_LOGO:-}" ]]; then
+    magick "$DEFAULT_THEME_DIR/$THEME_LOGO_REL" -fill "$W_GRUB_LOGO" -colorize 100 \
+      "PNG32:$GRUB_THEME_DIR/logo.png"
+  else cp "$DEFAULT_THEME_DIR/$THEME_LOGO_REL" "$GRUB_THEME_DIR/logo.png"; fi
 
   # Recolor the flat selection 9-patch in place (keeps each tile's dimensions;
   # no `identify` dependency — legacy tools may be absent in ImageMagick 7)

@@ -7,7 +7,7 @@ description: >-
   connections, DNS privacy, the firewall, or the network status indicator.
 sources:
   - path: .claude/library/security.md
-    sha256: 46eddc9d5ae01864fb5551e3a55e97e55855193aaaaa16c99b3556fa8aa66e8c
+    sha256: 00644ba70977365d102fba6b571108558d7d8eec0f1ad422253b12e3e1533ddd
   - path: .claude/library/quickshell-bar.md
     sha256: 535ef9874fedc06b73a9f2224283306e498bbdcde4d892a292f5b7b4c9263e6c
 tools:
@@ -64,6 +64,16 @@ there is no local workaround to offer.
 `w-conf cat dns` shows the merged result with each value's origin. `w-dns` renders the actual
 `resolved.conf.d/` drop-in and reloads resolved (no resolver interruption). DNS is a
 single system-wide daemon, so there is no per-user DNS.
+
+**Lookups that hang (10 s+ per name, pacman "Resolving timed out" on every mirror) while
+`ping 9.9.9.9` works** point at the DoT streams, not the network. W ships
+`/etc/sysctl.d/80-w-dns.conf` (`net.ipv4.tcp_fastopen = 0`) because resolved's TCP Fast
+Open DoT streams blackhole on some paths (seen on Broadcom `wl` Wi-Fi behind a home router):
+the handshake completes, then nothing is acknowledged, and since a few streams still work
+resolved never falls back to plain DNS. Check `sysctl net.ipv4.tcp_fastopen` (must be 0) and
+`ss -tino state established '( dport = :853 )'` (many streams stuck at
+`bytes_received:245` = the symptom). `sudo w-dns off` is the stopgap that hands DNS back to
+the network — say plainly that it turns encryption off, and that the sysctl fix is the real one.
 
 ## Firewall — `w-firewall`
 

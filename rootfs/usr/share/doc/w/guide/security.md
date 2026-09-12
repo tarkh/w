@@ -5,7 +5,7 @@ order: 3
 summary: What W enables out of the box — hardening, sudo-rs, firewall, encrypted DNS, keyring, firmware updates, fingerprint and Secure Boot controls.
 sources:
   - path: .claude/library/security.md
-    sha256: 46eddc9d5ae01864fb5551e3a55e97e55855193aaaaa16c99b3556fa8aa66e8c
+    sha256: 00644ba70977365d102fba6b571108558d7d8eec0f1ad422253b12e3e1533ddd
 ---
 
 W enables a set of protections on every installation and gives you switches

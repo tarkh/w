@@ -10,7 +10,7 @@ description: >-
   fingerprints, firmware, or LUKS/TPM2/Secure Boot questions.
 sources:
   - path: .claude/library/security.md
-    sha256: 46eddc9d5ae01864fb5551e3a55e97e55855193aaaaa16c99b3556fa8aa66e8c
+    sha256: 00644ba70977365d102fba6b571108558d7d8eec0f1ad422253b12e3e1533ddd
   - path: .claude/library/w-fingerprint.md
     sha256: b90c064967fe921e5caa2992fbf049f310fc1820cba8eec937e25306171a8f69
   - path: .claude/library/w-ssh.md
@@ -61,6 +61,9 @@ Three things worth knowing before advising someone here:
   down to "off". `pending=yes` means the configured cmdline has not reached the running
   kernel yet (reboot owed). Note that `harden off` removes the boot parameters at once but
   leaves sysctl values already applied to the running kernel in place until a reboot.
+  The profile is exactly the three `90-w-*.conf` drop-ins; `/etc/sysctl.d/80-w-dns.conf`
+  (TCP Fast Open off, owned by the DNS module — see the w-network skill) is plumbing, not
+  hardening, and `harden off` leaves it alone on purpose.
 
 Both surfaces are also in the Hub: the kernel under System → General, hardening under
 System → Security.
