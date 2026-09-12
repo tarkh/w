@@ -248,3 +248,53 @@ w-style() { :; }
   [[ "$status" -ne 0 ]]
   [[ "$output" == *"nothing to remove"* ]]
 }
+
+# ── Hyprland rule drop-ins ───────────────────────────────────────────────────
+# A bundle's window rule lands in the vendor rules.d and is picked up by every
+# session only on `hyprctl reload`. The hook must reach each account that has a
+# live compositor (its instance signature under $XDG_RUNTIME_DIR/hypr/), skip the
+# ones without, and stay silent for bundles that ship no rule at all. Stubbed:
+# `id` (alice=1000 with a session, bob=1001 without), `runuser` (drops to a plain
+# exec) and `hyprctl` (a PATH shim that records what it was called with).
+hypr_fixture() {
+  # w-pack is already sourced by setup(), so the seam is set directly.
+  export W_PACKS_HYPR_RULES_DIR="$BATS_TEST_TMPDIR/rules.d"; HYPR_RULES_DIR="$W_PACKS_HYPR_RULES_DIR"
+  export W_RUNTIME_BASE="$BATS_TEST_TMPDIR/run"
+  mkdir -p "$W_RUNTIME_BASE/1000/hypr/sig-alice" "$BATS_TEST_TMPDIR/bin"
+  cat > "$BATS_TEST_TMPDIR/bin/hyprctl" <<EOF
+#!/bin/bash
+echo "\$HYPRLAND_INSTANCE_SIGNATURE \$XDG_RUNTIME_DIR \$*" >> "$BATS_TEST_TMPDIR/hyprctl.trace"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/bin/hyprctl"
+  export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+  id() {
+    [[ "$1" == -u && -n "${2:-}" ]] || { command id "$@"; return; }
+    case "$2" in alice) echo 1000 ;; bob) echo 1001 ;; *) return 1 ;; esac
+  }
+  runuser() { shift 2; [[ "$1" == "--" ]] && shift; "$@"; }
+}
+
+# rules_row <bundle> — give the bundle a deployed rules.d drop-in + manifest row.
+rules_row() {
+  local n="$1" d="$W_PACKS_DIR/$1"
+  mkdir -p "$d/config/root$W_PACKS_HYPR_RULES_DIR" "$W_PACKS_HYPR_RULES_DIR"
+  echo "hl.window_rule({})" > "$d/config/root$W_PACKS_HYPR_RULES_DIR/$n.lua"
+  cp "$d/config/root$W_PACKS_HYPR_RULES_DIR/$n.lua" "$W_PACKS_HYPR_RULES_DIR/$n.lua"
+  printf '%s/%s.lua\tmanaged\n' "$W_PACKS_HYPR_RULES_DIR" "$n" >> "$d/manifest"
+}
+
+@test "remove: a rules.d row reloads Hyprland for the account with a session only" {
+  hypr_fixture
+  mkbundle alpha; rules_row alpha
+  cmd_remove alpha
+  [[ ! -f "$W_PACKS_HYPR_RULES_DIR/alpha.lua" ]]
+  run cat "$BATS_TEST_TMPDIR/hyprctl.trace"
+  [[ "$output" == "sig-alice $W_RUNTIME_BASE/1000 reload" ]]
+}
+
+@test "remove: no rules.d row, no Hyprland reload" {
+  hypr_fixture
+  mkbundle alpha
+  cmd_remove alpha
+  [[ ! -f "$BATS_TEST_TMPDIR/hyprctl.trace" ]]
+}

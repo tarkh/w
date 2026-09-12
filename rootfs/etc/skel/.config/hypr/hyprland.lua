@@ -422,16 +422,19 @@ blur_layer("^(quickshell:calendar)$")
 -- rounded card and nothing else. (auth dim default 0.45 < 0.6 < card-over-dim alpha.)
 hl.layer_rule({ match = { namespace = "^(quickshell:auth)$" }, blur = true, ignore_alpha = 0.6 })
 
--- ── Window rules ─────────────────────────────────────────────────────────────
--- satty (screenshot annotation, opened by w-screenshot): float it above the tiled
--- windows, center it and size it to 70% of the monitor. Runtime class is
--- `com.gabm.satty` (matches the desktop file's StartupWMClass, per hyprctl).
-hl.window_rule({
-  match  = { class = "^(com\\.gabm\\.satty)$" },
-  float  = true,
-  size   = { "monitor_w * 0.7", "monitor_h * 0.7" },
-  center = true,
-})
+-- ── Window / layer rules: drop-ins ───────────────────────────────────────────
+-- Per-app rules are files, not lines here: this file is user-owned (seeded once,
+-- never rewritten), so a rule added to it would never reach an existing account.
+-- Two layers, loaded in this order. Hyprland applies every matching rule in
+-- declaration order and the last value of a property wins, so a user file that
+-- re-declares a rule for the same class overrides the vendor one property by
+-- property (`tile = true` cancels a vendor float). Each drop-in is self-applying
+-- (it calls hl.window_rule / hl.layer_rule) and runs in its own require scope, so
+-- one broken file cannot take the others down; pcall covers an empty/absent dir.
+--   /usr/share/w/hypr/rules.d/<app>.lua   vendor: W modules + packs (manifest row)
+--   ~/.config/hypr/rules.d/<app>.lua      the user's overrides, never seeded by W
+pcall(require, "/usr/share/w/hypr/rules.d/*")
+pcall(require, "./rules.d/*")
 
 -- ── Keybindings ──────────────────────────────────────────────────────────────
 -- Binds are DATA. The W action catalog (hotkeys-catalog.lua, W-managed) maps stable

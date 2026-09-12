@@ -5,7 +5,7 @@ order: 10
 summary: What a pack is, the bundles W offers, installing one for the machine and setting it up for your account, and how to undo it.
 sources:
   - path: .claude/library/packs.md
-    sha256: b98c683b8901a93aeb2dde01b086845015c4d39c35cd1f846ddee541098a2774
+    sha256: bd349cb3e68549c98add90316a45d89cadcafca001745435172c8132347c3079
 ---
 
 W installs in two layers. The **base** is everything a working desktop needs and
@@ -32,6 +32,14 @@ it into the desktop — so a pack arrives configured, not merely downloaded.
   annotation, and the Obsidian markdown knowledge base for notes.
 - **bitwarden** — the Bitwarden desktop app wired into W's slots: SSH agent,
   biometric unlock, tray autostart.
+- **telegram** — Telegram Desktop with W's colours: the pack renders the active
+  theme into Telegram's own theme file, flat chat wallpaper included, and a
+  Telegram that has never been started on your account opens in those colours
+  from its very first launch (with a plain window frame — no title bar of its
+  own). If Telegram had already run before the pack was set up, its data is
+  left alone and you pick the file once in the app (Settings → Chat settings →
+  Chat background → Choose from file). Either way, from then on every theme
+  switch recolours a running Telegram live.
 - **ai-extra** — the advanced stack for [the AI assistant](ai.md#advanced): local
   models, semantic memory, better web search.
 

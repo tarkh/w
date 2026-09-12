@@ -5,7 +5,7 @@ order: 4
 summary: Windows, workspaces, popups, notifications, screenshots and session restore.
 sources:
   - path: .claude/library/package-hyprland.md
-    sha256: 8fcbce2ca1880119b352caba9f94b4048e8ff0e8ac3a8915ae326bdb9ec5f9fc
+    sha256: 39aff302ce90ea1ea2ed24607f8476586bed1980cb1f5533b9c9b7897df3db62
   - path: .claude/library/quickshell.md
     sha256: 1ddc54593c92571de2d2b8658b376e7ecb2dc44b2292ca77da3ec07a3717bbe2
 ---
@@ -29,6 +29,11 @@ window's titlebar into another turns them into a resizable split. The basics:
   <kbd>Super+P</kbd> pin it above everything.
 - <kbd>Super+R</kbd> resize mode, <kbd>Super+S</kbd> the scratchpad (a parked
   window you summon back on the current workspace).
+- **Per-app window rules** (always float this app, open it centred at a fixed
+  size…) are drop-in files: W's own live in `/usr/share/w/hypr/rules.d/`, yours go
+  in `~/.config/hypr/rules.d/<app>.lua` and win over W's for the same app —
+  a file that calls `hl.window_rule({ match = { class = "^(app)$" }, float = true })`,
+  then `hyprctl reload`.
 - The full, rebindable list lives in **Hub → Hotkeys**.
 
 ## The shell surfaces

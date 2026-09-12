@@ -13,6 +13,14 @@
 # account on the same machine may not use Bitwarden at all.
 /etc/systemd/user/bitwarden.service	managed
 
+# Window rule (Hyprland drop-in, require()d by hyprland.lua with a wildcard):
+# the app pops out of the tray for every SSH signing request — unlock, approve —
+# and would otherwise wedge itself into the tiling layout each time. Floated,
+# centred, sized like a dialog. Vendor layer: a user overrides it property by
+# property from ~/.config/hypr/rules.d/. w-pack reloads running sessions on
+# install/remove, so it is live without a re-login.
+/usr/share/w/hypr/rules.d/bitwarden.lua	managed
+
 # NOT listed, deliberately: ~/.config/w/ssh.conf (the agent selection) is a wconf
 # user-layer file owned by the keyring module's manifest — one path, one owner.
 # The app's own state (~/.config/Bitwarden) is the vault client's, never W's.

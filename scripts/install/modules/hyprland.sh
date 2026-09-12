@@ -31,6 +31,10 @@ mod_hyprland() {
   # package; a pacman hook keeps it gone across upgrades
   install -Dm644 "$SRC/rootfs/etc/pacman.d/hooks/hyprland-no-uwsm.hook" /etc/pacman.d/hooks/hyprland-no-uwsm.hook
   rm -f /usr/share/wayland-sessions/hyprland-uwsm.desktop
+  # Vendor layer of the per-app rule drop-ins hyprland.lua require()s with a
+  # wildcard (W modules and packs each own their <app>.lua in it; --rootfs syncs
+  # the tree, this keeps a standalone --hyprland from leaving the dir absent).
+  install -d -m755 /usr/share/w/hypr/rules.d
 
   # Session dotfiles to deploy (Hyprland config + Ghostty + foot terminal config)
   local subdirs=(hypr ghostty foot)

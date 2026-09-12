@@ -35,7 +35,15 @@ cd "$USER_HOME" 2>/dev/null || cd /tmp || true
 # /root/.config/w and report success while changing nothing for this account.
 as_user() {
   if [[ "$AS_ROOT" == 1 ]]; then
-    runuser -u "$USER_NAME" -- env HOME="$USER_HOME" \
+    # The runtime vars ride along too: root's XDG_RUNTIME_DIR (/run/user/0) would
+    # make w-ssh create its socket link there — EPERM for the account, "could not
+    # switch the SSH agent". Point them at the account's own runtime dir when it
+    # has a session, drop them when it does not (firstboot: w-ssh then falls back
+    # to /run/user/<uid> itself). Same recipe as deploy.sh's w_render_user_theme.
+    local rt; rt="/run/user/$(id -u "$USER_NAME")"
+    local -a sess=(-u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS)
+    [[ -d "$rt" ]] && sess=(XDG_RUNTIME_DIR="$rt" DBUS_SESSION_BUS_ADDRESS="unix:path=$rt/bus")
+    runuser -u "$USER_NAME" -- env "${sess[@]}" HOME="$USER_HOME" \
       XDG_CONFIG_HOME="$USER_HOME/.config" WCONF_HOME="$USER_HOME" "$@"
   else
     env HOME="$USER_HOME" XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$USER_HOME/.config}" \

@@ -29,10 +29,12 @@ vendor-neutral (see the `w-security` skill and `w-ssh`).
    `SSH_AUTH_SOCK` symlink.
 4. Enabled `bitwarden.service` (user unit) so the app starts hidden in the tray
    with the graphical session.
+5. Shipped a Hyprland window rule (`/usr/share/w/hypr/rules.d/bitwarden.lua`):
+   the window floats, centred, dialog-sized — it never joins the tiling layout.
 
 Steps the user must take inside the app (encrypted vault state, not settable from
 outside): log in, turn on **Unlock with system authentication**, turn on **Enable
-SSH Agent**.
+SSH Agent**, and turn on **Close to tray** (Settings → Preferences).
 
 ## Biometric unlock goes through polkit — so it is W's own card
 
@@ -86,6 +88,20 @@ belongs to that block and applies to one host only).
 
 Key listing works while the vault is **locked**, so `w-ssh sync` does not require
 an unlock. Signing does — the app prompts to unlock, then to approve.
+
+## The window that pops out of the tray
+
+Every signing request summons the app window (the app's own behaviour, verified
+in its code): "unlock your vault" when it is locked, then a key-approval dialog.
+After approval the app does NOT hide itself — there is no setting for that, and
+nothing on W's side can detect the moment. The user dismisses it with Super+Q,
+which is why **Close to tray** must be on: with it off (the upstream default)
+Super+Q QUITS the app, the SSH agent dies with it, and every ssh / git push fails
+until the next login (`systemctl --user start bitwarden.service` revives it).
+Two app settings govern how often the window appears — both the user's call:
+**Remember SSH authorizations** (Settings → SSH agent; "until vault lock" asks
+once per key per unlock; "never ask" is a security regression — do not suggest
+it) and the **Vault timeout** (Settings → Security).
 
 ## Diagnosing
 

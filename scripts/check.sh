@@ -75,7 +75,10 @@ for f in "${ALL_FILES[@]}"; do
     # vm/*.py is host-side harness code (the Ф.4 fault endpoint). Narrowed to *.py
     # on purpose: vm/ also holds ISO and qcow2 images, which have no business in a
     # lint inventory.
-    *.sh|rootfs/usr/bin/*|rootfs/usr/lib/w/*|devtools/usr/local/bin/*|rootfs/etc/initcpio/*|vm/*.py) ;;
+    # scripts/packs/<bundle>/*.py — helpers a bundle's setup scripts run via
+    # `python3 x` (the telegram tdata seeder); the perms suite exempts the
+    # bundle tree, ruff must not.
+    *.sh|rootfs/usr/bin/*|rootfs/usr/lib/w/*|devtools/usr/local/bin/*|rootfs/etc/initcpio/*|vm/*.py|scripts/packs/*/*.py) ;;
     *) continue ;;
   esac
   # First line via `read` (not $(head …)) — binary neighbors in these trees

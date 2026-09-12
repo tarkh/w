@@ -222,6 +222,10 @@
     "en": "Office and documents: LibreOffice, PDF tools (pdfarranger, xournalpp), Obsidian notes",
     "ru": "Офис и документы: LibreOffice, PDF-инструменты (pdfarranger, xournalpp), заметки Obsidian"
   },
+  "p_telegram": {
+    "en": "Telegram Desktop messenger, themed by W",
+    "ru": "Мессенджер Telegram Desktop в теме W"
+  },
   "_section:4": "Validation / passwords",
   "pass_confirm": {
     "en": "Confirm password:",

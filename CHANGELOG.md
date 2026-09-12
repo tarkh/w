@@ -8,6 +8,49 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.10.0
+
+- **New bundle: telegram.** Telegram Desktop from Arch's own repository, with
+  the active W theme rendered into Telegram's palette — colours, and a plain
+  chat background in the theme's tone — and kept in step when you switch
+  themes. On an account that has never launched Telegram the theme is in place
+  from the very first start; an account with history applies it once from
+  *Chat settings* and Telegram re-reads it on its own after that. A checkbox in
+  the installer, or `sudo w-pack install telegram`.
+
+- **Per-app window rules are drop-in files.** W's own live in
+  `/usr/share/w/hypr/rules.d/<app>.lua` (the screenshot annotator's rule moved
+  there from `hyprland.lua`); yours go in `~/.config/hypr/rules.d/<app>.lua`
+  and win over W's for the same app. A broken drop-in shows up in
+  `hyprctl configerrors` without taking the others down. Bundles ship rules
+  this way and `w-pack` reloads running sessions on install and remove, so a
+  rule works at once, not after the next login. **Machines installed before
+  this release need one step**: the loader lives in your own `hyprland.lua`,
+  which updates do not touch. Once, after `w-sync update`:
+  ```
+  w-reset hyprland .config/hypr/hyprland.lua && hyprctl reload
+  ```
+  (a backup is taken automatically). Without it the Bitwarden and
+  screenshot-annotator rules below stay inert.
+
+- **Bitwarden pops out as a dialog.** The window the SSH agent raises from the
+  tray for every signing request — unlock, approve — now floats centred at
+  dialog size instead of wedging itself into the tiling layout. Turn on
+  *Close to tray* in its preferences: with the upstream default, `Super+Q`
+  quits the app and the SSH agent inside it.
+
+- **Fixed: `~/Pictures` belonged to root.** Since v0.1.0 the install created it
+  on the way to `Pictures/Screenshots` as root, so anything else wanting to
+  write there — a browser download, a file manager — was refused. The next
+  update hands the directory back to you.
+
+- **Fixed: installing or removing `bitwarden` over a root SSH session** ended
+  in «could not switch the SSH agent» (it worked from the Hub and `sudo`). The
+  bundle's per-account steps now run with the account's own runtime.
+
+- **New ISO:** the installer checklist offers the telegram bundle. Installed
+  systems are not affected by this line.
+
 ## v0.9.0
 
 - **W speaks Russian.** Choose Russian as the system language and everything W

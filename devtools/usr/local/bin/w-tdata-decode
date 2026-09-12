@@ -1,0 +1,298 @@
+#!/usr/bin/env python3
+# w-tdata-decode — dev-only reader for Telegram Desktop `tdata` files that are
+# encrypted with the SALT-ONLY SettingsKey (settingss, theme records, langpack,
+# background records). No secret is involved: the key is PBKDF2-SHA1 of an
+# EMPTY passcode over the 32-byte salt stored in settingss itself — tdesktop's
+# obfuscation layer, not its security layer (that is key_datas / the local key,
+# which this tool deliberately cannot open).
+#
+# Written while designing the telegram W-Pack (pack-telegram.md): it verified
+# the on-disk format the stage-2 tdata seeder has to write, and stays here as
+# the check that a generated seed round-trips. Format facts (tdesktop `dev`,
+# 2026-09): file = "TDF$" + int32 version + payload + md5(payload+len+version+
+# magic); payload = QDataStream (big-endian, Qt_5_1) of QByteArrays; encrypted
+# blob = 16-byte msg_key (sha1(plain)[:16]) + AES-256-IGE(plain) with key/iv from
+# AuthKey::prepareAES_oldmtp(msg_key, x=8); plain = uint32 LE length + data.
+#
+#   w-tdata-decode <tdata-dir>            # walk settingss + every *s record
+#   w-tdata-decode <tdata-dir> --dump DIR # also write decrypted payloads
+#   w-tdata-decode <tdata-dir> --app-settings
+#       also print the leading, positional part of dbiApplicationSettings
+#       (Core::Settings::addFromSerialized) field by field, up to and including
+#       nativeWindowFrame ("Use Qt window frame"). That prefix is what the
+#       stage-2 seeder writes; its defaults are pinned from a fresh-start
+#       capture read with this mode (pack-telegram.md).
+#
+# Needs python-cryptography (in the W base via python-pip / python-mcp).
+import hashlib
+import struct
+import sys
+from pathlib import Path
+
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+DBI = {
+    0x06: "AutoStart", 0x07: "StartMinimized", 0x1D: "SendToMenu",
+    0x0A: "SeenTrayTooltip", 0x0C: "AutoUpdate", 0x0D: "LastUpdateCheck",
+    0x58: "ScalePercent", 0x57: "PowerSaving", 0x60: "FallbackProductionConfig",
+    0x5E: "ApplicationSettings", 0x23: "DialogLastPath", 0x54: "ThemeKey",
+    0x61: "BackgroundKey", 0x55: "TileBackground", 0x4E: "LangPackKey",
+    0x5A: "LanguagesKey",
+}
+INT_BLOCKS = {0x06, 0x07, 0x1D, 0x0A, 0x0C, 0x0D, 0x58, 0x57}
+
+# Core::Settings::addFromSerialized, the positional prefix up to the field the
+# seeder cares about. The reader is prefix-tolerant (every group sits under
+# `if (!stream.atEnd())`), so a blob that stops after nativeWindowFrame is read
+# as-is and everything behind it takes the defaults. Types: i = qint32,
+# s = QString, b = QByteArray; a count field is followed by that many entries.
+APP_SETTINGS_PREFIX = (
+    ("themesAccentColors", "b"),
+    ("adaptiveForWide", "i"), ("moderateModeEnabled", "i"), ("songVolume", "i"),
+    ("videoVolume", "i"), ("askDownloadPath", "i"), ("downloadPath", "s"),
+    ("downloadPathBookmark", "b"), ("nonDefaultVoicePlaybackSpeed", "i"),
+    ("soundNotify", "i"), ("desktopNotify", "i"), ("flashBounceNotify", "i"),
+    ("notifyView", "i"), ("nativeNotifications", "i"), ("notificationsCount", "i"),
+    ("notificationsCorner", "i"), ("autoLock", "i"),
+    ("legacyCallPlaybackDeviceId", "s"), ("legacyCallCaptureDeviceId", "s"),
+    ("callOutputVolume", "i"), ("callInputVolume", "i"),
+    ("callAudioDuckingEnabled", "i"), ("lastSeenWarningSeen", "i"),
+    ("soundOverridesCount", "i"),      # then count × (QString key, QString value)
+    ("sendFilesWay", "i"), ("sendSubmitWay", "i"), ("includeMutedCounter", "i"),
+    ("countUnreadMessages", "i"), ("legacyExeLaunchWarning", "i"),
+    ("notifyAboutPinned", "i"), ("loopAnimatedStickers", "i"), ("largeEmoji", "i"),
+    ("replaceEmoji", "i"), ("suggestEmoji", "i"), ("suggestStickersByEmoji", "i"),
+    ("spellcheckerEnabled", "i"), ("videoPlaybackSpeed", "i"),
+    ("videoPipGeometry", "b"),
+    ("dictionariesEnabledCount", "i"),  # then count × qint64
+    ("autoDownloadDictionaries", "i"), ("mainMenuAccountsShown", "i"),
+    ("tabbedSelectorSectionEnabled", "i"), ("floatPlayerColumn", "i"),
+    ("floatPlayerCorner", "i"), ("thirdSectionInfoEnabled", "i"),
+    ("dialogsWithChatWidthRatioInt", "i"), ("thirdColumnWidth", "i"),
+    ("thirdSectionExtendedBy", "i"), ("notifyFromAll", "i"),
+    ("nativeWindowFrame", "i"),
+)
+
+
+class Stream:
+    """Minimal QDataStream (Qt_5_1, big-endian) reader."""
+
+    def __init__(self, data: bytes) -> None:
+        self.d, self.pos = data, 0
+
+    def _take(self, fmt: str):
+        size = struct.calcsize(fmt)
+        value = struct.unpack(fmt, self.d[self.pos:self.pos + size])[0]
+        self.pos += size
+        return value
+
+    def u32(self) -> int:
+        return self._take(">I")
+
+    def i32(self) -> int:
+        return self._take(">i")
+
+    def u64(self) -> int:
+        return self._take(">Q")
+
+    def bytes_or_null(self):
+        # QByteArray: 0xFFFFFFFF = null (distinct from empty) — matters when a
+        # generated prefix is compared byte-for-byte against a capture.
+        n = self.u32()
+        if n == 0xFFFFFFFF:
+            return None
+        value = self.d[self.pos:self.pos + n]
+        self.pos += n
+        return value
+
+    def bytes(self) -> bytes:
+        return self.bytes_or_null() or b""
+
+    def string(self):
+        n = self.u32()
+        if n == 0xFFFFFFFF:
+            return None
+        value = self.d[self.pos:self.pos + n].decode("utf-16-be")
+        self.pos += n
+        return value
+
+    def i64(self) -> int:
+        return self._take(">q")
+
+    def at_end(self) -> bool:
+        return self.pos >= len(self.d)
+
+
+def read_tdf(path: Path):
+    raw = path.read_bytes()
+    if raw[:4] != b"TDF$":
+        raise ValueError(f"{path.name}: not a TDF$ file")
+    version = struct.unpack("<i", raw[4:8])[0]
+    payload = raw[8:-16]
+    digest = hashlib.md5(
+        payload + struct.pack("<i", len(payload)) + struct.pack("<i", version) + b"TDF$"
+    ).digest()
+    if digest != raw[-16:]:
+        raise ValueError(f"{path.name}: md5 mismatch")
+    return version, payload
+
+
+def settings_key(salt: bytes) -> bytes:
+    # CreateLegacyLocalKey(passcode="", salt): PBKDF2-SHA1, 4 iterations, 256 bytes.
+    return hashlib.pbkdf2_hmac("sha1", b"", salt, 4, 256)
+
+
+def prepare_aes_oldmtp(key: bytes, msg_key: bytes):
+    x = 8  # receive side (local files)
+    a = hashlib.sha1(msg_key + key[x:x + 32]).digest()
+    b = hashlib.sha1(key[32 + x:48 + x] + msg_key + key[48 + x:64 + x]).digest()
+    c = hashlib.sha1(key[64 + x:96 + x] + msg_key).digest()
+    d = hashlib.sha1(msg_key + key[96 + x:128 + x]).digest()
+    return (a[0:8] + b[8:20] + c[4:16], a[8:20] + b[0:8] + c[16:20] + d[0:8])
+
+
+def ige_decrypt(data: bytes, key: bytes, iv: bytes) -> bytes:
+    ecb = Cipher(algorithms.AES(key), modes.ECB()).decryptor()
+    x_prev, y_prev = iv[:16], iv[16:]
+    out = bytearray()
+    for i in range(0, len(data), 16):
+        x = data[i:i + 16]
+        block = ecb.update(bytes(p ^ q for p, q in zip(x, y_prev)))
+        y = bytes(p ^ q for p, q in zip(block, x_prev))
+        out += y
+        x_prev, y_prev = x, y
+    return bytes(out)
+
+
+def decrypt_local(encrypted: bytes, key: bytes):
+    msg_key, body = encrypted[:16], encrypted[16:]
+    aes_key, aes_iv = prepare_aes_oldmtp(key, msg_key)
+    plain = ige_decrypt(body, aes_key, aes_iv)
+    if hashlib.sha1(plain).digest()[:16] != msg_key:
+        return None
+    length = struct.unpack("<I", plain[:4])[0]
+    return plain[4:length]
+
+
+def describe_settings(plain: bytes, app_settings: bool = False) -> None:
+    s = Stream(plain)
+    while not s.at_end():
+        block = s.u32()
+        name = DBI.get(block, hex(block))
+        if block in INT_BLOCKS:
+            print(f"    {name} = {s.i32()}")
+        elif block in (0x60, 0x5E):
+            blob = s.bytes()
+            print(f"    {name}: {len(blob)} bytes")
+            if block == 0x5E and app_settings:
+                describe_app_settings(blob)
+        elif block == 0x23:
+            print(f"    {name} = {s.string()!r}")
+        elif block == 0x54:
+            day, night, mode = s.u64(), s.u64(), s.u32()
+            print(f"    {name}: day={day:016X} night={night:016X} nightMode={mode}"
+                  f" → files {file_key_name(day)}s / {file_key_name(night)}s")
+        elif block == 0x61:
+            print(f"    {name}: day={s.u64():016X} night={s.u64():016X}")
+        elif block == 0x55:
+            print(f"    {name}: day={s.i32()} night={s.i32()}")
+        elif block in (0x4E, 0x5A):
+            print(f"    {name} = {s.u64():016X}")
+        else:
+            print(f"    unknown block {name} at {s.pos} — stopping")
+            return
+
+
+def describe_app_settings(blob: bytes) -> None:
+    """Print the positional prefix of Core::Settings (see APP_SETTINGS_PREFIX)."""
+    s = Stream(blob)
+    read = {"i": s.i32, "s": s.string, "b": s.bytes_or_null}
+    try:
+        for name, kind in APP_SETTINGS_PREFIX:
+            if s.at_end():
+                print(f"      (blob ends before {name})")
+                return
+            value = read[kind]()
+            print(f"      {name} = {value!r}")
+            if name == "soundOverridesCount":
+                for _ in range(value):
+                    print(f"        override {s.string()!r} = {s.string()!r}")
+            elif name == "dictionariesEnabledCount":
+                for _ in range(value):
+                    print(f"        dictionary {s.i64()}")
+    except struct.error:
+        print("      (truncated inside the prefix)")
+        return
+    print(f"      prefix ends at {s.pos} of {len(blob)} bytes")
+
+
+def describe_theme(plain: bytes) -> bool:
+    s = Stream(plain)
+    try:
+        content = s.bytes()
+        tag = s.string()
+    except struct.error:
+        return False
+    if tag != "special://new_tag" or len(content) < 4:
+        return False
+    print(f"    theme record: content {len(content)} bytes, starts {content[:32]!r}")
+    print(f"      pathAbsolute={s.string()!r} pathRelative={s.string()!r}")
+    print(f"      cloud id={s.u64()} hash={s.u64()} slug={s.string()!r} title={s.string()!r}"
+          f" doc={s.u64()} field1={s.i32()}")
+    print(f"      cache: paletteChecksum={s.i32()} contentChecksum={s.i32()}"
+          f" colors={len(s.bytes())} background={len(s.bytes())} field2={s.u32()}")
+    return True
+
+
+def file_key_name(key: int) -> str:
+    # ToFilePart(): bytes reversed, nibbles swapped within each byte.
+    raw = key.to_bytes(8, "big")[::-1]
+    return "".join(f"{b & 0xF:X}{b >> 4:X}" for b in raw)
+
+
+def main(argv) -> int:
+    if len(argv) < 2:
+        print(__doc__ or "usage: w-tdata-decode <tdata-dir> [--dump DIR]")
+        return 2
+    tdata = Path(argv[1])
+    dump = Path(argv[argv.index("--dump") + 1]) if "--dump" in argv else None
+    app_settings = "--app-settings" in argv
+    settings = tdata / "settingss"
+    if not settings.exists():
+        settings = tdata / "settings0"
+    version, payload = read_tdf(settings)
+    s = Stream(payload)
+    salt, encrypted = s.bytes(), s.bytes()
+    key = settings_key(salt)
+    plain = decrypt_local(encrypted, key)
+    print(f"{settings.name}: version={version} salt={salt.hex()[:16]}… "
+          f"{'decrypted' if plain else 'FAILED'} ({len(plain or b'')} bytes)")
+    if plain is None:
+        return 1
+    describe_settings(plain, app_settings)
+    if dump:
+        dump.mkdir(parents=True, exist_ok=True)
+        (dump / "settingss.dec").write_bytes(plain)
+    for record in sorted(tdata.glob("*s")):
+        if record.name == settings.name or not record.is_file():
+            continue
+        try:
+            version, payload = read_tdf(record)
+        except ValueError:
+            continue
+        s = Stream(payload)
+        enc = s.bytes()
+        plain = decrypt_local(enc, key)
+        if plain is None:
+            print(f"{record.name}: needs the local key (key_datas) — skipped")
+            continue
+        print(f"{record.name}: version={version} SettingsKey-encrypted, {len(plain)} bytes")
+        if not describe_theme(plain):
+            print("    (langpack / background / other record)")
+        if dump:
+            (dump / (record.name + ".dec")).write_bytes(plain)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

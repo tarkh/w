@@ -7,7 +7,7 @@ description: >-
   already-installed bundle is covered by that bundle's own skill (skills/<bundle>).
 sources:
   - path: .claude/library/packs.md
-    sha256: b98c683b8901a93aeb2dde01b086845015c4d39c35cd1f846ddee541098a2774
+    sha256: bd349cb3e68549c98add90316a45d89cadcafca001745435172c8132347c3079
 tools:
   - w_pack_list
   - w_pack_status
@@ -24,7 +24,8 @@ theme, shell, security — and is always present. **W-Packs** are the second lay
   `gaming` (not `steam`). The user picks a capability; the engine is an
   implementation detail. Where the ecosystem itself *is* the choice, its own name is
   the direction — `flatpak` (the sandboxed-app channel), `bitwarden` (that vendor's
-  desktop app wired into W's slots).
+  desktop app wired into W's slots), `telegram` (the messenger with a W palette;
+  messengers are alternatives by network, so there is no "messengers" bundle).
 - A bundle is **self-contained**: one directory under `/usr/share/w/packs/<bundle>/`
   carries everything it needs — packages, config, its w-style theme axis, its AI
   knowledge, and a setup step. Installing it wires all of that up; the base system

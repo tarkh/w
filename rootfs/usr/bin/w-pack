@@ -90,6 +90,7 @@ USER_STATE_REL=".local/state/w/packs.json"              # per-user layer state (
 WSTYLE_DROPIN="${W_PACKS_WSTYLE_DROPIN:-/usr/lib/w/w-style/modules.d}"  # w-style axis drop-in root
 AI_SKILLS="${W_PACKS_AI_SKILLS:-/usr/share/w/ai/skills}"  # curated AI knowledge
 DEPLOY_SDK="${W_PACKS_DEPLOY_SDK:-/usr/lib/w/lib/deploy.sh}"  # seed_user_file (config-ownership SDK)
+HYPR_RULES_DIR="${W_PACKS_HYPR_RULES_DIR:-/usr/share/w/hypr/rules.d}"  # Hyprland rule drop-ins (vendor layer)
 
 # Command-line options, defaulted here rather than at the dispatch block below so
 # the functions that read them are also correct when this file is SOURCED (the
@@ -458,6 +459,39 @@ deploy_managed() {
   fi
 }
 
+# ── Hyprland rule drop-ins (manifest rows under /usr/share/w/hypr/rules.d/) ──
+# A bundle's window rule is a vendor drop-in that hyprland.lua require()s with a
+# wildcard — it reaches every account without touching their user-owned config,
+# but only at the next config load. Reload each running session so the rule is
+# live on install and gone on remove, instead of "works after the next login"
+# (the silent kind of failure). Best-effort: no session or no hyprctl → nothing.
+# runuser keeps root's environment, so the instance signature and runtime dir
+# are pointed at the target user explicitly (the deploy.sh w_render_user_theme
+# recipe).
+bundle_has_hypr_rules() {                               # <bundle>
+  local manifest; manifest="$(bundle_dir "$1")/manifest"
+  [[ -f "$manifest" ]] && grep -q "^$HYPR_RULES_DIR/" "$manifest"
+}
+
+reload_hyprland_sessions() {
+  command -v hyprctl >/dev/null 2>&1 || return 0
+  need_sdk || return 0
+  local u home uid runtime his
+  while IFS=$'\t' read -r u home; do
+    [[ -n "$u" ]] || continue
+    uid="$(id -u "$u" 2>/dev/null)" || continue
+    runtime="${W_RUNTIME_BASE:-/run/user}/$uid"
+    his="$(ls -dt "$runtime"/hypr/* 2>/dev/null | head -1)" || true
+    [[ -n "$his" ]] || continue
+    if runuser -u "$u" -- env XDG_RUNTIME_DIR="$runtime" \
+         HYPRLAND_INSTANCE_SIGNATURE="$(basename "$his")" hyprctl reload >/dev/null 2>&1; then
+      info "Hyprland reloaded for $u — window rules are live."
+    else
+      warn "could not reload Hyprland for $u — window rules apply at the next login."
+    fi
+  done < <(w_home_users)
+}
+
 # ── w-style axes (bundle wstyle/ → w-style drop-in root) ──────────────────────
 deploy_wstyle() {
   local name="$1" bdir; bdir="$(bundle_dir "$name")"
@@ -557,6 +591,7 @@ install_bundle() {
   deploy_ai             "$name"
   run_setup             "$name"
   record_install        "$name"
+  bundle_has_hypr_rules "$name" && reload_hyprland_sessions
 
   # The machine layer is now genuinely in place, and it is recorded BEFORE the
   # per-user layer runs on purpose: the user half wants the network (uv tools,
@@ -651,6 +686,7 @@ refresh_bundle() {
   deploy_wstyle         "$name"
   deploy_ai             "$name"
   run_setup             "$name"
+  bundle_has_hypr_rules "$name" && reload_hyprland_sessions
 
   bundle_has_user_layer "$name" || return 0
   # Replay the per-user layer for every account that already went through it —
@@ -838,6 +874,7 @@ remove_bundle() {
   w_backup_target "" ""
   run_teardown         "$name"
   remove_manifest_rows "$name" system
+  bundle_has_hypr_rules "$name" && reload_hyprland_sessions
   remove_wstyle        "$name"
   remove_ai            "$name"
   state_forget         "$name"

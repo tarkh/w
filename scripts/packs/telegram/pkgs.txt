@@ -1,0 +1,20 @@
+# telegram bundle — packages (official extra repo, no AUR).
+# One per line; '#' comments and blank lines ignored. Installed by w-pack via yay
+# (repo + AUR in one pass) as the build user; pacman fallback if yay is absent.
+#
+# Excluded on purpose (single-app bundle, see meta.conf): signal-desktop
+# (extra, but no theme layer beyond dark/light — a bundle of its own if ever
+# wanted), discord (custom themes are client modification, against its ToS),
+# element-desktop (niche), slack/zoom/teams/whatsapp (AUR only).
+
+telegram-desktop      # Telegram Desktop (tdesktop), Qt6, native Wayland.
+                      # Themed by the bundle's own axis wstyle/400-telegram: W
+                      # renders the active theme into tdesktop's palette format
+                      # and, once the user applies that file from Chat settings,
+                      # tdesktop re-reads it at every start and watches it for
+                      # live changes. Spell-check dictionaries come from
+                      # w-langpack (hunspell-<lang>, read from /usr/share/hunspell).
+python-cryptography   # AES for tdata-seed.py (the first-launch seed of Telegram's
+                      # data dir). Already in the base as a dependency of
+                      # python-pip — declared here so the bundle does not ride
+                      # on someone else's dependency chain.

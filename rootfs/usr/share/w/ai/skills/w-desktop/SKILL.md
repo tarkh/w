@@ -8,7 +8,7 @@ description: >-
   Monitors and the night light are w-displays; reopening windows at login is w-session.
 sources:
   - path: .claude/library/package-hyprland.md
-    sha256: 8fcbce2ca1880119b352caba9f94b4048e8ff0e8ac3a8915ae326bdb9ec5f9fc
+    sha256: 39aff302ce90ea1ea2ed24607f8476586bed1980cb1f5533b9c9b7897df3db62
   - path: .claude/library/quickshell.md
     sha256: 1ddc54593c92571de2d2b8658b376e7ecb2dc44b2292ca77da3ec07a3717bbe2
   - path: .claude/library/quickshell-bar.md
@@ -59,6 +59,16 @@ Since Hyprland 0.55 the compositor config is **Lua**, not the old hyprlang `.con
 - Options are set with `hl.config({ category = { key = val } })`, binds with
   `hl.bind(...)`, rules with `hl.window_rule{...}` / `hl.layer_rule{...}`, autostart with
   `hl.on("hyprland.start", ...)`.
+- **Per-app window rules are drop-in files, not lines in `hyprland.lua`.** W's own
+  (satty, a bundle's app such as Bitwarden) live in `/usr/share/w/hypr/rules.d/<app>.lua`;
+  the user's go in `~/.config/hypr/rules.d/<app>.lua` — a self-applying file that just
+  calls `hl.window_rule({ match = { class = "^(foo)$" }, float = true, ... })`, then
+  `hyprctl reload`. Loaded after W's, and the last value of a property wins, so re-declaring
+  a rule for the same class overrides W's property by property (`tile = true` cancels a
+  W float). A broken file shows in `hyprctl configerrors` and does not affect the rest.
+  Find an app's class with `hyprctl clients -j` (it often differs from the binary name).
+  For a dialog-sized float use `size = { "min(800, monitor_w * 0.9)", "min(790, monitor_h * 0.9)" }`
+  — Hyprland does not clamp a too-large floating window to the monitor.
 - ⚠️ The dispatch syntax changed: `hyprctl dispatch` now takes a Lua expression, e.g.
   `hyprctl dispatch 'hl.dsp.global("quickshell:launcher")'`. The old
   `dispatch global quickshell:launcher` form no longer works.

@@ -60,10 +60,14 @@ pacman -Su --noconfirm
 #                     real one-shot keys. Absent, all 17 cases SKIP and the
 #                     edge channel's signature boundary rides untested on a
 #                     green run — the same hole, in its quiet form.
+#   python-cryptography
+#                     the telegram bundle's tdata seeder and its dev-side
+#                     reader do AES-IGE through it; the tdata round-trip suite
+#                     SKIPs without it and --strict rightly refuses the skip.
 info "Installing build and check dependencies..."
 pacman -S --noconfirm --needed \
   archiso base-devel git rsync sudo jq openssh \
-  shellcheck ruff bats python python-numpy qt6-declarative quickshell
+  shellcheck ruff bats python python-numpy python-cryptography qt6-declarative quickshell
 
 # The paths suite asserts no shipped /usr/bin path collides with a file owned by
 # an Arch package — which needs the files database. Without it that probe SKIPs,

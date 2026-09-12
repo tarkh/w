@@ -5,7 +5,7 @@ order: 4
 summary: Окна, рабочие столы, попапы, уведомления, скриншоты и восстановление сессии.
 sources:
   - path: .claude/library/package-hyprland.md
-    sha256: 8fcbce2ca1880119b352caba9f94b4048e8ff0e8ac3a8915ae326bdb9ec5f9fc
+    sha256: 39aff302ce90ea1ea2ed24607f8476586bed1980cb1f5533b9c9b7897df3db62
   - path: .claude/library/quickshell.md
     sha256: 1ddc54593c92571de2d2b8658b376e7ecb2dc44b2292ca77da3ec07a3717bbe2
 anchors:
@@ -37,6 +37,12 @@ Hyprland — тайловый компоузер: окна выстраиваю�
 - <kbd>Super+R</kbd> — режим изменения размера, <kbd>Super+S</kbd> —
   скретчпад (припаркованное окно, которое вы вызываете обратно на текущий
   рабочий стол).
+- **Правила окон для отдельных приложений** (всегда плавающее, открывать по
+  центру фиксированного размера…) — файлы-дропины: правила W лежат в
+  `/usr/share/w/hypr/rules.d/`, ваши — в `~/.config/hypr/rules.d/<app>.lua` и
+  имеют приоритет для того же приложения: файл вызывает
+  `hl.window_rule({ match = { class = "^(app)$" }, float = true })`, затем
+  `hyprctl reload`.
 - Полный, переназначаемый список живёт в **Хаб → Горячие клавиши**.
 
 ## Поверхности шелла

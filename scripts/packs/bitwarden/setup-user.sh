@@ -33,7 +33,15 @@ cd "$USER_HOME" 2>/dev/null || cd /tmp || true
 # reporting success while changing nothing for the user it was run for.
 as_user() {
   if [[ "$AS_ROOT" == 1 ]]; then
-    runuser -u "$USER_NAME" -- env HOME="$USER_HOME" \
+    # The runtime vars ride along too: root's XDG_RUNTIME_DIR (/run/user/0) would
+    # make w-ssh create its socket link there — EPERM for the account, "could not
+    # switch the SSH agent". Point them at the account's own runtime dir when it
+    # has a session, drop them when it does not (firstboot: w-ssh then falls back
+    # to /run/user/<uid> itself). Same recipe as deploy.sh's w_render_user_theme.
+    local rt; rt="/run/user/$(id -u "$USER_NAME")"
+    local -a sess=(-u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS)
+    [[ -d "$rt" ]] && sess=(XDG_RUNTIME_DIR="$rt" DBUS_SESSION_BUS_ADDRESS="unix:path=$rt/bus")
+    runuser -u "$USER_NAME" -- env "${sess[@]}" HOME="$USER_HOME" \
       XDG_CONFIG_HOME="$USER_HOME/.config" WCONF_HOME="$USER_HOME" "$@"
   else
     env HOME="$USER_HOME" XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$USER_HOME/.config}" \
@@ -91,6 +99,12 @@ cat <<EOF
        already ships the action file.
 
     2. Settings → "Enable SSH Agent". The socket path is pinned for you.
+
+       Also turn on "Close to tray" (Settings → Preferences). The window pops
+       out of the tray for every SSH request and stays after you approve;
+       Super+Q hides it — but with this OFF (the app's default) Super+Q quits
+       the app, and the SSH agent inside it dies too. "Remember SSH
+       authorizations → until vault lock" keeps the prompts to one per key.
 
     3. Name each SSH key in the vault after the hosts it belongs to, e.g.
        "GitLab git.example.com" or "Prod 10.0.0.7", then run:

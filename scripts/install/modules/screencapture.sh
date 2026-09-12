@@ -12,8 +12,10 @@
 #   • libnotify    — notify-send confirmations (Quickshell is the notif server).
 # The orchestrator is the w-screenshot script (deployed by --rootfs, and here too
 # so a standalone --screencapture is self-contained). Keybinds live in the skel
-# hyprland.lua (deployed by --hyprland). The satty theme axis ships with the
-# w-style library tree (deployed by --style), so nothing axis-related is done here.
+# hyprland.lua (deployed by --hyprland); satty's float/center window rule is the
+# drop-in /usr/share/w/hypr/rules.d/satty.lua (same --rootfs + here deal). The
+# satty theme axis ships with the w-style library tree (deployed by --style), so
+# nothing axis-related is done here.
 #
 # TODO (future session): add screen VIDEO recording here — a `record` subcommand
 # in w-screenshot (wf-recorder / wl-screenrec) plus a Quickshell bar indicator.
@@ -24,16 +26,24 @@ mod_screencapture() {
 
   info "Deploying w-screenshot..."
   install -Dm755 "$SRC/rootfs/usr/bin/w-screenshot" /usr/bin/w-screenshot
+  install -Dm644 "$SRC/rootfs/usr/share/w/hypr/rules.d/satty.lua" /usr/share/w/hypr/rules.d/satty.lua
 
   # Ensure the default save directory exists for every human account (satty and
   # `w-screenshot --save` write PNGs into ~/Pictures/Screenshots; the tool mkdir -p's
   # it too, so this is a convenience — but a per-user one, not a primary-user one).
-  local -a wusers=(); local entry wuser home_dir
+  # Level by level: `install -d -o` owns ONLY the last component and creates the
+  # missing parents with default (root) attributes, so a single call on
+  # Pictures/Screenshots left ~/Pictures root-owned and unwritable for the user
+  # (same trap as `install -D` in mod_shell/mod_quickshell; also re-owns a dir a
+  # previous deploy left behind).
+  local -a wusers=(); local entry wuser home_dir d
   mapfile -t wusers < <(w_home_users)
   ((${#wusers[@]})) || echo "  WARN: no W user account found (uid 1000-65533), skipping Screenshots dir."
   for entry in "${wusers[@]}"; do
     wuser="${entry%%$'\t'*}"; home_dir="${entry#*$'\t'}"
-    install -d -o "$wuser" -g "$wuser" "$home_dir/Pictures/Screenshots"
+    for d in Pictures Pictures/Screenshots; do
+      install -d -o "$wuser" -g "$wuser" "$home_dir/$d"
+    done
   done
 
   info "Screen capture installed. Bind: \$mod+Ctrl+S → region → satty. Palette themes via --style."
