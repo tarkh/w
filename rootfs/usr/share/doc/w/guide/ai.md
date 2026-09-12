@@ -5,9 +5,9 @@ order: 9
 summary: Opening the assistant, profiles for different setups, hosts and providers, where API keys are kept, how much it may do on its own, and the optional advanced stack.
 sources:
   - path: .claude/library/w-ai.md
-    sha256: cf1f9571d398b0c8958eb9eb64703fb0c8e16d7fe3c4fb13b3e9af2302b71ba2
+    sha256: 84c2548bb34980529d3bb8de44e1fafae767d0ae41bed5bcc8256a0cfeb04ef6
   - path: .claude/library/ai-integration.md
-    sha256: a6d74379bf5431af871ca58676b41cf5c9130ec6cfe0faf20d1edec104711d16
+    sha256: 5f4a8849037853d9cbfb11e636e72a9d3e3667574eeda3b038adb83252a1784a
 ---
 
 W ships an AI assistant that runs in a terminal and can drive the machine
@@ -55,6 +55,11 @@ does not need your password: it lands in your own account.
 
 If a session refuses to start, `w-ai ready` in a terminal answers why in one
 word.
+
+The third-party CLIs W can drive are Claude Code and Codex. W hands them its
+tools and its identity only when it launches them itself — start `claude` or
+`codex` by hand in a project of your own and you get the plain tool, with
+nothing of W attached.
 
 ## API keys
 

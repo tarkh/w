@@ -27,16 +27,32 @@ root_device() {
   fi
 }
 
+# The disk the live medium is on — by the iso9660 UUID/label archiso puts on the
+# kernel cmdline (archisosearchuuid= / archisolabel=), resolved with blkid and
+# walked down to the whole disk. Not by mount: with copytoram (Ventoy's default)
+# the medium is unmounted after boot, so /run/archiso/bootmnt is empty. Works
+# through a Ventoy dm-mapper or a dd-written stick alike; prints nothing when the
+# installer runs outside the live ISO (no archiso params → no filter).
+_live_disk() {
+  local tag dev
+  tag="$(sed -n -E 's/.*archiso(searchuuid|label)=([^ ]+).*/\1=\2/p' /proc/cmdline)"
+  [[ -n "$tag" ]] || return 0
+  tag="${tag/searchuuid=/UUID=}"; tag="${tag/label=/LABEL=}"
+  for dev in $(blkid -o device -t "$tag" 2>/dev/null); do
+    lsblk -snlo NAME,TYPE "$dev" 2>/dev/null | awk '$2 == "disk" {print $1}'
+  done | sort -u
+}
+
+# One "/dev/<name><TAB><size>  <model>" row per installable disk (the menu step's
+# tag/desc contract). Skipped: loop/cdrom, empty card readers ("0B" — selectable,
+# but wipefs would fail mid-install), and the medium the ISO booted from.
 disk_list() {
-  local entries=()
-  while IFS= read -r line; do
-    local name size model
-    name=$(echo "$line" | awk '{print $1}')
-    size=$(echo "$line" | awk '{print $2}')
-    model=$(echo "$line" | awk '{$1=$2=""; print $0}' | xargs)
-    entries+=("/dev/$name" "$size  $model")
+  local live name size model
+  live=" $(_live_disk | tr '\n' ' ') "
+  while read -r name size model; do
+    [[ "$size" == 0B || "$live" == *" $name "* ]] && continue
+    printf '/dev/%s\t%7s  %s\n' "$name" "$size" "$model"
   done < <(lsblk -dno NAME,SIZE,MODEL | grep -Ev "^loop|^sr")
-  echo "${entries[@]}"
 }
 
 disk_partition() {

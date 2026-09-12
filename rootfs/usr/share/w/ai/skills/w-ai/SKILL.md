@@ -9,7 +9,7 @@ description: >-
   configure yourself" requests.
 sources:
   - path: .claude/library/w-ai.md
-    sha256: cf1f9571d398b0c8958eb9eb64703fb0c8e16d7fe3c4fb13b3e9af2302b71ba2
+    sha256: 84c2548bb34980529d3bb8de44e1fafae767d0ae41bed5bcc8256a0cfeb04ef6
 ---
 
 # W AI (configuring the assistant)
@@ -61,10 +61,18 @@ own updater, so they are installed per-user on request.
   installed), `not-logged-in`, `signed-in`, `installed`; the active one is marked.
   This one command answers "why won't Claude Code start".
 - `w-ai host install <name>` — install that host's CLI with the vendor's own
-  installer (for `claude`, Anthropic's native installer into `~/.local/bin`).
+  installer (`claude`: Anthropic's, `codex`: OpenAI's — both per-user into
+  `~/.local/bin`, both self-updating; the AUR is deliberately not used).
   Idempotent: it does nothing when the binary is already there.
-- `w-ai host login <name>` — run the CLI's own sign-in (`claude auth login`), a
-  browser flow. Needed once per account for a `subscription` profile.
+- `w-ai host login <name>` — run the CLI's own sign-in (`claude auth login`,
+  `codex login`), a browser flow. Needed once per account for a `subscription`
+  profile.
+- Both provider CLIs get W as **launch flags** from `w-ai` — nothing is written
+  into `~/.claude` or `~/.codex`, so a `claude`/`codex` started by hand in some
+  project is the plain tool. Claude Code gets W's skills natively (plugin dir);
+  Codex has no per-launch skill root, so under it W's knowledge arrives the goose
+  way — MCP resources and `w_search_knowledge` — and its identity as inline
+  developer instructions.
 - `w-ai host status <name>` — what that host declares: its binary, which `PROVIDER`
   values it accepts, whether it needs a `MODEL`, what it is good for.
 
@@ -110,8 +118,9 @@ profiles panel directly:
 - A chevron on a row expands an inline editor for all six fields (dropdowns for
   HOST/PROVIDER/MODE/MCP_PROFILE, text fields for MODEL/OLLAMA_HOST) — changes apply
   as soon as they're picked, no separate save step. The PROVIDER dropdown adapts to
-  the chosen HOST: for Claude Code it offers *subscription* and *anthropic*, for the
-  local path only *ollama*, and MODEL is labelled optional where the CLI picks its own.
+  the chosen HOST: for Claude Code it offers *subscription* and *anthropic*, for
+  Codex *subscription* and *openai*, for the local path only *ollama*, and MODEL
+  is labelled optional where the CLI picks its own.
 - When the chosen host needs attention, a row appears right under HOST: **"not
   installed → Install"** or **"not signed in → Sign in"**, each opening a terminal
   that runs the matching `w-ai host` command. No password prompt — a provider CLI is

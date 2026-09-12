@@ -706,6 +706,18 @@ EOF
   echo "$dir"
 }
 
+# stdin -> a TOML basic string ("…"), for handing a whole file to Codex's
+# `-c key=value` (the value is parsed as TOML). Basic strings need exactly the
+# backslash, the quote and the control characters escaped; a trailing newline is
+# kept — the model sees the file as it is on disk. Pure bash on purpose: this
+# runs on every launch, and AGENTS.md is a dozen KiB, not a dozen MiB.
+toml_string() {
+  local s; s="$(cat; printf x)"; s="${s%x}"
+  s="${s//\\/\\\\}"; s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"; s="${s//$'\t'/\\t}"; s="${s//$'\r'/\\r}"
+  printf '"%s"' "$s"
+}
+
 # Launch the host. $2 (optional) is a seed prompt: when non-empty the host answers
 # it first, then drops into an interactive session (goose `run -t … -s`; the provider
 # CLIs take an initial prompt as a positional arg). Empty seed = a bare session. Each
@@ -769,14 +781,37 @@ launch_host() {
       exec claude "${args[@]}"
       ;;
     codex)
-      need_bin codex "codex is not installed — see $SYS_ROOT/hosts/codex/config.toml"
-      # Codex needs no launch flags: it reads AGENTS.md natively and finds w-mcp
-      # through the [mcp_servers.w-mcp] block its preset documents for
-      # ~/.codex/config.toml. Same no-op-for-subscription key handling as claude.
+      need_bin codex "codex is not installed — run: w-ai host install codex"
+      # Same no-op-for-subscription key handling as claude: OPENAI_API_KEY goes
+      # out only when the profile deliberately picked the API path.
       export_provider_key "$provider"
-      echo "w-ai: host=codex provider=$provider"
-      [[ -n "$seed" ]] && exec codex "$seed"
-      exec codex
+      # Same principle as claude — W's layers as launch flags, nothing written into
+      # ~/.codex, a bare `codex` elsewhere stays plain. Codex takes no config FILE
+      # for one run, but `-c key=value` overrides any config key for this
+      # invocation, which covers both layers it can take at launch:
+      #   -c mcp_servers.w-mcp.command  actions: w-mcp under its plain name, so
+      #                             tool names match what W's skills and docs
+      #                             say. The user's own servers from
+      #                             ~/.codex/config.toml still load.
+      #   -c developer_instructions  identity: AGENTS.md inline. Codex reads
+      #                             AGENTS.md only from the project and from
+      #                             ~/.codex, neither of which is W's to write
+      #                             to — so the text itself rides the flag, as
+      #                             a TOML string (see toml_string()).
+      # Knowledge has no per-launch root in Codex (fixed discovery paths only),
+      # so W's skills reach it through w-mcp — MCP resources + w_search_knowledge
+      # — exactly as they reach goose. hosts/codex/README.md has the opt-ins.
+      local -a args=(-c 'mcp_servers.w-mcp.command="w-mcp"')
+      local agents_md
+      if agents_md="$(ai_file AGENTS.md)"; then
+        args+=(-c "developer_instructions=$(toml_string < "$agents_md")")
+      fi
+      # NEEDS_MODEL=no: Codex chooses interactively (/model); a MODEL in the
+      # profile is a pin, honoured only for the profile's own host.
+      [[ -n "${MODEL:-}" && "$host" == "${HOST_CONFIGURED:-$host}" ]] && args+=(--model "$MODEL")
+      echo "w-ai: host=codex provider=$provider model=${MODEL:-host default}"
+      [[ -n "$seed" ]] && exec codex "${args[@]}" "$seed"
+      exec codex "${args[@]}"
       ;;
     *)
       err "unknown host '$host' — see: w-ai host list"; exit 2 ;;
@@ -1098,7 +1133,7 @@ cmd_host() {
       fi
       if [[ -z "$cmd" ]]; then
         # No vendor one-liner W is willing to pick for the user (goose comes from
-        # apply.sh --ai; codex ships through several package managers).
+        # apply.sh --ai, local rides the same binary).
         err "no installer declared for host '$h' — see $SYS_ROOT/hosts/$h/ for how to install it"
         exit 1
       fi

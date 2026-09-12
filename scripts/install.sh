@@ -97,7 +97,7 @@ done
 # to have rotted by the time phase 6 arrives — re-test it then rather than trusting
 # it. What the gate covers instead is the axis that IS live: edge against two
 # different remotes, which is what edge_repo below is for.
-mode_list() { echo "edge $(t s_mode_edge)"; }
+mode_list() { printf '%s\t%s\n' edge "$(t s_mode_edge)"; }
 
 # Laptop vs desktop — drives the w-power preset (idle/lid/profile-auto/charge). The
 # detected chassis is emitted first so dialog highlights it as the default; the user
@@ -112,9 +112,9 @@ computer_type_list() {
   fi
   [[ "$det" == desktop ]] && compgen -G "/sys/class/power_supply/BAT*" >/dev/null 2>&1 && det=laptop
   if [[ "$det" == laptop ]]; then
-    echo "laptop $(t s_computer_laptop) desktop $(t s_computer_desktop)"
+    printf '%s\t%s\n' laptop "$(t s_computer_laptop)" desktop "$(t s_computer_desktop)"
   else
-    echo "desktop $(t s_computer_desktop) laptop $(t s_computer_laptop)"
+    printf '%s\t%s\n' desktop "$(t s_computer_desktop)" laptop "$(t s_computer_laptop)"
   fi
 }
 

@@ -91,6 +91,11 @@ setup() {
   [[ "$(effective_provider claude anthropic)" == anthropic ]]
 }
 
+@test "effective_provider: codex defaults to its own subscription, honours openai" {
+  [[ "$(effective_provider codex '')"       == subscription ]]
+  [[ "$(effective_provider codex openai)"   == openai ]]
+}
+
 # A profile copied from a goose one carries PROVIDER=openrouter. Falling back to
 # the first AUTH_MODE (rather than passing it through) is what keeps `w-ai
 # status` and the Hub from claiming an OpenRouter key is missing for Claude Code.
@@ -252,6 +257,13 @@ _model_for_launch() {   # mirrors the guard in launch_host's claude branch
   grep -qx 'MODEL=' "$f"
 }
 
+@test "profiles/codex.conf: subscription host, no model pinned" {
+  local f="$REPO/rootfs/usr/share/w/ai/profiles/codex.conf"
+  grep -qx 'HOST=codex' "$f"
+  grep -qx 'PROVIDER=subscription' "$f"
+  grep -qx 'MODEL=' "$f"
+}
+
 # ── The Claude Code preset the launcher passes as flags ──────────────────────
 @test "claude preset: the plugin's skills resolve to W's shipped skills" {
   local link="$REPO/rootfs/usr/share/w/ai/hosts/claude/plugin/skills"
@@ -275,6 +287,43 @@ assert d['mcpServers']['w-mcp']['command'] == 'w-mcp', d
 import json
 d = json.load(open('$REPO/rootfs/usr/share/w/ai/hosts/claude/plugin/.claude-plugin/plugin.json'))
 assert d['name'] == 'w', d
+"
+}
+
+# ── The Codex preset the launcher passes as flags ────────────────────────────
+# Codex takes no config file for one run, so both layers ride `-c key=value`,
+# and the identity layer is AGENTS.md itself as a TOML string. The escaping is
+# what a real TOML parser has to accept back, byte for byte — a stray quote
+# would otherwise turn the whole identity into a parse error (or, worse, into
+# a literal string with the quotes still on).
+@test "codex preset: installed by the vendor's own installer, per user" {
+  [[ "$(host_field codex INSTALL_CMD)" == *chatgpt.com/codex/install.sh* ]]
+  [[ "$(host_field codex INSTALL_SCOPE)" == user ]]
+  [[ "$(host_field codex AUTH_CHECK)" == "codex login status" ]]
+}
+
+@test "codex preset: the manual config.toml preset is gone — flags replaced it" {
+  [ ! -e "$REPO/rootfs/usr/share/w/ai/hosts/codex/config.toml" ]
+  [ -f "$REPO/rootfs/usr/share/w/ai/hosts/codex/README.md" ]
+}
+
+@test "toml_string: AGENTS.md survives a TOML round trip byte for byte" {
+  local src="$REPO/rootfs/usr/share/w/ai/AGENTS.md" out="$BATS_TEST_TMPDIR/dev.toml"
+  toml_string < "$src" > "$out"
+  python3 -c "
+import tomllib
+v = tomllib.loads('developer_instructions=' + open('$out').read())['developer_instructions']
+assert v == open('$src').read(), 'round trip differs'
+"
+}
+
+@test "toml_string: backslash, quote, tab and CR are escaped, not dropped" {
+  local out="$BATS_TEST_TMPDIR/edge.toml"
+  printf 'a\\b "q"\tx\r\n' | toml_string > "$out"
+  python3 -c "
+import tomllib
+v = tomllib.loads('k=' + open('$out').read())['k']
+assert v == 'a\\\\b \"q\"\\tx\\r\\n', repr(v)
 "
 }
 

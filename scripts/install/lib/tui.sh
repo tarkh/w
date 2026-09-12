@@ -266,7 +266,7 @@ render_step() {
   # which trips `set -u` ("id: unbound variable").
   local id="$1"
   local type="${S_TYPE[$id]}" var="${S_VAR[$id]}"
-  local title prompt rc opts
+  local title prompt rc
   title="$(t "${S_TITLE[$id]}")"; prompt="$(t "${S_PROMPT[$id]}")"
   while true; do
     rc=0
@@ -275,11 +275,19 @@ render_step() {
         password) w_password "$title" "$prompt" ;;
         yesno)    w_yesno "$title" "$prompt" ;;
         menu)
-          read -ra opts <<< "$("${S_OPTS[$id]}")"
+          # Options fn prints one row per line as "tag<TAB>desc" (same contract as
+          # checklist/timezone) so descriptions may contain spaces. The old
+          # whitespace-split form fed dialog a mis-paired or odd argument list on
+          # any disk model with a space ("Samsung SSD 970 …"): odd → dialog exits
+          # 255 before drawing and the wizard re-rendered the step forever behind
+          # the previous infobox; even → tags and descriptions shifted by one.
+          local opts=() mtag mdesc
+          while IFS=$'\t' read -r mtag mdesc; do
+            [[ -n "$mtag" ]] && opts+=("$mtag" "$mdesc")
+          done < <("${S_OPTS[$id]}")
+          (( ${#opts[@]} )) || die "Step '$id': no options to choose from."
           w_menu "$title" "$prompt" "${ANSWERS[$var]:-}" "${opts[@]}" ;;
         checklist)
-          # Options fn prints one row per line as "tag<TAB>desc" so descriptions
-          # may contain spaces (unlike the whitespace-split menu format).
           local cl=() ptag pdesc
           while IFS=$'\t' read -r ptag pdesc; do
             [[ -n "$ptag" ]] && cl+=("$ptag" "$pdesc")

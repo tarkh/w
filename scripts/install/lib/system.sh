@@ -22,20 +22,22 @@ sys_locale() {
   echo "KEYMAP=${CONF_KEYMAP:-us}" > "$MNT/etc/vconsole.conf"
 }
 
-# Option sources + validator for the keymap/locale wizard steps. Descriptions are
-# single tokens (the menu splits items on whitespace).
+# Option sources for the keymap/locale wizard steps: one "tag<TAB>desc" row per
+# entry (the menu step's contract; descriptions may contain spaces).
 km_list() {
-  echo "us English-US uk English-UK de German fr French es Spanish it Italian" \
-       "ru Russian ua Ukrainian pl Polish cz Czech sv-latin1 Swedish fi Finnish" \
-       "no Norwegian dk Danish br-abnt2 Portuguese-BR pt-latin1 Portuguese" \
-       "tr Turkish gr Greek hu Hungarian nl Dutch"
+  printf '%s\t%s\n' \
+    us English-US  uk English-UK  de German  fr French  es Spanish  it Italian \
+    ru Russian  ua Ukrainian  pl Polish  cz Czech  sv-latin1 Swedish  'fi' Finnish \
+    no Norwegian  dk Danish  br-abnt2 Portuguese-BR  pt-latin1 Portuguese \
+    tr Turkish  gr Greek  hu Hungarian  nl Dutch
 }
 locale_list() {
-  echo "en_US.UTF-8 English-US en_GB.UTF-8 English-UK ru_RU.UTF-8 Russian" \
-       "de_DE.UTF-8 German fr_FR.UTF-8 French es_ES.UTF-8 Spanish it_IT.UTF-8 Italian" \
-       "pt_BR.UTF-8 Portuguese-BR pl_PL.UTF-8 Polish uk_UA.UTF-8 Ukrainian" \
-       "cs_CZ.UTF-8 Czech tr_TR.UTF-8 Turkish nl_NL.UTF-8 Dutch sv_SE.UTF-8 Swedish" \
-       "ja_JP.UTF-8 Japanese zh_CN.UTF-8 Chinese"
+  printf '%s\t%s\n' \
+    en_US.UTF-8 English-US  en_GB.UTF-8 English-UK  ru_RU.UTF-8 Russian \
+    de_DE.UTF-8 German  fr_FR.UTF-8 French  es_ES.UTF-8 Spanish  it_IT.UTF-8 Italian \
+    pt_BR.UTF-8 Portuguese-BR  pl_PL.UTF-8 Polish  uk_UA.UTF-8 Ukrainian \
+    cs_CZ.UTF-8 Czech  tr_TR.UTF-8 Turkish  nl_NL.UTF-8 Dutch  sv_SE.UTF-8 Swedish \
+    ja_JP.UTF-8 Japanese  zh_CN.UTF-8 Chinese
 }
 # Doubles as the live apply: loadkeys both validates the code and remaps the
 # console so the passphrase steps that follow use the chosen layout.

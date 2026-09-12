@@ -8,7 +8,7 @@ description: >-
   or explaining what a recipe is allowed to do unattended.
 sources:
   - path: .claude/library/ai-integration.md
-    sha256: a6d74379bf5431af871ca58676b41cf5c9130ec6cfe0faf20d1edec104711d16
+    sha256: 5f4a8849037853d9cbfb11e636e72a9d3e3667574eeda3b038adb83252a1784a
 tools:
   - w_recipe_list
   - w_schedule_add

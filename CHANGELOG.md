@@ -8,6 +8,36 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.11.0
+
+- **Codex is a full assistant host.** OpenAI's Codex CLI now gets W's layers the
+  way Claude Code does — actions (`w-mcp`), identity, and W's knowledge through
+  `w-mcp` — as launch flags, so nothing is written into `~/.codex` and a `codex`
+  you start yourself in a project of your own stays a plain Codex. Until now
+  `w-ai host install codex` only pointed at a README and the W layers had to be
+  pasted into `~/.codex/config.toml` by hand. Now:
+  ```
+  w-ai host install codex     # OpenAI's standalone installer, per-user (~/.local/bin)
+  w-ai host login codex       # browser sign-in with your ChatGPT account
+  w-ai profile use codex      # or: Hub -> AI -> the codex profile
+  ```
+  From then on `w-ai`, `w-ai ask` and the `Super+W` palette open Codex. The
+  shipped `codex` profile runs on the ChatGPT login and W exports no key; set
+  `PROVIDER=openai` in the profile to pay per token against an API key instead
+  (`w-ai key set openai`). Codex picks its own model in the session (`/model`);
+  a `MODEL=` in the profile pins one. If you had pasted the old
+  `[mcp_servers.w-mcp]` block into `~/.codex/config.toml`, it is redundant now
+  and harmless either way. The AI guide and the on-box assistant know the new
+  commands; `/usr/share/w/ai/hosts/codex/README.md` has the details.
+
+- **Fixed: the installer broke on disks whose model name contains spaces** —
+  since v0.1.0. The disk step split its list on whitespace, so a
+  `Samsung SSD 970 EVO Plus` either left the wizard spinning behind the previous
+  message (it looked like a hang at *Cloning the repository…*) or produced
+  shifted, nonsensical entries. The list is built properly now, and empty card
+  readers and the live USB you booted from are no longer offered as install
+  targets. **New ISO only** — installed systems are not affected by this line.
+
 ## v0.10.0
 
 - **New bundle: telegram.** Telegram Desktop from Arch's own repository, with
