@@ -7,7 +7,7 @@ sources:
   - path: .claude/library/security.md
     sha256: 46eddc9d5ae01864fb5551e3a55e97e55855193aaaaa16c99b3556fa8aa66e8c
   - path: .claude/library/quickshell-bar.md
-    sha256: 172fcf47c0789b0b684968235fb741ff9c0de3cd09887d2a0648c5ba66c335ed
+    sha256: 535ef9874fedc06b73a9f2224283306e498bbdcde4d892a292f5b7b4c9263e6c
 anchors:
   connections: соединения
 ---

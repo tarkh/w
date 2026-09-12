@@ -17,7 +17,7 @@ sources:
   - path: .claude/library/quickshell-powermenu.md
     sha256: 8a5ae4b1fdf5e2dad05e7741d0aec8c2c8b9b20c0ba0bcedd92108383bffac33
   - path: .claude/library/quickshell-bar.md
-    sha256: 172fcf47c0789b0b684968235fb741ff9c0de3cd09887d2a0648c5ba66c335ed
+    sha256: 535ef9874fedc06b73a9f2224283306e498bbdcde4d892a292f5b7b4c9263e6c
   - path: .claude/library/package-hyprlock.md
     sha256: 2e16c523a5698d0b8e2aa87ddfdb93ca87fb357d884ee48cbecbb427c0a2c9f7
 tools:

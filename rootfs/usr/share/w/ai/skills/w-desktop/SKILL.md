@@ -12,7 +12,7 @@ sources:
   - path: .claude/library/quickshell.md
     sha256: 1ddc54593c92571de2d2b8658b376e7ecb2dc44b2292ca77da3ec07a3717bbe2
   - path: .claude/library/quickshell-bar.md
-    sha256: 172fcf47c0789b0b684968235fb741ff9c0de3cd09887d2a0648c5ba66c335ed
+    sha256: 535ef9874fedc06b73a9f2224283306e498bbdcde4d892a292f5b7b4c9263e6c
   - path: .claude/library/w-bar.md
     sha256: 32f85bd9637a23ce14e911d48ab0586ac0c569cc27f750bcdca25e3fdf5c75f6
   - path: .claude/library/quickshell-assistant.md
@@ -157,8 +157,8 @@ independent scheme — no user is authenticated yet, so there is no profile to r
 
 Everything shell-side is one Quickshell instance:
 
-- **Bar** — a layer-shell panel with data-driven blocks (workspaces, clock, volume,
-  battery, network, updates, notifications/DND, system monitors, tray, …). Its live config
+- **Bar** — a layer-shell panel with data-driven blocks (workspaces — the scratchpad
+  shows there as a glyph button, click toggles it — clock, volume, battery, network, updates, notifications/DND, system monitors, tray, …). Its live config
   is `~/.config/quickshell/w/config/bar.json` (user-owned) — that file holds *which blocks
   exist, what they do, and their colors*. Its **shape and translucency belong to the
   theme**, not to that file: height, corner radii, margins, padding, gaps and outlines from

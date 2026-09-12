@@ -8,6 +8,21 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.12.0
+
+- **The scratchpad has a button in the bar.** The workspaces block now shows
+  Hyprland's special workspace as a glyph button (nf-md-layers, 󰌨) after the
+  numbered ones: it lights up while the scratchpad is shown on the focused
+  monitor, and a click toggles it — the same as `Super+S`. Until now the
+  scratchpad, once anything was sent to it (`Super+Shift+S`), appeared in the
+  bar as a raw `special:scratchpad` text button sorted *before* workspace 1,
+  and clicking it did nothing useful — since v0.1.0. The glyph is overridable
+  like every other block icon: `"icon"` in the `workspaces` block of
+  `~/.config/quickshell/w/config/bar.json` (an empty string or a missing key
+  keeps the built-in one, so a `bar.json` you already edited needs no change).
+  w-session's own parking workspace never shows up there. Arrives with
+  `w-sync`; the bar restarts on its own.
+
 ## v0.11.0
 
 - **Codex is a full assistant host.** OpenAI's Codex CLI now gets W's layers the

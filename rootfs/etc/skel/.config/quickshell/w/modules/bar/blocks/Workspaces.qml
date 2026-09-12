@@ -4,6 +4,15 @@
 // switches to it. Colors resolve through BarConfig.col (theme token or #hex + a
 // separate per-element opacity) so any element can be made fully transparent (e.g.
 // a button with no border). Tone transitions use Motion (synced with Hyprland).
+//
+// Special workspaces (the scratchpad: negative id, name "special:<x>") are part of
+// Hyprland.workspaces too. They render as a glyph button after the numbered ones
+// (by id they would sort first), get the active tone while shown on the focused
+// monitor, and toggle on click. Quickshell never marks a special workspace
+// `focused` (it does not consume the `activespecial` event), so the shown state is
+// read from the monitor's IPC object, refreshed on the raw `activespecialv2` event.
+// `special:w-restore` is w-session's parking area — an implementation detail that
+// must never surface as a button (a click would expose it mid-restore).
 import Quickshell
 import Quickshell.Hyprland
 import QtQuick
@@ -29,6 +38,19 @@ Item {
     readonly property int buttonSize:   settings.buttonSize   !== undefined ? settings.buttonSize   : 0  // 0 = square (band height)
     readonly property int buttonBorder: BarConfig.geo(settings.buttonBorderWidth, BarConfig.borderButton)
     readonly property int fontSize:     settings.fontSize     !== undefined ? settings.fontSize     : 12
+    readonly property string specialGlyph: BarConfig.glyph(settings.icon, undefined, String.fromCodePoint(0xf0328))  // nf-md-layers
+
+    // Name of the special workspace currently shown on the focused monitor ("" = none).
+    readonly property string shownSpecial: {
+        const m = Hyprland.focusedMonitor;
+        const s = m && m.lastIpcObject ? m.lastIpcObject.specialWorkspace : null;
+        return s && s.name ? s.name : "";
+    }
+
+    Connections {
+        target: Hyprland
+        function onRawEvent(event) { if (event.name === "activespecialv2") Hyprland.refreshMonitors(); }
+    }
 
     implicitWidth:  zone.implicitWidth
     implicitHeight: parent ? parent.height : zone.implicitHeight
@@ -52,8 +74,10 @@ Item {
             spacing: block.buttonGap
 
             Repeater {
-                // Sorted ascending so buttons read left→right by workspace number.
-                model: [...Hyprland.workspaces.values].sort((a, b) => a.id - b.id)
+                // Numbered ascending (left→right by workspace number), specials last.
+                model: [...Hyprland.workspaces.values]
+                    .filter(w => w.name !== "special:w-restore")
+                    .sort((a, b) => (a.id < 0) - (b.id < 0) || a.id - b.id)
                 delegate: wsButton
             }
         }
@@ -64,7 +88,8 @@ Item {
         Rectangle {
             id: btn
             required property var modelData
-            readonly property bool isActive: modelData.focused
+            readonly property bool isSpecial: modelData.id < 0
+            readonly property bool isActive: isSpecial ? block.shownSpecial === modelData.name : modelData.focused
 
             height: parent.height
             width:  block.buttonSize > 0 ? block.buttonSize : height
@@ -95,8 +120,8 @@ Item {
 
             Text {
                 anchors.centerIn: parent
-                text: btn.modelData.name
-                font.family: Fonts.family
+                text: btn.isSpecial ? block.specialGlyph : btn.modelData.name
+                font.family: btn.isSpecial ? Fonts.mono : Fonts.family
                 font.pixelSize: block.fontSize
                 color: btn.isActive
                     ? BarConfig.col(block.settings.fontActiveColor   !== undefined ? block.settings.fontActiveColor   : block.settings.fontColor,
@@ -109,7 +134,13 @@ Item {
                 cursorShape: BarConfig.cursor(block.settings.cursor, Qt.PointingHandCursor)
                 acceptedButtons: Qt.LeftButton | (block.settings.clickColorRight !== undefined ? Qt.RightButton : Qt.NoButton)
                 onPressed: (mouse) => flash.pulse(mouse.button)
-                onClicked: (mouse) => { if (mouse.button === Qt.LeftButton) Hyprland.dispatch('hl.dsp.focus({ workspace = ' + btn.modelData.id + ' })'); }
+                onClicked: (mouse) => {
+                    if (mouse.button !== Qt.LeftButton) return;
+                    // toggle_special takes the bare name and adds the "special:" prefix itself.
+                    Hyprland.dispatch(btn.isSpecial
+                        ? 'hl.dsp.workspace.toggle_special("' + btn.modelData.name.replace(/^special:/, "") + '")'
+                        : 'hl.dsp.focus({ workspace = ' + btn.modelData.id + ' })');
+                }
             }
         }
     }
