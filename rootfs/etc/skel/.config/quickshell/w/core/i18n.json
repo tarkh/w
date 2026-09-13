@@ -336,7 +336,6 @@
   "disp.refresh":       { "en": "Refresh rate",                                                      "ru": "Частота обновления" },
   "disp.scale":         { "en": "Scale",                                                             "ru": "Масштаб" },
   "disp.scaleAuto":     { "en": "Auto",                                                              "ru": "Авто" },
-  "disp.scaleInvalid":  { "en": "may blur",                                                          "ru": "может смазать" },
   "disp.rotation":      { "en": "Rotation",                                                          "ru": "Поворот" },
   "disp.place":         { "en": "Position",                                                          "ru": "Расположение" },
   "disp.place.right":   { "en": "Right",                                                             "ru": "Справа" },

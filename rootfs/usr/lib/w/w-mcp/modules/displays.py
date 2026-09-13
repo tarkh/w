@@ -16,10 +16,14 @@ def register(mcp):
         """Monitor layout (Tier 0, read-only): every connected output with its live
         mode/scale/rotation/position, whether it is enabled/focused/primary (the W
         concept of "where the bar and login card live"), its saved `w-monitor` rule
-        if one exists, and a handful of its available modes. Wraps `w-monitor list`/
-        `status`/`modes` — the same fragment-backed source of truth the CLI and the
+        if one exists, a handful of its available modes, and the scale factors
+        Hyprland accepts for its current mode. Wraps `w-monitor list`/`status`/
+        `modes`/`scales` — the same fragment-backed source of truth the CLI and the
         Hub Displays panel use. Modes are capped to the top 5 (by resolution then
-        refresh rate) per output, not the full list, to stay compact.
+        refresh rate) per output, not the full list, to stay compact. Only pick a
+        scale from the `valid scales` line: the compositor rejects any other value
+        on reload and substitutes its own (both width/scale and height/scale must be
+        exact integers on the 1/120 grid) — `w-monitor scale` refuses them too.
 
         Read-only: there is no monitor-mutation tool here on purpose. Changing a
         setting means running `w-monitor <cmd> <output> ...` yourself (rootless,
@@ -69,6 +73,11 @@ def register(mcp):
                     top = [m.split("\t", 1)[0] for m in modes_out.splitlines()[:5] if m]
                     if top:
                         entry += f"\n  top modes: {', '.join(top)}"
+                scales_out = run(["w-monitor", "scales", name, "--porcelain"])
+                if not scales_out.startswith("("):
+                    valid = [l.split("\t", 1)[0] for l in scales_out.splitlines() if l[:1].isdigit()]
+                    if valid:
+                        entry += f"\n  valid scales: {', '.join(valid)}"
                 entries.append(entry)
             body = "\n".join(entries) if entries else "(no live displays detected)"
         return f"Primary: {primary or '(none set)'}\n{body}"

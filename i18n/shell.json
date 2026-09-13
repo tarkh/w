@@ -1272,10 +1272,6 @@
     "en": "Auto",
     "ru": "Авто"
   },
-  "disp.scaleInvalid": {
-    "en": "may blur",
-    "ru": "может смазать"
-  },
   "disp.rotation": {
     "en": "Rotation",
     "ru": "Поворот"

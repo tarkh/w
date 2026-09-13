@@ -17,9 +17,13 @@ Info: Configure monitors (resolution, scale, rotation, layout).
 Commands:
   list [--porcelain]              Show live outputs (name, mode, scale, layout...)
   modes <output> [--porcelain]    List available modes for a live output
+  scales <output> [WxH] [--porcelain]  List the scale factors Hyprland accepts for a live
+                                   output (or for an explicit mode) — see "scale"
   status [--porcelain]            Show saved rules from the fragment + primary
   mode <output> <WxH@Hz|preferred>    Set resolution / refresh rate
-  scale <output> <float|auto>         Set scale factor
+  scale <output> <float|auto>         Set scale factor (must be one Hyprland accepts for the
+                                       output's mode — "scales" lists them; otherwise the
+                                       compositor rejects it and picks its own)
   transform <output> <0|90|180|270>   Set rotation
   place <output> <right|left|above|below|auto>   Set layout position
   enable <output>                 Re-enable a disabled output
@@ -46,6 +50,7 @@ Exit codes: 0 success · 1 runtime/validation error · 2 usage
 
 Examples:
   w-monitor mode eDP-1 1920x1080@60
+  w-monitor scales eDP-1
   w-monitor scale eDP-1 1.5
   w-monitor place HDMI-A-1 right
   w-monitor primary eDP-1

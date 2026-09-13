@@ -5,7 +5,7 @@ order: 5
 summary: Monitor layout, scaling and placement, the separate login-screen layout, the blue-light filter, and what to do about a black screen.
 sources:
   - path: .claude/library/w-monitor.md
-    sha256: 1e4168494d14166436d8af5c591ee9d85b189a60daf96c9fb6e0341caf5c0fc5
+    sha256: 689863c164a64b4b75f2d1792311220a04fff6baac3699149ae1a4fcf16bbf6b
   - path: .claude/library/w-nightlight.md
     sha256: 188429cc8a36233d3fa8b55fc0bcd8a16e56a1463ac04b78782d7b8cd447bd03
 ---
@@ -21,8 +21,11 @@ expect:
 
 - **Resolution** and **Refresh rate** — the modes the monitor actually reports.
 - **Scale** — how large everything is drawn. **Auto** picks a sensible value for
-  the panel's size and density. A scale the output cannot divide cleanly is
-  marked *may blur*; it still works, it just resamples.
+  the panel's size and density. The list holds only scales the compositor
+  accepts for this resolution, in roughly quarter steps — a panel that cannot
+  divide by 1.5 offers 1.6 instead. Hyprland rejects anything else and quietly
+  substitutes its own pick, so W never offers it; `w-monitor scales <output>`
+  prints the full set.
 - **Rotation** — for a monitor standing on its side.
 - **Position** — where this output sits relative to the ones already placed:
   *Left*, *Right*, *Above*, *Below*. There is no pixel arithmetic to do; W

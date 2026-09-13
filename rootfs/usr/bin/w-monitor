@@ -93,9 +93,13 @@ Info: Configure monitors (resolution, scale, rotation, layout).
 Commands:
   list [--porcelain]              Show live outputs (name, mode, scale, layout...)
   modes <output> [--porcelain]    List available modes for a live output
+  scales <output> [WxH] [--porcelain]  List the scale factors Hyprland accepts for a live
+                                   output (or for an explicit mode) — see "scale"
   status [--porcelain]            Show saved rules from the fragment + primary
   mode <output> <WxH@Hz|preferred>    Set resolution / refresh rate
-  scale <output> <float|auto>         Set scale factor
+  scale <output> <float|auto>         Set scale factor (must be one Hyprland accepts for the
+                                       output's mode — "scales" lists them; otherwise the
+                                       compositor rejects it and picks its own)
   transform <output> <0|90|180|270>   Set rotation
   place <output> <right|left|above|below|auto>   Set layout position
   enable <output>                 Re-enable a disabled output
@@ -122,6 +126,7 @@ Exit codes: 0 success · 1 runtime/validation error · 2 usage
 
 Examples:
   w-monitor mode eDP-1 1920x1080@60
+  w-monitor scales eDP-1
   w-monitor scale eDP-1 1.5
   w-monitor place HDMI-A-1 right
   w-monitor primary eDP-1
@@ -154,6 +159,52 @@ require_jq() { command -v jq >/dev/null 2>&1 || die "jq not found"; }
 live_json() { have_hypr && hyprctl monitors all -j 2>/dev/null || echo '[]'; }
 
 validate_output() { [[ "$1" =~ ^[A-Za-z0-9@._-]+$ ]] || die "invalid output name: $1"; }
+
+# ── Scale validity (mirrors Hyprland's CMonitor::applyMonitorRule) ─────────────
+# Hyprland accepts a scale only if BOTH width/scale and height/scale are exact
+# integers in double arithmetic — no epsilon — on the fractional-scale grid of
+# 1/120 (scale = k/120; clients get k over wp_fractional_scale). Anything else is
+# rejected on reload: the compositor searches ±89/120 for the nearest clean value
+# (up first), applies THAT with a red notification, and falls back to its auto
+# scale when the search fails. awk computes in C doubles, so the comparison below
+# is bit-for-bit the compositor's (a purely arithmetic k | 120·w check is NOT:
+# 1600x900 passes k=125 on paper and fails in floating point).
+SCALE_AWK='
+function clean(k,  s, x, y) { s = k / 120; x = w / s; y = h / s; return x == int(x) && y == int(y) }
+function fmt(k,  s) { s = sprintf("%.4f", k / 120); sub(/0+$/, "", s); sub(/\.$/, "", s); return s }
+'
+# valid_scales <w> <h> → "<scale>\t<pick>" per line, ascending, for 1.0..3.0.
+# pick=1 is the ~0.25-step selection the Hub offers: each anchor 1, 1.25, … 3
+# snapped to its nearest valid scale (ties go down), duplicates collapsed.
+valid_scales() {
+  awk -v w="$1" -v h="$2" "$SCALE_AWK"'BEGIN {
+    n = 0
+    for (k = 120; k <= 360; k++) if (clean(k)) K[n++] = k
+    for (a = 120; a <= 360; a += 30) {
+      best = -1; bd = 999
+      for (i = 0; i < n; i++) { d = K[i] > a ? K[i] - a : a - K[i]; if (d < bd) { bd = d; best = K[i] } }
+      if (best > 0) P[best] = 1
+    }
+    for (i = 0; i < n; i++) printf "%s\t%d\n", fmt(K[i]), (K[i] in P)
+  }'
+}
+# scale_grid_k <scale> → k; prints the nearest k and fails when the value is off
+# the 1/120 grid (Hyprland would snap it silently, leaving config ≠ live state).
+scale_grid_k() {
+  awk -v s="$1" 'BEGIN { k = s * 120; r = int(k + 0.5); print r; exit (k - r > 0.01 || r - k > 0.01) }'
+}
+# scale_nearest <w> <h> <k> → k when Hyprland accepts it, else the value its own
+# ±1/120 search would substitute (up first, never below 0.25), else "".
+scale_nearest() {
+  awk -v w="$1" -v h="$2" -v k="$3" "$SCALE_AWK"'BEGIN {
+    if (clean(k)) { print k; exit }
+    for (i = 1; i < 90; i++) {
+      if (clean(k + i)) { print k + i; exit }
+      if (k - i >= 30 && clean(k - i)) { print k - i; exit }
+    }
+  }'
+}
+scale_fmt() { awk -v k="$1" "$SCALE_AWK"'BEGIN { print fmt(k) }'; }
 
 # ── Which outputs physically exist (works with no compositor) ────────────────────
 # The kernel knows what is plugged in whether or not anything is drawing on it, so
@@ -346,14 +397,43 @@ cmd_modes() {
     seen[$key]=1
     rows+=("$((w * h))"$'\t'"$w"$'\t'"$h"$'\t'"$hz")
   done <<< "$modes"
-  local area
+  # Porcelain carries a 4th column: the recommended scales for that mode (comma-
+  # joined `valid_scales` picks) — scale validity is a property of the WxH, not of
+  # the output, so the Hub gets the right set for whichever resolution is chosen
+  # (live or staged) from the one per-output fetch it already does.
+  local area; local -A picks=()
   printf '%s\n' "${rows[@]}" | sort -t$'\t' -k1,1nr -k4,4nr | while IFS=$'\t' read -r area w h hz; do
     if [[ -n "$porcelain" ]]; then
-      printf '%sx%s@%s\t%sx%s\t%s\n' "$w" "$h" "$hz" "$w" "$h" "$hz"
+      [[ -n "${picks[${w}x$h]:-}" ]] \
+        || picks[${w}x$h]="$(valid_scales "$w" "$h" | awk -F'\t' '$2 == 1 { printf "%s%s", (c++ ? "," : ""), $1 }')"
+      printf '%sx%s@%s\t%sx%s\t%s\t%s\n' "$w" "$h" "$hz" "$w" "$h" "$hz" "${picks[${w}x$h]}"
     else
       printf '  %-14s %-10s %s\n' "${w}x${h}@${hz}" "${w}x${h}" "$hz"
     fi
   done
+}
+
+cmd_scales() {
+  local out="${1:-}"; [[ -n "$out" ]] || { err "scales: <output> [WxH] [--porcelain] required"; exit 2; }
+  shift
+  validate_output "$out"
+  local porcelain="" wh="" a
+  for a in "$@"; do case "$a" in --porcelain) porcelain=1 ;; *) wh="$a" ;; esac; done
+  local w h
+  if [[ -n "$wh" ]]; then
+    [[ "$wh" =~ ^([0-9]+)x([0-9]+)$ ]] || die "invalid mode: $wh (expected WxH)"
+    w="${BASH_REMATCH[1]}"; h="${BASH_REMATCH[2]}"
+  else
+    require_jq
+    wh="$(jq -r --arg o "$out" '.[] | select(.name==$o) | "\(.width)x\(.height)"' <<< "$(live_json)")"
+    [[ "$wh" =~ ^([0-9]+)x([0-9]+)$ ]] || die "no live mode for output: $out (is it connected?) — pass WxH explicitly"
+    w="${BASH_REMATCH[1]}"; h="${BASH_REMATCH[2]}"
+  fi
+  local list; list="$(valid_scales "$w" "$h")"
+  if [[ -n "$porcelain" ]]; then printf '%s\n' "$list"; return 0; fi
+  printf '  %s %sx%s\n  recommended:  %s\n  all valid:    %s\n' "$out" "$w" "$h" \
+    "$(awk -F'\t' '$2 == 1 { printf "%s%s", (c++ ? "  " : ""), $1 }' <<< "$list")" \
+    "$(awk -F'\t' '{ printf "%s%s", (c++ ? "  " : ""), $1 }' <<< "$list")"
 }
 
 cmd_status() {
@@ -398,17 +478,17 @@ cmd_scale() {
   [[ -n "$out" && -n "$scale" ]] || { err "scale: <output> <float|auto> required"; exit 2; }
   validate_output "$out"
   [[ "$scale" =~ ^([0-9]+(\.[0-9]+)?|auto)$ ]] || die "invalid scale: $scale"
-  if [[ "$scale" != "auto" ]] && have_hypr; then
-    require_jq
-    local width
-    width="$(jq -r --arg o "$out" '.[] | select(.name==$o) | .width' <<< "$(live_json)")"
-    if [[ -n "$width" && "$width" != "null" ]]; then
-      local clean; clean="$(awk -v w="$width" -v s="$scale" \
-        'BEGIN{ l=w/s; d=l-int(l); if(d<0)d=-d; print (d<0.001)?1:0 }')"
-      if [[ "$clean" != "1" ]]; then
-        local suggestion; suggestion="$(awk -v w="$width" -v s="$scale" \
-          'BEGIN{ r=int(w/s+0.5); if(r<1)r=1; printf "%.4f", w/r }' | sed -E 's/0+$//; s/\.$//')"
-        die "scale $scale does not divide $out's ${width}px cleanly (invalid logical pixels); nearest valid scale: $suggestion"
+  if [[ "$scale" != "auto" ]]; then
+    local k; k="$(scale_grid_k "$scale")" \
+      || die "scale $scale is off the 1/120 grid Hyprland uses (it would be snapped silently); nearest: $(scale_fmt "$k")"
+    ((k >= 30)) || die "scale must be at least 0.25"
+    if have_hypr; then
+      require_jq
+      local wh
+      wh="$(jq -r --arg o "$out" '.[] | select(.name==$o) | "\(.width)x\(.height)"' <<< "$(live_json)")"
+      if [[ "$wh" =~ ^([0-9]+)x([0-9]+)$ ]]; then
+        local near; near="$(scale_nearest "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$k")"
+        [[ "$near" == "$k" ]] || die "scale $scale gives $out ($wh) fractional logical pixels — Hyprland rejects it${near:+; nearest valid scale: $(scale_fmt "$near")} (see: w-monitor scales $out)"
       fi
     fi
   fi
@@ -759,6 +839,7 @@ if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then return 0; fi
 case "${1:-}" in
   list)      shift; cmd_list "$@" ;;
   modes)     shift; cmd_modes "$@" ;;
+  scales)    shift; cmd_scales "$@" ;;
   status)    shift; cmd_status "$@" ;;
   mode)      shift; cmd_mode "$@" ;;
   scale)     shift; cmd_scale "$@" ;;

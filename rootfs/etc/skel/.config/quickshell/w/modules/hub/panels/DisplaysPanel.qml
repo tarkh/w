@@ -11,8 +11,10 @@
 // Lua/JSON edits. State is two porcelain reads: `list` for live mode/scale/transform/
 // enabled/focused per output, `status` for the saved fragment rule (position — `list`
 // carries no auto-* semantics — and primary), plus a sequential per-output `modes` fetch
-// feeding the Resolution/Refresh dropdowns (one shared Process walking the output list, not
-// a fan-out — this panel rarely sees more than a handful of heads). Every mutation is a
+// feeding the Resolution/Refresh/Scale dropdowns (one shared Process walking the output
+// list, not a fan-out — this panel rarely sees more than a handful of heads; the scale
+// list rides along as the 4th porcelain column because Hyprland's scale validity is a
+// property of the WxH, so it is computed once in w-monitor and never here). Every mutation is a
 // tracked `w-monitor` Process; on exit the panel re-probes all three sources.
 //
 // Login-screen scope: root-owned config, no live compositor to mutate against (the greeter
@@ -248,7 +250,7 @@ Item {
     property var liveRows: []        // [{name,desc,mode,scale,transform,enabled,focused}]
     property string primary: ""
     property var rules: ({})         // name -> {mode,scale,transform,position,disabled}
-    property var modesByOutput: ({}) // name -> [{full,wh,hz}]
+    property var modesByOutput: ({}) // name -> [{full,wh,hz,scales}]
     property var modesQueue: []
     property int modesQueueIdx: 0
 
@@ -459,7 +461,7 @@ Item {
                     if (!line.trim()) continue;
                     const f = line.split("\t");
                     if (f.length < 3) continue;
-                    rows.push({ full: f[0], wh: f[1], hz: f[2] });
+                    rows.push({ full: f[0], wh: f[1], hz: f[2], scales: (f[3] || "").split(",").filter(x => x) });
                 }
                 const mb = Object.assign({}, root.modesByOutput);
                 mb[name] = rows;
@@ -498,26 +500,24 @@ Item {
     // are contiguous, so the first match is the highest refresh rate for that resolution.
     function bestHzFor(modes, wh) { for (const m of modes) if (m.wh === wh) return m.hz; return ""; }
 
-    readonly property var scalePresets: ["auto", "1", "1.25", "1.5", "1.75", "2"]
-    // Mirrors w-monitor's own scale-validity check (integral logical pixels).
-    function scaleValid(widthPx, scaleId) {
-        if (scaleId === "auto" || !widthPx) return true;
-        const s = parseFloat(scaleId);
-        if (!s) return true;
-        const l = widthPx / s;
-        return Math.abs(l - Math.round(l)) < 0.001;
+    // Scale options come from w-monitor (`modes --porcelain`, 4th column): the ~0.25-step
+    // picks among the scales Hyprland actually accepts for that WxH — anything else the
+    // compositor rejects on reload and substitutes its own. The current value is kept in
+    // the list even when it is not a pick (set by hand, or the mode changed under it).
+    // Ids are the 1/120-grid values w-monitor prints (1.6667); labels are rounded.
+    function scaleK(scaleStr) { return Math.round(parseFloat(scaleStr) * 120); }
+    function scaleOptions(modes, wh, current) {
+        let ids = [];
+        for (const m of modes) { if (m.wh === wh) { ids = m.scales.slice(); break; } }
+        if (current !== "auto" && !isNaN(parseFloat(current)) && !ids.some(id => root.scaleK(id) === root.scaleK(current)))
+            ids.push(current);
+        ids.sort((a, b) => parseFloat(a) - parseFloat(b));
+        return [{ id: "auto", label: Strings.t("disp.scaleAuto") }]
+            .concat(ids.map(id => ({ id: id, label: root.scaleValueText(id) })));
     }
-    function scaleOptions(widthPx) {
-        return root.scalePresets.map(id => {
-            const label = id === "auto" ? Strings.t("disp.scaleAuto") : id;
-            const invalid = !root.scaleValid(widthPx, id);
-            return { id: id, label: invalid ? (label + " (" + Strings.t("disp.scaleInvalid") + ")") : label };
-        });
-    }
-    function scaleCurrentId(scaleStr) {
+    function scaleCurrentId(options, scaleStr) {
         if (scaleStr === "auto") return "auto";
-        const f = parseFloat(scaleStr);
-        for (const p of root.scalePresets) { if (p !== "auto" && Math.abs(parseFloat(p) - f) < 0.001) return p; }
+        for (const o of options) { if (o.id !== "auto" && root.scaleK(o.id) === root.scaleK(scaleStr)) return o.id; }
         return "";
     }
     function scaleValueText(scaleStr) {
@@ -853,9 +853,9 @@ Item {
                         focused: root.focusRegion === "content" && root.focusIdx === root.contentIndexOf["row:" + sect.index + ":scale"]
                         icon: "zoom-in"; glyph: String.fromCodePoint(0xf034b)   // nf-md-magnify_plus
                         label: Strings.t("disp.scale")
-                        currentId: root.scaleCurrentId(sect.modelData.scale)
+                        currentId: root.scaleCurrentId(options, sect.modelData.scale)
                         value: root.scaleValueText(sect.modelData.scale)
-                        options: root.scaleOptions(parseInt(sect.wh.split("x")[0]) || 0)
+                        options: root.scaleOptions(sect.modes, sect.wh, sect.modelData.scale)
                         onActivated: menuLayer.openMenu(scaleRow, options, currentId, (id) =>
                             root.applyOrStage(sect.modelData.name, "scale", ["w-monitor", "scale", sect.modelData.name, id], id))
                     }

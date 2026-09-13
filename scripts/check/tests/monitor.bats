@@ -15,6 +15,11 @@
 #     panel off with an external attached is legitimate, and both guards allow it;
 #     what breaks the machine is unplugging the external afterwards.
 #
+# The tail of the file covers the other thing the compositor silently overrides:
+# a scale it will not accept (both width/scale and height/scale must be exact
+# integers on the 1/120 grid). `scales` enumerates what it takes, `scale` refuses
+# what it would reject — the arithmetic is Hyprland's own, in the same doubles.
+#
 # None of it needs a monitor, a compositor or root, which is the point: the guards
 # have to hold on a TTY and in the pre-session hook, so their inputs are seams.
 # W_DRM_ROOT stands in for the kernel's connector list and a PATH stub for a live
@@ -73,6 +78,17 @@ hypr_stub() { # <name>...
   json="${json%,}]"
   printf '#!/usr/bin/env bash\ncase "$1" in\n  version) exit 0 ;;\n  monitors) echo %s ;;\nesac\nexit 0\n' \
     "'$json'" > "$bin/hyprctl"
+  chmod +x "$bin/hyprctl"
+  PATH="$bin:$PATH"
+}
+
+# A live output with a real mode: `scales`/`scale`/`modes` read width/height and
+# availableModes, which the name-only stub above does not carry.
+hypr_stub_mode() { # <name> <w> <h> [<availableModes json array>]
+  local bin="$BATS_TEST_TMPDIR/bin" modes="${4:-[\"$2x$3@60.00Hz\"]}"
+  mkdir -p "$bin"
+  printf '#!/usr/bin/env bash\ncase "$1" in\n  version) exit 0 ;;\n  monitors) echo %s ;;\nesac\nexit 0\n' \
+    "'[{\"name\":\"$1\",\"width\":$2,\"height\":$3,\"availableModes\":$modes}]'" > "$bin/hyprctl"
   chmod +x "$bin/hyprctl"
   PATH="$bin:$PATH"
 }
@@ -253,4 +269,76 @@ hypr_stub() { # <name>...
   run sanity_frag "$GREETER_FRAG"
   [[ "$output" == *"re-enabled eDP-1"* ]]
   grep -q 'output = "eDP-1".*disabled = false' "$GREETER_FRAG"
+}
+
+# ── scale: only what Hyprland accepts ─────────────────────────────────────────
+# Reference panels, each verified against the compositor's own arithmetic
+# (CMonitor::applyMonitorRule): a 15" MacBook 2880x1800, a 13" 2560x1600 whose
+# 1.5 the greeter turned into 1.6 on the machine it was installed on, and the
+# dev VM's 1719x1039 — 1039 is prime, so nothing but 1 divides it.
+
+@test "scales: the ~0.25-step picks snap to what the panel can divide" {
+  hypr_stub_mode eDP-1 2880 1800
+  run cmd_scales eDP-1
+  [[ "$output" == *"recommended:  1  1.25  1.5  1.8  2  2.25  2.5  2.6667  3"* ]]
+  [[ "$output" == *"all valid:    1  1.125  1.2  1.25  1.3333  1.5  1.6  1.6667  1.8  1.875  2  2.25  2.4  2.5  2.6667  3"* ]]
+}
+
+@test "scales: 2560x1600 has no 1.5 or 1.75 — 1.6 and 1.6667 stand in" {
+  hypr_stub_mode eDP-1 2560 1600
+  run cmd_scales eDP-1 --porcelain
+  [[ "$output" == *$'1.6\t1'* && "$output" == *$'1.6667\t1'* ]]
+  [[ "$output" != *$'1.5\t'* && "$output" != *$'1.75\t'* ]]
+}
+
+@test "scales: an odd height leaves only 1 (the VM case)" {
+  hypr_stub_mode Virtual-1 1719 1039
+  run cmd_scales Virtual-1 --porcelain
+  [[ "$output" == $'1\t1' ]]
+}
+
+@test "scales: an explicit WxH needs no live output" {
+  run cmd_scales HDMI-A-1 1366x768
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"recommended:  1  2"* ]]
+  run cmd_scales HDMI-A-1
+  [[ "$status" -eq 1 && "$output" == *"pass WxH explicitly"* ]]
+}
+
+@test "scales: floating point decides, not integer arithmetic" {
+  # 1600x900 / (125/120) is 1536x864 on paper; in doubles the height misses by an
+  # ulp and Hyprland rejects it. Mirroring the math exactly is the whole point.
+  run cmd_scales X 1600x900 --porcelain
+  [[ "$output" != *"1.0417"* ]]
+}
+
+@test "scale: refuses a value the compositor would replace, naming its pick" {
+  hypr_stub_mode eDP-1 2880 1800
+  run cmd_scale eDP-1 1.75
+  [[ "$status" -eq 1 ]]
+  [[ "$output" == *"nearest valid scale: 1.8"* ]]
+  [[ ! -e "$FRAG" ]]
+}
+
+@test "scale: refuses a value off the 1/120 grid even with no session" {
+  run cmd_scale eDP-1 1.63
+  [[ "$status" -eq 1 && "$output" == *"nearest: 1.6333"* ]]
+  run cmd_scale eDP-1 0.2
+  [[ "$status" -eq 1 && "$output" == *"at least 0.25"* ]]
+}
+
+@test "scale: a grid value the panel divides is written as typed" {
+  hypr_stub_mode eDP-1 2560 1600
+  run cmd_scale eDP-1 1.6667
+  [[ "$status" -eq 0 ]]
+  grep -q 'scale = "1.6667"' "$FRAG"
+}
+
+@test "modes --porcelain: carries the picks for each resolution" {
+  hypr_stub_mode eDP-1 2560 1600 '["2560x1600@60.00Hz","1719x1039@75.00Hz"]'
+  run cmd_modes eDP-1 --porcelain
+  [[ "${lines[0]}" == $'2560x1600@60\t2560x1600\t60\t1,1.25,1.6,1.6667,2,2.1333,2.5,2.6667' ]]
+  [[ "${lines[1]}" == $'1719x1039@75\t1719x1039\t75\t1' ]]
+  run cmd_modes eDP-1
+  [[ "${lines[0]}" != *","* ]]
 }

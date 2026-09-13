@@ -8,7 +8,7 @@ description: >-
   screen after a display change, or warming the screen in the evening.
 sources:
   - path: .claude/library/w-monitor.md
-    sha256: 1e4168494d14166436d8af5c591ee9d85b189a60daf96c9fb6e0341caf5c0fc5
+    sha256: 689863c164a64b4b75f2d1792311220a04fff6baac3699149ae1a4fcf16bbf6b
   - path: .claude/library/w-nightlight.md
     sha256: 188429cc8a36233d3fa8b55fc0bcd8a16e56a1463ac04b78782d7b8cd447bd03
 tools:
@@ -36,6 +36,15 @@ login card; Hyprland has no "primary"). Backed by `~/.config/hypr/monitors.lua` 
 fragment is the source of truth, not `hyprctl`) and managed by the `w-monitor` CLI /
 the Hub's Displays panel (tab "Session"). A second, fully independent scope covers the
 login screen (`w-monitor greeter ...`, root + polkit) — the Hub's "Login screen" tab.
+
+**Scale is not free-form.** Hyprland accepts a scale only when both width/scale and
+height/scale are exact integers on its 1/120 grid; anything else it rejects on reload
+and substitutes its own pick (with a red notification) — a 2880x1800 panel takes 1.5
+but not 1.75 (it would become 1.8), a 2560x1600 one takes 1.6 but not 1.5, an odd
+height may leave only 1. `w_monitor_status` lists the accepted values per output
+(`valid scales:`), `w-monitor scales <output> [WxH]` prints them with a ~0.25-step
+recommendation, and `w-monitor scale` refuses any other value naming the nearest
+accepted one. Pick from that list; never guess a "nice" number.
 
 Changing scale also resizes the **lock screen** (hyprlock): its widgets are scale-aware
 and drawn only on the primary output, so a `w-monitor scale`/`primary` change lands at
@@ -127,8 +136,9 @@ are **user-scope** (no privilege — the same power the user's own shell has), s
 polkit prompt is involved; the host's tool-approval covers them.
 
 - **`w_monitor_status`** *(read)* — full monitor layout: every output's live mode/
-  scale/rotation/position, enabled/focused/primary, its saved `w-monitor` rule, and
-  a handful of its available modes. Use it for "what monitors do I have" / "what's
+  scale/rotation/position, enabled/focused/primary, its saved `w-monitor` rule, a
+  handful of its available modes and the scales Hyprland accepts for its current
+  mode. Use it for "what monitors do I have" / "what's
   my resolution/scale" and before running any `w-monitor` command — see **Displays**
   above for the ask-before-guessing rule on output names.
 - **`w_nightlight_status`** *(read)* — the night light: mode, night temperature, the

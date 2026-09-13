@@ -8,6 +8,30 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.14.0
+
+- **Display scale: only values Hyprland actually accepts.** Hyprland takes a
+  scale factor only when both the width and the height of the mode divide by
+  it exactly (on its 1/120 grid); anything else it rejects on reload,
+  substitutes its own nearest value with a red notification, and from then on
+  your config no longer matches what is on screen. W checked only the width,
+  so the Hub's Displays panel offered scales such as 1.5 on 2560x1600 or
+  1.75 *(may blur)* on 2880x1800 that the compositor would never apply. Now:
+  - the Hub's **Scale** list is **Auto** plus the scales the compositor accepts
+    for the selected resolution, in roughly quarter steps (a panel that cannot
+    divide by 1.5 offers 1.6 instead). The fixed preset list and the
+    *may blur* tag are gone; a value you set by hand stays in the list even
+    when it is not one of the picks;
+  - new `w-monitor scales <output> [WxH]` prints the full accepted set for an
+    output (or for any resolution you name), with the recommended picks marked;
+  - `w-monitor scale <output> <value>` refuses a value Hyprland would reject
+    and names the nearest accepted one, instead of writing a config the
+    compositor then overrides.
+  Arrives with `w-sync` and takes effect at once — the shell is reloaded as
+  part of the update. A scale already saved in your config is left alone; if
+  Hyprland has been substituting it, pick one from the new list. The displays
+  guide, `w-monitor --help` and the on-box assistant describe the change.
+
 ## v0.13.2
 
 - **Nothing changes on an installed machine.** Second half of v0.13.1: the
