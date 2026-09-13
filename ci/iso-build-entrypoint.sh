@@ -68,9 +68,13 @@ pacman -Su --noconfirm
 #                     `magick` and reads pixels back to prove the alpha survived;
 #                     without it two cases SKIP, and --strict turned the first
 #                     nightly after v0.13.0 red before the build even started.
+#   librsvg           the mark is an SVG, and ImageMagick's SVG coder is an
+#                     optional dependency — with imagemagick alone the same two
+#                     cases fail on `no decode delegate for SVG`. The target
+#                     lists it for the same reason (packages/pacman.txt).
 info "Installing build and check dependencies..."
 pacman -S --noconfirm --needed \
-  archiso base-devel git rsync sudo jq openssh imagemagick \
+  archiso base-devel git rsync sudo jq openssh imagemagick librsvg \
   shellcheck ruff bats python python-numpy python-cryptography qt6-declarative quickshell
 
 # The paths suite asserts no shipped /usr/bin path collides with a file owned by

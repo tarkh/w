@@ -8,6 +8,13 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.13.2
+
+- **Nothing changes on an installed machine.** Second half of v0.13.1: the
+  nightly build's check now also has ImageMagick's SVG decoder (`librsvg`),
+  without which the boot-logo verification failed instead of skipping. `w-sync`
+  sees a version bump and nothing else.
+
 ## v0.13.1
 
 - **Nothing changes on an installed machine.** This release only fixes the
