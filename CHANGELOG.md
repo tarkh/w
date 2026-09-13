@@ -8,6 +8,15 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.13.1
+
+- **Nothing changes on an installed machine.** This release only fixes the
+  project's own nightly build: the check that runs before the ISO is assembled
+  needed ImageMagick (v0.13.0's theme-tinted boot logo is verified with it) and
+  the build container did not have it, so the first nightly after v0.13.0 stopped
+  before building anything. The tool is now installed there. `w-sync` will pick
+  this up as a version bump and nothing else.
+
 ## v0.13.0
 
 - **Fixed: DNS lookups timing out for 10+ seconds on some networks** — since

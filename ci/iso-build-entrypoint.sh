@@ -64,9 +64,13 @@ pacman -Su --noconfirm
 #                     the telegram bundle's tdata seeder and its dev-side
 #                     reader do AES-IGE through it; the tdata round-trip suite
 #                     SKIPs without it and --strict rightly refuses the skip.
+#   imagemagick       the plymouth suite tints the inherited boot mark through
+#                     `magick` and reads pixels back to prove the alpha survived;
+#                     without it two cases SKIP, and --strict turned the first
+#                     nightly after v0.13.0 red before the build even started.
 info "Installing build and check dependencies..."
 pacman -S --noconfirm --needed \
-  archiso base-devel git rsync sudo jq openssh \
+  archiso base-devel git rsync sudo jq openssh imagemagick \
   shellcheck ruff bats python python-numpy python-cryptography qt6-declarative quickshell
 
 # The paths suite asserts no shipped /usr/bin path collides with a file owned by
