@@ -8,6 +8,31 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.15.0
+
+- **New pack: `graphics`.** GIMP 3.2, Inkscape 1.4, Krita 6, and G'MIC filters,
+  themed to match W out of the box. Install with `w-pack install graphics`.
+- **The on-box AI assistant can drive GIMP and Inkscape directly**, through a
+  new per-pack MCP-server channel: install `graphics` and the assistant gets
+  working tools for both editors, visible in `w-ai status` as `MCP extra:`.
+- **AI assistants no longer ask twice for W's own tools.** Goose, Codex, and
+  Claude Code each used to raise their own approval prompt before running a
+  W-curated tool — installing a knowledge pack is already consent (the polkit
+  prompt for anything privileged is unchanged). Goose's first-run telemetry
+  prompt is now also answered off by default.
+- **The tool list assistants receive is markedly smaller** — cut by roughly a
+  fifth to nearly half, depending on host — so more of a small local model's
+  context stays free. Same tools, leaner descriptions.
+- **The assistant's skill catalog is generated once and read the same way on
+  every host** (Goose, Codex, Claude Code); the old flat `llms.txt` file is
+  gone (removed automatically on update).
+- **The assistant now knows how to work with LibreOffice documents headlessly**
+  (convert/replace text via UNO) and **how to find, pull, and run containers**
+  with quadlet/Podman — ask it and it can carry these out itself.
+- **Obsidian vaults created after your first login now get W's theme
+  immediately**, not just at the next login.
+- Bitwarden's floating window is slightly bigger (900×800 instead of 800×790).
+
 ## v0.14.0
 
 - **Display scale: only values Hyprland actually accepts.** Hyprland takes a

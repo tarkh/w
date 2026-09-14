@@ -21,6 +21,8 @@
 #     config/root/<abs>              # source for absolute (system) manifest paths
 #     wstyle/<band>-<token>/module.sh# w-style axis (deployed to w-style modules.d/)
 #     ai/SKILL.md                    # AI knowledge (curated into /usr/share/w/ai/skills/)
+#     mcp/<name>.conf                # MCP server drop-ins (deployed to /usr/share/w/ai/mcp.d/,
+#                                     # w-ai hands them to every host at launch)
 #     quadlet/                       # optional systemd quadlet templates
 #
 # The bundle tree is staged to /usr/share/w/packs by `apply.sh --packs` (edge) or,
@@ -89,6 +91,7 @@ STATE="${W_PACKS_STATE:-/var/lib/w/packs.json}"         # machine layer state
 USER_STATE_REL=".local/state/w/packs.json"              # per-user layer state (in $HOME)
 WSTYLE_DROPIN="${W_PACKS_WSTYLE_DROPIN:-/usr/lib/w/w-style/modules.d}"  # w-style axis drop-in root
 AI_SKILLS="${W_PACKS_AI_SKILLS:-/usr/share/w/ai/skills}"  # curated AI knowledge
+MCP_DROPIN="${W_PACKS_MCP_DROPIN:-/usr/share/w/ai/mcp.d}"  # MCP server drop-ins (read by w-ai)
 DEPLOY_SDK="${W_PACKS_DEPLOY_SDK:-/usr/lib/w/lib/deploy.sh}"  # seed_user_file (config-ownership SDK)
 HYPR_RULES_DIR="${W_PACKS_HYPR_RULES_DIR:-/usr/share/w/hypr/rules.d}"  # Hyprland rule drop-ins (vendor layer)
 
@@ -520,6 +523,21 @@ deploy_ai() {
   install -Dm644 "$skill" "$AI_SKILLS/$name/SKILL.md"
 }
 
+# ── MCP servers (bundle mcp/<name>.conf → w-ai drop-in root) ─────────────────
+# The fourth pack channel after env.d / zshrc.d / rules.d: a bundle whose
+# software speaks MCP declares its server here (COMMAND/ARGS/REQUIRES, see w-ai)
+# and w-ai hands it to every host as a launch flag. The machine-level file
+# stays honest for an account without the bundle's user layer: w-ai skips a
+# drop-in whose REQUIRES is missing. Effect: the next assistant launch.
+deploy_mcp() {
+  local name="$1" bdir; bdir="$(bundle_dir "$name")"
+  compgen -G "$bdir/mcp/*.conf" >/dev/null 2>&1 || return 0
+  info "Registering '$name' MCP servers into $MCP_DROPIN..."
+  install -d "$MCP_DROPIN"
+  local f
+  for f in "$bdir"/mcp/*.conf; do install -Dm644 "$f" "$MCP_DROPIN/$(basename "$f")"; done
+}
+
 # ── setup.sh / setup-user.sh (bundle post-install tuning, idempotent) ────────
 # Two scripts because there are two layers. setup.sh tunes the MACHINE (services,
 # system paths, package variants) and gets no user at all — it used to receive
@@ -589,6 +607,7 @@ install_bundle() {
   deploy_configs_system "$name"
   deploy_wstyle         "$name"
   deploy_ai             "$name"
+  deploy_mcp            "$name"
   run_setup             "$name"
   record_install        "$name"
   bundle_has_hypr_rules "$name" && reload_hyprland_sessions
@@ -685,6 +704,7 @@ refresh_bundle() {
   deploy_configs_system "$name"
   deploy_wstyle         "$name"
   deploy_ai             "$name"
+  deploy_mcp            "$name"
   run_setup             "$name"
   bundle_has_hypr_rules "$name" && reload_hyprland_sessions
 
@@ -796,6 +816,13 @@ remove_ai() {
   rm -rf "${AI_SKILLS:?}/$name"
 }
 
+remove_mcp() {
+  local name="$1" bdir f; bdir="$(bundle_dir "$name")"
+  compgen -G "$bdir/mcp/*.conf" >/dev/null 2>&1 || return 0
+  info "Unregistering '$name' MCP servers from $MCP_DROPIN..."
+  for f in "$bdir"/mcp/*.conf; do rm -f "${MCP_DROPIN:?}/$(basename "$f")"; done
+}
+
 # Forget the bundle. Both states are rewritten the same way they are written —
 # tmp + mv + re-chmod 0644, because mktemp makes 0600 and a 0600 packs.json is
 # what once made the user-scope AI tools report "not installed".
@@ -877,6 +904,7 @@ remove_bundle() {
   bundle_has_hypr_rules "$name" && reload_hyprland_sessions
   remove_wstyle        "$name"
   remove_ai            "$name"
+  remove_mcp           "$name"
   state_forget         "$name"
   info "Bundle '$name' removed."
 }

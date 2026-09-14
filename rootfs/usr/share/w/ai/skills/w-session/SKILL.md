@@ -200,5 +200,5 @@ polkit prompt is involved; the host's tool-approval covers them.
   overwrite.
 - **`w_layout_apply`** — **the most destructive tool in this domain: it closes the
   user's windows.** `dry_run` defaults to true; lead with its number and get agreement
-  before `dry_run=false`. Its description carries the rest (what the save dialogs do and
-  do not cover, why its output never means "finished") — read it before calling.
+  before `dry_run=false`. What the save dialogs do and do not cover, and why its output
+  never means "finished", is in **Named layouts** above — read it before calling.

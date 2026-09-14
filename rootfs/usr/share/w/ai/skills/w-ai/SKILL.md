@@ -9,7 +9,7 @@ description: >-
   configure yourself" requests.
 sources:
   - path: .claude/library/w-ai.md
-    sha256: 84c2548bb34980529d3bb8de44e1fafae767d0ae41bed5bcc8256a0cfeb04ef6
+    sha256: 16ea299f6ccf9f714bce95837cab935afc592a87ebe99781d4343ddc9c6d5b4c
 ---
 
 # W AI (configuring the assistant)
@@ -32,14 +32,19 @@ a fleet machine, by `/etc/w/policy.d/ai.conf` — a site policy that pins a key 
 | `HOST` | `goose` (default) \| `local` \| `claude` \| `codex` | which runtime launches. `local` is goose forced onto Ollama. `claude` is Claude Code, `codex` is the Codex CLI — both optional, installed on demand. |
 | `PROVIDER` | `openrouter` \| `anthropic` \| `openai` \| `google` \| `ollama` \| `subscription` | for goose: the LLM backend it talks to. For `claude`/`codex` it selects the **auth mode**: `subscription` means the CLI's own login and W passes no key at all; naming the API provider instead (`anthropic` for Claude Code, `openai` for Codex) makes W pass a key from the keyring, which switches the user to pay-per-token API billing. A value that doesn't apply to the host falls back to the host's first accepted one, so a profile copied from a goose one can't leave `claude` looking like it needs an OpenRouter key. |
 | `MODEL` | provider-specific id | e.g. `anthropic/claude-sonnet-5` on OpenRouter, `llama3.1` on Ollama. **Required** for goose/local — W never runs `goose configure`, so an empty value fails at launch regardless of provider (`w-ai ready` catches this first). **Optional** for `claude`/`codex`: those pick a model inside the session, so leave it empty unless the user wants to pin one. |
-| `MODE` | `auto` (default) \| `smart_approve` \| `approve` \| `chat` | how eagerly the host runs tools without asking. This is host-level UX, not the real security boundary — privileged actions always stop at a system password/fingerprint prompt regardless of `MODE`. |
+| `MODE` | `auto` (default) \| `smart_approve` \| `approve` \| `chat` | how eagerly the host runs tools without asking. This is host-level UX, not the real security boundary — privileged actions always stop at a system password/fingerprint prompt regardless of `MODE`. W's own tools (`w-mcp` and the pack servers) are never held for host confirmation on any host: goose carries a pre-approved `permission.yaml`, codex/claude get server-level allow rules — so switching to a stricter mode prompts for the *host's* tools only. MCP servers the user registered by hand keep the host's normal confirmation flow. |
 | `OLLAMA_HOST` | host:port | only relevant for `PROVIDER=ollama` / `HOST=local`. |
 | `MCP_PROFILE` | empty (auto) \| `full` \| `minimal` | how much of this assistant's own tool surface is offered — irrelevant to end users, leave empty. |
 
 ## Commands
 
 - `w-ai status` — current host/provider/model/mode, whether the host binary is
-  installed, whether a key is present in the keyring.
+  installed, whether a key is present in the keyring, and `MCP extra:` — the MCP
+  servers optional bundles registered for the assistant (`mcp.d` drop-ins, e.g.
+  `inkscape, gimp` from the `graphics` bundle). Every host gets them at launch, as
+  launch flags, alongside `w-mcp`; one marked `(missing)` is registered on the
+  machine but not set up for this account — `w-pack setup <bundle>` fixes it, then
+  launch `w-ai` again (the flags are computed per launch, nothing is cached).
 - `w-ai config` — open the user override in an editor.
 - `w-ai key set|rm|list <provider>` — store/remove/list an API key in the system
   keyring (never plaintext). `set` prompts interactively — never ask the user to
@@ -71,8 +76,10 @@ own updater, so they are installed per-user on request.
   into `~/.claude` or `~/.codex`, so a `claude`/`codex` started by hand in some
   project is the plain tool. Claude Code gets W's skills natively (plugin dir);
   Codex has no per-launch skill root, so under it W's knowledge arrives the goose
-  way — MCP resources and `w_search_knowledge` — and its identity as inline
-  developer instructions.
+  way — the skill catalog in `w-mcp`'s session-start instructions, one skill at
+  a time through `w_skill_read` — and its identity as inline developer
+  instructions. Every host sees the same catalog exactly once: natively where the
+  host loads skills itself, in the instructions everywhere else.
 - `w-ai host status <name>` — what that host declares: its binary, which `PROVIDER`
   values it accepts, whether it needs a `MODEL`, what it is good for.
 

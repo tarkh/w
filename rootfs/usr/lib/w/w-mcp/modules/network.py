@@ -1,8 +1,9 @@
 # w-mcp domain: network — NetworkManager/DNS/firewall state (Tier 0) + the
 # privileged DoT / firewall-zone / hostname actuation (Tier 2, via com.w.ai.actuate).
 import re
+from typing import Annotated, Literal
 
-from core import _actuate, _disabled_msg, _tool_on, conf_policy_block, run, tool
+from core import _actuate, _disabled_msg, _tool_on, conf_policy_block, desc, run, tool
 
 DOMAIN = "w-network"
 
@@ -34,10 +35,11 @@ def register(mcp):
 
     # ── Tier 2 — privileged, actuated through polkit (com.w.ai.actuate) ──────
     @tool(mcp, domain=DOMAIN)
-    def w_dns_provider(provider: str) -> str:
-        """Switch the system DNS-over-TLS resolver (Tier 2: privileged; polkit prompt).
-        `provider` is a catalog name (quad9, cloudflare, mullvad, google, adguard — see
-        w_dns_status). Reversible by switching back."""
+    def w_dns_provider(
+        provider: Annotated[str, desc("catalog name: quad9, cloudflare, mullvad, google, adguard (see w_dns_status)")],
+    ) -> str:
+        """Switch the system DNS-over-TLS resolver (Tier 2: privileged; polkit
+        prompt). Reversible."""
         if not _tool_on("DNS"):
             return _disabled_msg("w_dns_provider", "W_AI_TOOL_DNS")
         if not provider.strip():
@@ -46,11 +48,11 @@ def register(mcp):
         return blocked or _actuate("dns-provider", provider.strip())
 
     @tool(mcp, domain=DOMAIN)
-    def w_dns_mode(mode: str) -> str:
-        """Set the DNS-over-TLS enforcement mode (Tier 2: privileged; polkit prompt).
-        `mode` is 'on' (opportunistic DoT), 'strict' (DoT required — fail closed if the
-        resolver is unreachable), or 'off' (plain DNS). Reversible. See w_dns_status for
-        the current mode; use w_dns_provider to change *which* resolver is used."""
+    def w_dns_mode(
+        mode: Annotated[Literal["on", "strict", "off"], desc("on = opportunistic DoT; strict = DoT required, fails closed if the resolver is unreachable; off = plain DNS")],
+    ) -> str:
+        """Set the DNS-over-TLS enforcement mode (Tier 2: privileged; polkit
+        prompt). Reversible; w_dns_provider changes *which* resolver."""
         if not _tool_on("DNS"):
             return _disabled_msg("w_dns_mode", "W_AI_TOOL_DNS")
         m = mode.strip().lower()
@@ -60,10 +62,11 @@ def register(mcp):
         return blocked or _actuate("dns-mode", m)
 
     @tool(mcp, domain=DOMAIN)
-    def w_firewall_zone(zone: str) -> str:
-        """Set the firewalld default zone (Tier 2: privileged; polkit prompt). `zone`
-        is 'home' (W baseline: inbound ssh + mdns) or 'public' (untrusted networks:
-        inbound ssh only). Reversible."""
+    def w_firewall_zone(
+        zone: Annotated[Literal["home", "public"], desc("home = W baseline, inbound ssh + mdns; public = untrusted networks, inbound ssh only")],
+    ) -> str:
+        """Set the firewalld default zone (Tier 2: privileged; polkit prompt).
+        Reversible."""
         if not _tool_on("FIREWALL"):
             return _disabled_msg("w_firewall_zone", "W_AI_TOOL_FIREWALL")
         z = zone.strip().lower()
@@ -72,11 +75,12 @@ def register(mcp):
         return _actuate("firewall-zone", z)
 
     @tool(mcp, domain=DOMAIN)
-    def w_hostname_set(hostname: str) -> str:
-        """Set the machine's hostname (Tier 2: privileged; polkit prompt). `hostname`
-        is letters/digits/hyphens, 1-63 chars (e.g. 'my-laptop'). Sets it via
-        hostnamectl and mirrors the change into the /etc/hosts 127.0.1.1 line.
-        Reversible by setting it again. Gated by W_AI_TOOL_HOSTNAME."""
+    def w_hostname_set(
+        hostname: Annotated[str, desc("letters/digits/hyphens, 1-63 chars, e.g. 'my-laptop'")],
+    ) -> str:
+        """Set the machine's hostname via hostnamectl, mirrored into /etc/hosts
+        (Tier 2: privileged; polkit prompt). Reversible. Gated by
+        W_AI_TOOL_HOSTNAME."""
         if not _tool_on("HOSTNAME"):
             return _disabled_msg("w_hostname_set", "W_AI_TOOL_HOSTNAME")
         h = hostname.strip()

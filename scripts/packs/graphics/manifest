@@ -1,0 +1,44 @@
+# graphics bundle — config ownership (deploy.sh SDK + w-reset).
+# TSV: <path>\t<class>. Absolute path → config/root<path> (always managed);
+# home-relative → config/skel/<path>. class: user = seed-if-absent, managed =
+# overwrite (W owns it). A trailing '/' marks a directory tree.
+#
+# GIMP: `user` class on purpose. GIMP rewrites gimprc itself on every exit (two
+# writers on one file), so W seeds it ONCE, for accounts that have not run GIMP
+# yet, with the two lines that make GIMP follow the W theme: theme "System"
+# (GTK-themed chrome → the gtk + appearance axes) and colour scheme "system"
+# (light/dark from GTK's prefer-dark). An account whose GIMP already ran keeps
+# its gimprc — the two settings are one visit to Preferences → Interface →
+# Theme (documented in ai/SKILL.md).
+#
+# mcpinkscape: the server refuses to start without its JSON config
+# (~/.config/mcpinkscape.conf, hard-coded default path), so the bundle seeds a
+# sane one: stdio, bridge "auto" (native socket if ever built, else the
+# active-window CLI bridge, else offline), documents in ~/Pictures/mcpinkscape.
+# `user` class — the file also holds remote-mode API-key policy the user may
+# add; W never overwrites it.
+#
+# Krita: the same `user` seed idea. Krita's Settings → Themes lists every KDE
+# colour scheme on the XDG path, and W's qt axis already renders one there
+# (~/.local/share/color-schemes/W.colors, re-rendered on every theme switch) —
+# so the whole "Krita in W colours" is one key, [theme] Theme=W. Seeded for an
+# account whose Krita never ran; an existing kritarc gets the key added by
+# setup-user.sh only while it has none (a theme the user picked stays).
+#
+# Inkscape: `user` seed too, and for a reason found on the VM — Inkscape's
+# defaults do NOT follow the GTK theme on a first run. The Quick Setup screen
+# applies its default "Colorful" row before you see anything, and that row
+# hard-codes gtkTheme="Adwaita" (verified against 1.4.4 and by screenshot).
+# The seed carries the state the row cannot produce: no gtkTheme (= "Use
+# system theme (w-gtk)"), multicolor symbolic icons, and /options/boot/theme
+# "custom", which the first-run Quick Setup cannot match — so it applies
+# nothing and the Appearance combo simply shows empty. Inkscape fills in the
+# rest of the file itself on exit.
+#
+# Deliberately NOT owned: the GIMP plug-in and the uv tool
+# (installed by setup-user.sh, removed by teardown-user.sh — imperative, not
+# manifest rows), ~/.config/mimeapps.list (owned by the base `files` module).
+.config/GIMP/3.0/gimprc	user
+.config/inkscape/preferences.xml	user
+.config/kritarc	user
+.config/mcpinkscape.conf	user

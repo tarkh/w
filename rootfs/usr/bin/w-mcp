@@ -31,12 +31,17 @@ import os
 import sys
 from pathlib import Path
 
-try:
-    from mcp.server.fastmcp import FastMCP
-    from mcp.server.fastmcp.resources import FunctionResource
-except ModuleNotFoundError:
-    sys.stderr.write("w-mcp: python-mcp is not installed (pacman -S python-mcp)\n")
-    sys.exit(1)
+
+def _import_mcp():
+    """python-mcp is needed only to SERVE; the CLI fronts (memory/task/skills/
+    instructions) run without it, so dev hosts and CI can exercise them."""
+    global FastMCP, FunctionResource
+    try:
+        from mcp.server.fastmcp import FastMCP
+        from mcp.server.fastmcp.resources import FunctionResource
+    except ModuleNotFoundError:
+        sys.stderr.write("w-mcp: python-mcp is not installed (pacman -S python-mcp)\n")
+        sys.exit(1)
 
 # ── Module tree ───────────────────────────────────────────────────────────────
 # The SDK (core.py) and the domain modules live under this dir; W_MCP_LIB lets
@@ -52,29 +57,45 @@ import core  # import after sys.path is set up
 # + modules.memory._mem_context()) is known — FastMCP needs it at construction time.
 mcp = None
 
-# Prepended to modules.memory._mem_context() and passed as FastMCP's `instructions`
-# kwarg, which MCP hosts (Goose confirmed) fold into the session's system prompt —
-# the deterministic, cross-host delivery channel for session-start memory recall
-# (ai-integration.md §8; the alternative — dumping everything into every prompt,
-# like Goose's own memory extension — is exactly what this design avoids). Also
-# carries the identity anchor (unconditional, not just when a persona fact exists):
-# small/local models otherwise keep self-identifying as "Goose" (the host's own
-# built-in self-description bleeding through) even when a persona fact is stored.
+# The session-start block passed as FastMCP's `instructions` kwarg, which MCP
+# hosts (Goose confirmed) fold into the session's system prompt — the
+# deterministic, cross-host delivery channel for everything that must be in
+# context before the first turn (ai-integration.md §1/§8). Three parts, stable
+# first (prompt-cache friendly): this identity anchor (unconditional, not just
+# when a persona fact exists: small/local models otherwise keep self-identifying
+# as "Goose", the host's own self-description bleeding through), then the skill
+# catalog (modules/skills.py render_catalog — the progressive-disclosure index,
+# omitted when the host already loads SKILL.md natively and would show the same
+# list twice: w-ai sets W_AI_SKILLS_NATIVE=1 for such hosts), then the dynamic
+# memory context (modules/memory.py _mem_context — only the facts worth recalling,
+# not the store; dumping everything into every prompt, like Goose's own memory
+# extension, is exactly what this design avoids).
 INSTRUCTIONS_HEADER = (
     "Your default name is \"W Assistant\" (see AGENTS.md for your full identity and "
     "rules) — not \"Goose\", \"Claude\", \"Codex\", or any other host/runtime name; "
-    "those name only the program executing you, never your identity. The rest of "
-    "this block is your persistent memory context, loaded at session start. If a "
-    "fact below assigns you a different name or persona, that replaces \"W "
+    "those name only the program executing you, never your identity. Below: the "
+    "catalog of skills you can read on demand (if your host did not already list "
+    "them natively), then your persistent memory context, loaded at session start. "
+    "If a memory fact assigns you a different name or persona, that replaces \"W "
     "Assistant\" entirely — you are no longer \"W Assistant\", you are that name, "
     "and must always introduce yourself as such."
 )
+
+
+def build_instructions(skills, memory):
+    """INSTRUCTIONS_HEADER + skill catalog (unless native) + memory context."""
+    parts = [INSTRUCTIONS_HEADER]
+    if os.environ.get("W_AI_SKILLS_NATIVE") != "1":
+        parts.append(skills.render_catalog())
+    parts.append(memory._mem_context())
+    return "\n\n".join(p for p in parts if p)
 
 USAGE = """\
 Usage: w-mcp [--help|--selftest]
        w-mcp memory <list|search <query>|add|rm <slug>|context|review>
        w-mcp task <list [status]|add <text…> [--due YYYY-MM-DD]|done <slug>>
-       w-mcp skills <list|show <name>|rm <name>>
+       w-mcp skills <list|show <name>|rm <name>|catalog>
+       w-mcp instructions
 
 W Linux MCP server (stdio). Normally launched by an AI host, not by hand;
 it speaks JSON-RPC 2.0 on stdin/stdout.
@@ -84,6 +105,11 @@ Options:
                the mechanical contract checks (schema/tier/profile/AGENTS.md —
                see contract.py), then exit non-zero if any of them failed.
   --help, -h   Show this help.
+
+instructions   Print the session-start block the server hands the host (identity
+               anchor + skill catalog + memory context) exactly as a session
+               would receive it; W_AI_SKILLS_NATIVE=1 drops the catalog, as
+               w-ai does for hosts that load SKILL.md natively.
 
 memory (thin CLI over the same store the w_memory_* tools use):
   list           List stored facts (slug, type, description).
@@ -101,9 +127,10 @@ task (open-until-done facts, shown in the session-start "Open tasks:" section):
 skills (thin CLI over the same store the w_skill_* tools use — human overview of
 the agent-authored user-overlay layer; authoring itself is agent-driven, see
 w_skill_add):
-  list           List system + user skills (scope marked, user with description).
+  list           List system + user skills (scope marked, one description each).
   show <name>    Print one skill's SKILL.md (user overlay wins on a name clash).
   rm <name>      Delete a user skill (refuses on a system skill's name).
+  catalog        Print the skill catalog block as it goes into `instructions`.
 
 Exit codes: 0 success · 1 runtime error · 2 usage error.
 """
@@ -132,39 +159,31 @@ def load_modules():
     return loaded
 
 
-# ── Knowledge resources — second delivery channel ─────────────────────────────
-# Register every shipped knowledge file (user overlay wins) as an MCP resource so
-# hosts without native SKILL.md support still receive W's knowledge. URIs use the
-# opaque `w-knowledge://` scheme; the body is served on read.
-def register_knowledge():
-    registered = set()  # relative id -> avoid double-registering shadowed files
-    entries = [("AGENTS.md", "AGENTS.md"), ("llms.txt", "llms.txt")]
-    for root in core.KNOWLEDGE_ROOTS:
-        skills = root / "skills"
-        if skills.is_dir():
-            for sk in sorted(skills.iterdir()):
-                md = sk / "SKILL.md"
-                if md.is_file():
-                    entries.append((f"skills/{sk.name}", f"skills/{sk.name}/SKILL.md"))
-    for uri_id, rel in entries:
-        if uri_id in registered:
-            continue
-        path = core.resolve(rel)
-        if path is None:
-            continue
-        registered.add(uri_id)
-        mime = "text/markdown" if path.suffix == ".md" else "text/plain"
+# ── Knowledge resources — passive delivery channel ───────────────────────────
+# AGENTS.md and every skill (user overlay wins) also exist as MCP resources, for
+# hosts that browse resources rather than call tools. Passive: a resource costs
+# nothing until read. Each skill's resource description IS its catalog line
+# (modules/skills.py catalog()), so a resource listing reads like the catalog.
+# URIs use the opaque `w-knowledge://` scheme; the body is served on read.
+def register_knowledge(skills):
+    entries = []
+    agents = core.resolve("AGENTS.md")
+    if agents is not None:
+        entries.append(("AGENTS.md", agents, "W assistant identity, privilege tiers and operating rules"))
+    for e in skills.catalog():
+        entries.append((f"skills/{e['name']}", e["path"], e["description"]))
+    for uri_id, path, desc in entries:
         p = path  # bind for closure
         mcp.add_resource(
             FunctionResource(
                 uri=f"w-knowledge://{uri_id}",
                 name=uri_id,
-                description=f"W knowledge: {rel}",
-                mime_type=mime,
+                description=desc,
+                mime_type="text/markdown",
                 fn=lambda p=p: p.read_text(errors="replace"),
             )
         )
-    return sorted(registered)
+    return sorted(e[0] for e in entries)
 
 
 # ── Memory CLI (thin front over the shared memory module) ─────────────────────
@@ -238,8 +257,10 @@ def cmd_skills(argv):
         if not rest:
             sys.stderr.write("usage: w-mcp skills rm <name>\n"); return 2
         print(skills._skill_rm(rest[0]))
+    elif sub == "catalog":
+        print(skills.render_catalog())
     else:
-        sys.stderr.write(f"w-mcp skills: unknown subcommand '{sub}' (list|show|rm)\n"); return 2
+        sys.stderr.write(f"w-mcp skills: unknown subcommand '{sub}' (list|show|rm|catalog)\n"); return 2
     return 0
 
 
@@ -255,14 +276,17 @@ def main():
         return cmd_task(sys.argv[2:])
     if arg == "skills":
         return cmd_skills(sys.argv[2:])
+    skills = importlib.import_module("modules.skills")
+    memory = importlib.import_module("modules.memory")
+    if arg == "instructions":
+        print(build_instructions(skills, memory))
+        return 0
+    _import_mcp()
     core.PROFILE = core.resolve_profile()   # decides how much surface modules expose
     global mcp
-    memory = importlib.import_module("modules.memory")
-    context = memory._mem_context()
-    instructions = f"{INSTRUCTIONS_HEADER}\n\n{context}" if context else INSTRUCTIONS_HEADER
-    mcp = FastMCP("w-mcp", instructions=instructions)
+    mcp = FastMCP("w-mcp", instructions=build_instructions(skills, memory))
     modules = load_modules()
-    resources = register_knowledge()
+    resources = register_knowledge(skills)
     if arg == "--selftest":
         tools = sorted(t.name for t in mcp._tool_manager.list_tools())
         prompts = sorted(p.name for p in mcp._prompt_manager.list_prompts())
@@ -272,6 +296,8 @@ def main():
         print(f"tools ({len(tools)}): {', '.join(tools)}")
         print(f"prompts ({len(prompts)}): {', '.join(prompts)}")
         print(f"resources ({len(resources)}): {', '.join(resources)}")
+        native = os.environ.get("W_AI_SKILLS_NATIVE") == "1"
+        print(f"catalog: {len(skills.catalog())} skills, in instructions: {'no (W_AI_SKILLS_NATIVE=1)' if native else 'yes'}")
         # Mechanical contract checks — the registry is
         # already fully populated by load_modules() above, against the real mcp;
         # collect_checks() only reads it, never re-registers (see contract.py).

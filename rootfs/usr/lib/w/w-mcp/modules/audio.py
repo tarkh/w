@@ -7,7 +7,7 @@ DOMAIN = "w-audio"
 
 
 def register(mcp):
-    @tool(mcp, domain=DOMAIN, minimal=True)
+    @tool(mcp, domain=DOMAIN)
     def w_audio_status() -> str:
         """Audio state (PipeWire + WirePlumber). Shows the WirePlumber session
         manager status, the full node graph (`wpctl status` — default sink/source

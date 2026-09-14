@@ -3,12 +3,12 @@
 # home-relative → config/skel/<path>. class: user = seed-if-absent, managed =
 # overwrite (W owns it). A trailing '/' marks a directory tree.
 #
-# This bundle deliberately owns almost nothing. Every app it ships is themed by
-# EXISTING w-style axes: LibreOffice/pdfarranger/xournalpp render through the
-# gtk3 backend and ride the `gtk` axis (band 200, adw-gtk3 + W_GTK_* named
-# colours), all of them — plus Obsidian's adaptive base theme — follow the
-# `appearance` axis (band 300) for light/dark. That is the whole theming story;
-# there is no wstyle/ directory and no bundle axis.
+# This bundle deliberately owns almost nothing. LibreOffice/pdfarranger/xournalpp
+# are themed by EXISTING w-style axes: they render through the gtk3 backend and
+# ride the `gtk` axis (band 200, adw-gtk3 + W_GTK_* named colours) and the
+# `appearance` axis (band 300) for light/dark. Obsidian is Electron and needs
+# its own axis (wstyle/400-obsidian, a per-vault CSS snippet) — its output is
+# user data in unknown places, hence not a manifest row either.
 #
 # Deliberately NOT owned:
 #   ~/.config/libreoffice/4/user/registrymodifications.xcu — LibreOffice rewrites
@@ -26,3 +26,10 @@
 # would style the suite through Kvantum instead of the W GTK theme. Sourced by
 # env-hyprland at graphical-session-pre → active from the next login.
 /etc/w/env.d/office.sh	managed
+
+# Vault-registry watcher: re-renders the Obsidian axis for the account whenever
+# ~/.config/obsidian/obsidian.json changes (vault created/opened), so a vault
+# created after the last render is themed at once. Enabled per account by
+# setup-user.sh (wants-symlink), disabled by teardown-user.sh.
+/etc/systemd/user/w-obsidian-vaults.path	managed
+/etc/systemd/user/w-obsidian-vaults.service	managed

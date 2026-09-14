@@ -11,8 +11,10 @@ import re
 import sqlite3
 import urllib.error
 import urllib.request
+from typing import Annotated, Literal
 
 from core import MEM_TYPES, MEMORY_DB, MEMORY_DIR, _ai_conf, tool
+from core import desc as pdesc
 
 DOMAIN = "shared"
 
@@ -500,9 +502,7 @@ def _mem_review():
             or (type_ == "project" and slug in episode_slugs)
         )
         note = ""
-        if type_ == "task" and status == "done" and age > 30:
-            note = "(stale — consider rm)"
-        elif type_ == "project" and slug.startswith("episode-") and age > 60:
+        if type_ == "task" and status == "done" and age > 30 or type_ == "project" and slug.startswith("episode-") and age > 60:
             note = "(stale — consider rm)"
         lines.append(f"{slug:<32}{type_:<10}{age}d{'':<6}{'yes' if in_context else 'no':<9}{note}")
     return "\n".join(lines)
@@ -600,20 +600,16 @@ def register(mcp):
         return _mem_search(query, max_results)
 
     @tool(mcp, domain=DOMAIN, minimal=True)
-    def w_memory_store(content: str, description: str = "", name: str = "", type: str = "reference") -> str:
+    def w_memory_store(
+        content: Annotated[str, pdesc("the fact — markdown ok, any language")],
+        description: Annotated[str, pdesc("one-line summary used for recall: ALWAYS English, it is the search key")] = "",
+        name: Annotated[str, pdesc("optional slug")] = "",
+        type: Annotated[Literal["user", "feedback", "project", "reference", "task"], pdesc("for tasks prefer w_task_add — it tracks open/done")] = "reference",
+    ) -> str:
         """Persist a fact worth remembering across sessions (Tier 1: user-scope,
-        reversible). `content` is the fact (markdown ok, any language); `description`
-        is a one-line summary used for recall — always write it in English, even if
-        the fact and the conversation are in another language, since it is the search
-        key; `type` is one of user|feedback|project|reference|task (use `w_task_add`
-        instead for tasks — it sets up the open/done status this tool doesn't manage);
-        `name` optionally sets the slug. Stored as a markdown file the user can read
-        and edit, shared with every host via the same store. Store durable facts
-        (preferences, decisions, machine specifics) — not transient chatter. When a
-        session accomplishes something durable (installed, configured, decided
-        something), also store a short episode note: type=project, name starting with
-        `episode-`, description starting with the date — the 3 most recent are shown
-        to you automatically at the next session start."""
+        reversible): a markdown file the user can read and edit, shared with every
+        host. Durable facts only — preferences, decisions, machine specifics, the
+        episode notes AGENTS.md asks for — not transient chatter."""
         if not content.strip():
             return "(nothing to store: content is empty)"
         desc = description.strip() or content.strip().splitlines()[0][:80]
@@ -622,25 +618,24 @@ def register(mcp):
         slug, path = _mem_write_fact(name, desc, type, content)
         return f"stored memory '{slug}' ({path}){warning}"
 
-    @tool(mcp, domain=DOMAIN, minimal=True)
-    def w_task_add(content: str, due: str = "") -> str:
-        """Remember an open task so it resurfaces automatically at the start of every
-        future session (Tier 1: user-scope, reversible), until marked done. Use this
-        when the user asks you to remember or follow up on something later ("remind me
-        to check backups") — not for w_memory_store, which does not track status.
-        `due` is an optional YYYY-MM-DD date shown alongside the task."""
+    @tool(mcp, domain=DOMAIN)
+    def w_task_add(
+        content: str,
+        due: Annotated[str, pdesc("optional YYYY-MM-DD, shown alongside the task")] = "",
+    ) -> str:
+        """Remember an open task so it resurfaces at the start of every future
+        session until marked done (Tier 1: user-scope, reversible). For "remind me
+        to / follow up on" requests — w_memory_store does not track status."""
         return _mem_task_add(content, due)
 
-    @tool(mcp, domain=DOMAIN, minimal=True)
-    def w_task_list(status: str = "open") -> str:
-        """List stored tasks. `status` is "open" (default), "done", or "all". Open
-        tasks are already shown to you at session start — use this mainly to check
-        done tasks or see the full list."""
+    @tool(mcp, domain=DOMAIN)
+    def w_task_list(status: Literal["open", "done", "all"] = "open") -> str:
+        """List stored tasks (Tier 0). Open tasks are already shown at session
+        start — use this mainly for done ones or the full list."""
         return _mem_task_list(status)
 
-    @tool(mcp, domain=DOMAIN, minimal=True)
-    def w_task_done(slug: str) -> str:
-        """Mark a task done by its slug (from w_task_list or the session-start Open
-        tasks list). The record is kept, not deleted, as history; it stops appearing
-        in the session-start context."""
+    @tool(mcp, domain=DOMAIN)
+    def w_task_done(slug: Annotated[str, pdesc("from w_task_list or the session-start Open tasks list")]) -> str:
+        """Mark a task done (Tier 1). The record is kept as history; it stops
+        appearing in the session-start context."""
         return _mem_task_done(slug)

@@ -226,6 +226,10 @@
     "en": "Telegram Desktop messenger, themed by W",
     "ru": "Мессенджер Telegram Desktop в теме W"
   },
+  "p_graphics": {
+    "en": "Graphics and design: GIMP, Inkscape, Krita, G'MIC filters, AI assistant bridges",
+    "ru": "Графика и дизайн: GIMP, Inkscape, Krita, фильтры G'MIC, мосты для AI-ассистента"
+  },
   "_section:4": "Validation / passwords",
   "pass_confirm": {
     "en": "Confirm password:",

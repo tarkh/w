@@ -22,7 +22,7 @@ setup_file() {
   rc="$(cat "$BATS_FILE_TMPDIR/contract-rc.txt")"
   out="$(cat "$BATS_FILE_TMPDIR/contract-output.txt")"
   [[ "$rc" -eq 0 ]] || { echo "$out"; false; }
-  [[ "$out" == *"contract: 7/7 checks passed"* ]]
+  [[ "$out" == *"contract: 8/8 checks passed"* ]]
 }
 
 @test "contract.py: discovers every domain module" {
@@ -51,6 +51,28 @@ def bad(x) -> str: return 'ok'
 print(contract._check_schema_validity([{'name': 'bad', 'domain': 'x', 'minimal': False, 'fn': bad}]))
 ")"
   [[ "$result" == *"no type annotation"* ]]
+}
+
+@test "_check_schema_budget: flags an oversized docstring, a prose enum and a long parameter description" {
+  result="$(run_py "
+import contract
+from typing import Annotated
+from core import desc
+def fat() -> str:
+    '''$(printf 'x%.0s' {1..601})'''
+def prose(state: str) -> str:
+    '''state is on | off'''
+def longparam(x: Annotated[str, desc('$(printf 'y%.0s' {1..201})')]) -> str:
+    '''ok'''
+def fine(x: Annotated[str, desc('short')]) -> str:
+    '''ok'''
+reg = [{'name': n, 'domain': 'x', 'minimal': False, 'fn': f} for n, f in [('fat', fat), ('prose', prose), ('longparam', longparam), ('fine', fine)]]
+print(contract._check_schema_budget(reg))
+")"
+  [[ "$result" == *"fat: docstring is 601 B"* ]]
+  [[ "$result" == *"prose: enumerates values in prose ('on | off')"* ]]
+  [[ "$result" == *"longparam.x: description is 201 B"* ]]
+  [[ "$result" != *"fine"* ]]
 }
 
 @test "_check_name_collision: flags a duplicate tool name" {

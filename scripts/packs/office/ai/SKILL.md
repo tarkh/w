@@ -1,14 +1,14 @@
 ---
 name: office
 description: >-
-  Working with the `office` W-Pack on W Linux: the LibreOffice suite (Writer,
-  Calc, Impress, Draw, Math) pinned to the gtk3 backend so it rides W's gtk and
-  appearance theme axes, the PDF tools (pdfarranger for page surgery, xournalpp
-  for annotation and handwriting) and the Obsidian markdown knowledge base —
-  plus the metric-compatible fonts that keep foreign docx/xlsx/pptx layouts
-  intact. Load this when the user asks about documents, spreadsheets,
-  presentations, editing or merging PDFs, printing, notes, Obsidian, or office
-  suites in general, and `w-pack status office` reports installed.
+  The `office` W-Pack: LibreOffice (gtk3 backend, follows W's theme axes), the
+  PDF tools (pdfarranger for page surgery, xournalpp for annotation), the
+  Obsidian markdown knowledge base and the metric-compatible fonts that keep
+  docx/xlsx/pptx layouts intact. Load this for documents, spreadsheets,
+  presentations, editing/merging PDFs, notes, Obsidian, office suites in general
+  — and whenever you convert, generate or edit a docx/xlsx/pptx/odt/pdf yourself
+  (headless `soffice`, python-uno recipes inside) — when `w-pack status office`
+  reports installed.
 ---
 
 # W-Pack: office
@@ -62,11 +62,21 @@ Obsidian (Electron, no GTK) gets the bundle's own axis:
   other key preserved); a key that already exists without "w" is the user's
   own curation (including "had w, turned it off" — Obsidian keeps the key with
   an empty array) and is **never** touched, so the in-app toggle is a real
-  opt-out no re-render overrides. The write only happens with Obsidian closed
-  (a running app holds the file in memory and would overwrite it); a skipped
-  pass self-heals on the next render. Once enabled it is **live** — Obsidian
-  hot-reloads the file on every save, so `w-theme set` recolours a running
-  Obsidian with no restart.
+  opt-out no re-render overrides. The write is safe with Obsidian running too
+  (it never re-reads the file, only writes its own in-memory state — at worst
+  the vault returns to "fresh" and the next render heals it). Once enabled it
+  is **live** — Obsidian hot-reloads the file on every save, so `w-theme set`
+  recolours a running Obsidian with no restart.
+- **Vault-registry watcher** (`w-obsidian-vaults.path`, a per-account systemd
+  user path unit enabled by the bundle's user setup): the axis can only theme
+  vaults it can find, and the only place that knows vault paths is Obsidian's
+  own `~/.config/obsidian/obsidian.json`, rewritten on every vault create/open.
+  The watcher re-runs `w-style apply obsidian` on each change, so a vault
+  created **after** the last render (a fresh install: the first vault appears
+  well after the login render) is themed the moment it is registered — in
+  practice before Obsidian even finishes creating it, so the new vault opens
+  in the W theme straight away. Vaults outside `$HOME` are covered too — the
+  registry holds absolute paths.
 
 **Why the gtk3 pin:** unpinned, LO auto-detects its UI backend and may pick the
 Qt6 one (qt6-base is installed for Quickshell), which has documented Wayland
@@ -82,7 +92,8 @@ bug.
 | `/etc/w/env.d/office.sh` | **W** (managed, re-applied on update) | the gtk3 VCL pin |
 | `<vault>/.obsidian/snippets/w.css` | **W**, axis `400-obsidian` (re-rendered on every theme switch/login; deliberately NOT a manifest row) | the Obsidian palette |
 | `~/.config/libreoffice/4/user/registrymodifications.xcu` | **LibreOffice itself** | LO rewrites it on every exit — seeding or owning it would mean two writers on one file, and the defaults already do the right thing (see above) |
-| `<vault>/.obsidian/appearance.json` | **Obsidian** — W touches it with ONE guarded write: adds `enabledCssSnippets:["w"]` only to a vault that has no such key, only with the app closed, jq-merging everything else | the enable-by-default; a key that exists without "w" is the user's curation and is never overridden — the in-app toggle is a real opt-out |
+| `<vault>/.obsidian/appearance.json` | **Obsidian** — W touches it with ONE guarded write: adds `enabledCssSnippets:["w"]` only to a vault that has no such key, jq-merging everything else | the enable-by-default; a key that exists without "w" is the user's curation and is never overridden — the in-app toggle is a real opt-out |
+| `/etc/systemd/user/w-obsidian-vaults.{path,service}` + the account's `graphical-session.target.wants/` symlink | **W** (managed; symlink by setup-user/teardown-user) | the vault-registry watcher — new vaults themed on creation |
 | `<vault>/.obsidian/**` (the rest) | **the user** | per-vault settings, unknown paths |
 | `~/.config/mimeapps.list` | the base `files` module | the bundle does NOT hijack the .docx→Writer default; Nemo offers it in "Open with" |
 
@@ -114,6 +125,96 @@ bug.
 | Check the bundle | `w-pack status office` |
 | Reset W's config for the bundle | `w-reset office` — restores the env drop-in from the manifest and re-renders the Obsidian snippet via its axis |
 
+## Working on documents as the assistant
+
+You need nothing beyond this bundle to convert, build or edit documents: Arch's
+LibreOffice puts `uno.py`/`unohelper.py` into the system `site-packages`, so
+`python3 -c 'import uno'` works, and `soffice --headless` is a full converter.
+Do the work yourself with the shell — do not tell the user to click through
+menus for something a one-liner does. Both recipes below were verified on
+LibreOffice 26.2.
+
+**Always pass a private profile** (`-env:UserInstallation=file:///tmp/lo-$USER`)
+to a headless `soffice`. Without it, a LibreOffice window the user has open
+swallows the command (single-instance IPC) and the headless run silently does
+nothing.
+
+**Convert / export** (any Writer/Calc/Impress format in either direction —
+pdf, docx, odt, xlsx, csv, pptx, html, txt):
+
+```
+soffice -env:UserInstallation=file:///tmp/lo-$USER --headless \
+  --convert-to pdf --outdir "$DIR" "$FILE"          # docx/odt/xlsx/pptx → pdf
+soffice … --headless --convert-to docx report.md    # md/txt → docx (Writer import)
+soffice … --headless --convert-to csv sheet.xlsx    # first sheet → csv
+```
+
+**Edit a document in place (python-uno):** start a headless listener, connect,
+work through the UNO API, save, terminate. Pattern (Writer find/replace → save
+as DOCX + export PDF):
+
+```bash
+soffice -env:UserInstallation=file:///tmp/lo-$USER --headless --invisible \
+  --norestore --accept='socket,host=127.0.0.1,port=2002;urp;' &
+```
+```python
+import time, uno
+from com.sun.star.beans import PropertyValue
+def pv(n, v): p = PropertyValue(); p.Name = n; p.Value = v; return p
+local = uno.getComponentContext()
+resolver = local.ServiceManager.createInstanceWithContext("com.sun.star.bridge.UnoUrlResolver", local)
+for _ in range(30):                       # the listener needs a few seconds to come up
+    try: ctx = resolver.resolve("uno:socket,host=127.0.0.1,port=2002;urp;StarOffice.ComponentContext"); break
+    except Exception: time.sleep(1)
+desktop = ctx.ServiceManager.createInstanceWithContext("com.sun.star.frame.Desktop", ctx)
+doc = desktop.loadComponentFromURL(uno.systemPathToFileUrl(SRC), "_blank", 0, (pv("Hidden", True),))
+rd = doc.createReplaceDescriptor(); rd.SearchString = "NAME"; rd.ReplaceString = "World"
+doc.replaceAll(rd)
+doc.storeToURL(uno.systemPathToFileUrl(OUT_PDF), (pv("FilterName", "writer_pdf_Export"),))
+doc.storeAsURL(uno.systemPathToFileUrl(OUT_DOCX), ())
+doc.close(True); desktop.terminate()
+```
+
+Same bridge for Calc (`doc.Sheets[0].getCellRangeByName("A1").String = …`,
+`getCellByPosition(col,row)`, formulas via `.Formula`) and Impress
+(`doc.DrawPages`). Filter names: `writer_pdf_Export`, `calc_pdf_Export`,
+`impress_pdf_Export`, `MS Word 2007 XML`, `Calc MS Excel 2007 XML`,
+`Impress MS PowerPoint 2007 XML`. Prefer `find_and_replace`/UNO over
+regenerating a file from scratch — the user's formatting survives.
+
+**Generate a new document from data** (no LibreOffice involved until export):
+write Markdown or HTML and `--convert-to docx|odt|pdf`. For fine layout
+control, `python-docx`/`openpyxl` are ordinary pip/uv packages — but the UNO
+route above is already installed and handles every format LibreOffice does.
+
+**Obsidian vaults are plain Markdown folders.** The registry
+`~/.config/obsidian/obsidian.json` lists every vault path (`vaults.<id>.path`);
+read/write notes with your normal file tools, keep `<vault>/.obsidian/` alone.
+No plugin or API is needed to add or edit a note.
+
+**PDF page surgery, scripted:** pdfarranger pulls in `python-pikepdf` (and
+`qpdf`), so merge/split/rotate is a few lines of `import pikepdf` —
+`pikepdf.Pdf.open(a).pages.extend(pikepdf.Pdf.open(b).pages)`, `pages[i].rotate(90, relative=True)`,
+`del pdf.pages[3:]`, `save(out)` — or `qpdf --empty --pages a.pdf b.pdf -- out.pdf`.
+Open pdfarranger/xournalpp only when the user wants to do it by hand.
+
+## AI inside LibreOffice — the honest state (2026-09)
+
+- **LibreOffice has no built-in AI.** Release notes 25.8 / 26.2 / 26.8 carry no
+  assistant, no LLM feature; there is nothing to enable. Do not suggest one
+  "in the menu".
+- **Third-party sidebar extensions** (WriterAgent, localwriter, LibreThinker)
+  bring a chat panel into Writer, but each carries its own endpoint/API-key
+  settings **outside** W's assistant profile (`w-ai`) — a second, unmanaged
+  key. W does not install them; if the user asks, say so plainly and let them
+  install the `.oxt` themselves (Tools → Extension Manager). An Ollama profile
+  is the one case that lines up (`http://localhost:11434`, no key).
+- **You are the AI layer of this bundle:** the recipes above are how W's
+  assistant works on documents — through the shell and UNO, with the model the
+  user's `w-ai` profile names. An MCP server that drives a live LibreOffice
+  window (visible edits, 100+ typed tools) is tracked as a future candidate;
+  it is not installed today.
+
 ## Gotchas
 
 - **The gtk3 pin activates at the next login** (session env). Until then, or
@@ -132,14 +233,17 @@ bug.
   Appearance → CSS snippets → "w". The reverse also holds: a vault where the
   user had other snippets before W's first pass is "curated" too — its "w"
   toggle is the user's, W never adds to a curated list.
-- **Obsidian running during install/theme switch?** The enable pass skips (the
-  app holds appearance.json in memory and would overwrite the write) and
-  self-heals at the next render with the app closed — next login or theme
-  switch. The CSS file itself is always refreshed, and an already-enabled
-  snippet still recolours live.
-- **A new vault created later** gets its `w.css` AND its default enable at the
-  next login or `w-style apply obsidian` — no clicks, unless its snippet list
-  is already curated.
+- **A new vault created later** gets its `w.css` AND its default enable the
+  moment Obsidian registers it (the registry watcher) — no clicks, unless its
+  snippet list is already curated. Normally it opens themed at once; if the
+  render loses the race with the vault window, the theme shows after an app
+  restart (Obsidian reads appearance.json only at vault load) — or toggle "w"
+  on, it is already in the snippet list. Watcher status:
+  `systemctl --user status w-obsidian-vaults.path` (as the user).
+- **`w-pack remove office` while Obsidian is running** leaves "w" in that
+  vault's `appearance.json` (the app would rewrite it anyway): a snippet name
+  without its file is invisible and harmless — upstream keeps such names on
+  purpose.
 - **`w-pack remove office` keeps every document, vault and profile** — user
   data is never deleted; the W wiring goes away: env drop-in, the obsidian
   snippet and its enable entry, the language pack with `--packages`.

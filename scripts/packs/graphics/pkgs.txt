@@ -1,0 +1,38 @@
+# graphics bundle — packages (all in the official extra repo, no AUR).
+# One per line; '#' comments and blank lines ignored. Installed by w-pack via yay
+# (repo + AUR in one pass) as the build user; pacman fallback if yay is absent.
+#
+# Excluded on purpose: blender (3D — a workflow of its own, future `3d` bundle),
+# darktable / rawtherapee (RAW photo development — future `photo` bundle),
+# scribus (desktop publishing — different direction), pinta / drawing (subsets
+# of GIMP), gimp-plugin-resynthesizer / bimp / ofnuts tools (AUR-only; the
+# generative fill they approximate is Krita's territory once ai-image lands),
+# intel's openvino-ai-plugins-gimp (wants GIMP built from source, Ubuntu-only).
+# Not duplicated from the base system: imv (viewing), imagemagick, grim + slurp +
+# satty (screenshots and annotation), colord, the Noto fonts, the portals;
+# libheif / libjxl / libwebp arrive as gimp's own dependencies. python-mcp (the
+# SDK the GIMP bridge's server half runs on) is deliberately NOT listed either:
+# the base `--ai` module installs it for w-mcp, and a bundle naming it would put
+# it on the `remove --packages` line — pulling W's own MCP server out from
+# under the assistant. setup.sh verifies it is importable instead.
+
+gimp                  # GIMP 3.2 — raster editing, photo retouching, GTK3.
+                      # Themed by the existing w-style gtk/appearance axes once
+                      # its own theme is "System" (seeded gimprc, manifest).
+                      # Python 3 plug-in API (GObject introspection) is what the
+                      # gimpmcp bridge below is written against.
+gimp-plugin-gmic      # G'MIC-Qt for GIMP: 500+ filters (denoise, artistic,
+                      # deformations, colour) — the classic GIMP companion,
+                      # packaged in extra (pulls gmic).
+
+inkscape              # Inkscape 1.4 — vector drawing / design, GTK3 (the GTK4
+                      # port is 1.5, unreleased). Follows the W GTK theme by
+                      # default; its CLI (--actions, --export-*) is the offline
+                      # half of the mcpinkscape bridge.
+
+krita                 # Krita 6 — digital painting, Qt6, native Wayland (Qt6
+                      # is already on every W machine for Quickshell). Chosen
+                      # for the generative-AI layer: krita-ai-diffusion is the
+                      # one mature FOSS inpaint/outpaint integration, and it
+                      # arrives with the ai-image bundle (ComfyUI backend).
+

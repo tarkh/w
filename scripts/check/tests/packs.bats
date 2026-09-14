@@ -22,6 +22,7 @@ setup() {
   export W_PACKS_STATE="$BATS_TEST_TMPDIR/var/packs.json"
   export W_PACKS_WSTYLE_DROPIN="$BATS_TEST_TMPDIR/wstyle/modules.d"
   export W_PACKS_AI_SKILLS="$BATS_TEST_TMPDIR/ai/skills"
+  export W_PACKS_MCP_DROPIN="$BATS_TEST_TMPDIR/ai/mcp.d"
   export W_PACKS_DEPLOY_SDK="$BATS_TEST_TMPDIR/deploy.sh"
   export W_PRIV_LIB="$REPO/rootfs/usr/lib/w/w-priv-lib.sh"
   export W_PAC_LIB="$REPO/rootfs/usr/lib/w/w-pac-lib.sh"
@@ -297,4 +298,38 @@ rules_row() {
   mkbundle alpha
   cmd_remove alpha
   [[ ! -f "$BATS_TEST_TMPDIR/hyprctl.trace" ]]
+}
+
+# ── mcp.d: the bundle's MCP server drop-ins (packs.md, the fourth channel) ───
+# A drop-in leaves with the bundle exactly like an axis does: no bundle, no
+# server offered to the assistant. Only the file mechanics are asserted here —
+# what w-ai does with a drop-in is ai-host.bats' subject.
+mcp_row() {                                             # <bundle>
+  local n="$1" d="$W_PACKS_DIR/$1"
+  mkdir -p "$d/mcp"
+  printf 'COMMAND="%s-server"\nARGS="--stdio"\n' "$n" > "$d/mcp/$n.conf"
+}
+
+@test "mcp.d: install registers the bundle's drop-in, remove takes it away" {
+  mkbundle alpha; mcp_row alpha
+  deploy_mcp alpha
+  [[ -f "$W_PACKS_MCP_DROPIN/alpha.conf" ]]
+  grep -qx 'COMMAND="alpha-server"' "$W_PACKS_MCP_DROPIN/alpha.conf"
+  cmd_remove alpha
+  [[ ! -f "$W_PACKS_MCP_DROPIN/alpha.conf" ]]
+}
+
+@test "mcp.d: a bundle without mcp/ neither creates the root nor fails" {
+  mkbundle alpha
+  deploy_mcp alpha
+  remove_mcp alpha
+  [[ ! -d "$W_PACKS_MCP_DROPIN" ]]
+}
+
+@test "mcp.d: remove leaves another bundle's drop-in alone" {
+  mkbundle alpha; mcp_row alpha; deploy_mcp alpha
+  mkbundle beta;  mcp_row beta;  deploy_mcp beta
+  cmd_remove alpha
+  [[ ! -f "$W_PACKS_MCP_DROPIN/alpha.conf" ]]
+  [[   -f "$W_PACKS_MCP_DROPIN/beta.conf" ]]
 }

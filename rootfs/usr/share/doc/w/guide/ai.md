@@ -5,9 +5,9 @@ order: 9
 summary: Opening the assistant, profiles for different setups, hosts and providers, where API keys are kept, how much it may do on its own, and the optional advanced stack.
 sources:
   - path: .claude/library/w-ai.md
-    sha256: 84c2548bb34980529d3bb8de44e1fafae767d0ae41bed5bcc8256a0cfeb04ef6
+    sha256: 16ea299f6ccf9f714bce95837cab935afc592a87ebe99781d4343ddc9c6d5b4c
   - path: .claude/library/ai-integration.md
-    sha256: 5f4a8849037853d9cbfb11e636e72a9d3e3667574eeda3b038adb83252a1784a
+    sha256: df27fdac4d8a30840fd886306b8e0a39fc9e96276727d75a215b84df4cd20e30
 ---
 
 W ships an AI assistant that runs in a terminal and can drive the machine
@@ -61,6 +61,12 @@ tools and its identity only when it launches them itself — start `claude` or
 `codex` by hand in a project of your own and you get the plain tool, with
 nothing of W attached.
 
+Some packs bring tools of their own for the assistant — the **graphics** pack,
+for instance, lets it draw in Inkscape and edit inside GIMP. These arrive the
+same way, at launch, for every host; `w-ai status` lists them under
+**MCP extra**. One shown as *missing* is installed on the machine but not set up
+for your account yet: `w-pack setup <pack>` (no password) and a fresh session.
+
 ## API keys
 
 Where the provider needs a key, the expanded profile shows an **API key** row:
@@ -82,7 +88,11 @@ on its own.
 This is a convenience setting, not the security boundary. Anything that touches
 the system as administrator stops at W's own password or fingerprint prompt no
 matter which mode you picked — *auto* cannot authorise a privileged change on
-your behalf.
+your behalf. For the same reason W's own tools (including the ones an installed
+pack adds, like the Inkscape or GIMP helpers) never wait on the host's
+per-tool confirmation: the assistant calls them directly, and anything
+privileged still stops at that same prompt. MCP servers you register yourself
+keep the host's normal confirmation flow.
 
 **Tool surface** next to it controls how much of W's own tooling the assistant
 is offered. Leave it on *auto*.

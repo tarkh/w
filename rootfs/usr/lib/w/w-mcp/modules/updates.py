@@ -1,6 +1,8 @@
 # w-mcp domain: updates — pending-update checks (Tier 0) + the two-step system
 # upgrade (Tier 2 apply, via com.w.ai.actuate).
-from core import _actuate, _disabled_msg, _tool_on, prompt, run, tool
+from typing import Annotated, Literal
+
+from core import _actuate, _disabled_msg, _tool_on, desc, prompt, run, tool
 
 DOMAIN = "w-updates"
 
@@ -34,31 +36,17 @@ def register(mcp):
         return run(["w-update", "status"])
 
     @tool(mcp, domain=DOMAIN)
-    def w_system_update(action: str = "plan") -> str:
-        """Update the system's official-repo packages (Tier 2). Two-step by design so
-        problems surface to the user instead of a blind auto-apply:
-
-          action='plan'   (read-only, no prompt) — preflight: pending repo + AUR counts
-                          and package lists, whether a kernel bump means a reboot, and
-                          free disk. ALWAYS run this first and read it.
-          action='apply'  (privileged; polkit prompt) — run the repo upgrade
-                          non-interactively (`pacman -Syu`). snap-pac snapshots it, so
-                          it is rollback-protected. It never reboots on its own.
-
-        Workflow: plan → if anything looks risky (a kernel change, low disk, an unusually
-        large/odd set, or fresh Arch news — check `w-update news`) tell the user and get
-        a go-ahead → apply. If apply fails on a package conflict it returns the error;
-        relay it and advise resolving it in a terminal rather than forcing it. If the
-        result says a reboot is needed, tell the user — do not reboot for them.
-
-        AUR packages are NOT applied here: yay must build them as the user and their
-        PKGBUILD diffs deserve review. If the plan lists AUR updates, tell the user to
-        run `w-update` in a terminal for those. Gated by W_AI_TOOL_UPDATE."""
+    def w_system_update(
+        action: Annotated[Literal["plan", "apply"], desc("plan = read-only preflight (pending repo/AUR, kernel change → reboot, free disk), run it FIRST; apply = privileged (polkit) `pacman -Syu`, snap-pac protected")] = "plan",
+    ) -> str:
+        """Update the official-repo packages (Tier 2 on apply; polkit prompt).
+        Two-step: plan → if anything looks risky (kernel change, low disk, odd set,
+        Arch news) get the user's go-ahead → apply. Never reboots on its own —
+        report a reboot as owed. AUR is not applied here (the user runs `w-update`
+        in a terminal). Workflow: the w-updates skill. Gated by W_AI_TOOL_UPDATE."""
         act = action.strip().lower()
         if act in ("", "plan"):
             return run(["w-update", "plan", "--porcelain"], timeout=120)
-        if act != "apply":
-            return "(action must be 'plan' or 'apply')"
         if not _tool_on("UPDATE"):
             return _disabled_msg("w_system_update", "W_AI_TOOL_UPDATE")
         result = _actuate("system-upgrade", timeout=1800)

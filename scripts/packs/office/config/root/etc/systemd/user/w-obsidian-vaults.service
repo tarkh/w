@@ -1,0 +1,10 @@
+# office bundle — the render w-obsidian-vaults.path triggers. One axis, this
+# account, same call the login path and `w-theme set` make; idempotent and cheap
+# (jq + a few file writes), so the frequent registry rewrites are harmless.
+
+[Unit]
+Description=Render the W theme into this account's Obsidian vaults
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/w-style apply obsidian

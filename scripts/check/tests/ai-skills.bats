@@ -109,11 +109,60 @@ add() {  # add <name> <description> <content> [tags] [overwrite]
   [[ "$result" == *"created"* ]]
 }
 
-@test "_skill_list: marks system vs user scope" {
+@test "_skill_list: marks system vs user scope, one description each" {
   add 'my-workflow' 'a user workflow' 'content' >/dev/null
   result="$(skills_py "print(skills._skill_list())")"
-  [[ "$result" == *"[system] w-security"* ]]
-  [[ "$result" == *"[user]   my-workflow: a user workflow"* ]]
+  [[ "$result" == *"[system] w-security: system skill"* ]]
+  [[ "$result" == *"[user  ] my-workflow: a user workflow"* ]]
+}
+
+# ── The skill catalog: the one generated index of the knowledge layer ─────────
+# Rendered into w-mcp's `instructions` (unless the host lists skills natively),
+# w_skill_list, the resource descriptions and `w-mcp skills catalog` — all from
+# the SKILL.md frontmatter, so there is no hand-written copy to drift.
+
+@test "catalog: folds a block-scalar description to one line, user overlay shadows system" {
+  mkdir -p "$W_AI_SYS_ROOT/skills/w-folded"
+  printf -- '---\nname: w-folded\ndescription: >-\n  first line\n  second line\ntools:\n  - w_x\n---\n# H\n' \
+    > "$W_AI_SYS_ROOT/skills/w-folded/SKILL.md"
+  mkdir -p "$HOME/.config/w/ai/skills/w-security"
+  printf -- '---\nname: w-security\ndescription: shadowing user copy\norigin: agent-authored\ncreated: 2026-01-01\n---\n# H\n' \
+    > "$HOME/.config/w/ai/skills/w-security/SKILL.md"
+  result="$(skills_py "print('|'.join(f\"{e['scope']}:{e['name']}={e['description']}\" for e in skills.catalog()))")"
+  [[ "$result" == "user:w-security=shadowing user copy|system:w-folded=first line second line" ]]
+}
+
+@test "render_catalog: one line per skill, [user] tag, read-one-skill instruction" {
+  add 'my-workflow' 'a user workflow' 'content' >/dev/null
+  result="$(skills_py "print(skills.render_catalog())")"
+  [[ "$result" == "## Skill catalog"* ]]
+  [[ "$result" == *"w_skill_read"* ]]
+  [[ "$result" == *$'\n- w-security: system skill'* ]]
+  [[ "$result" == *$'\n- [user] my-workflow: a user workflow'* ]]
+  [[ "$(grep -c '^- ' <<<"$result")" -eq 2 ]]
+}
+
+@test "render_catalog: every shipped skill is catalogued with a non-empty description" {
+  export W_AI_SYS_ROOT="$REPO/rootfs/usr/share/w/ai"
+  result="$(skills_py "
+c = skills.catalog()
+names = sorted(p.name for p in __import__('pathlib').Path('$W_AI_SYS_ROOT/skills').iterdir() if p.is_dir())
+print(sorted(e['name'] for e in c) == names, all(e['description'] for e in c), len(c))")"
+  [[ "$result" == "True True 22" ]]
+}
+
+# The CLI fronts of the hub run without python-mcp (only serving needs it), so the
+# exact session-start block a host receives is checkable here.
+@test "w-mcp instructions: identity + catalog + (empty) memory; W_AI_SKILLS_NATIVE=1 drops the catalog" {
+  export W_MCP_LIB="$LIB" W_AI_STATE_ROOT="$BATS_TEST_TMPDIR/state"
+  full="$(python3 "$REPO/rootfs/usr/bin/w-mcp" instructions)"
+  [[ "$full" == 'Your default name is "W Assistant"'* ]]
+  [[ "$full" == *"## Skill catalog"* ]]
+  [[ "$full" == *"- w-security: system skill"* ]]
+  native="$(W_AI_SKILLS_NATIVE=1 python3 "$REPO/rootfs/usr/bin/w-mcp" instructions)"
+  [[ "$native" == 'Your default name is "W Assistant"'* ]]
+  [[ "$native" != *"Skill catalog"* ]]
+  [[ "$(python3 "$REPO/rootfs/usr/bin/w-mcp" skills catalog)" == "## Skill catalog"* ]]
 }
 
 @test "_skill_add runtime lint: multi-line description breaking frontmatter is refused, nothing written" {

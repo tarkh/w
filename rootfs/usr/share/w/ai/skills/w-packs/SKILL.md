@@ -2,12 +2,12 @@
 name: w-packs
 description: >-
   Optional software bundles (W-Packs) — opt-in add-ons by direction (containers,
-  dev, office, gaming, …) installed on top of the base system with `w-pack`. Load this when
+  dev, office, graphics, gaming, …) installed on top of the base system with `w-pack`. Load this when
   the user wants to see, install, or reason about optional bundles. Operating an
   already-installed bundle is covered by that bundle's own skill (skills/<bundle>).
 sources:
   - path: .claude/library/packs.md
-    sha256: 7729deb8225e6173cb7c2aeba67b7fa521849e2e74d71849c3ca89d6fa52c2e1
+    sha256: 2ac246a6c2d1d8ee77fc3381df5f509b65c06f6dc5db4dec6ce5d3c6c11ca459
 tools:
   - w_pack_list
   - w_pack_status
@@ -28,8 +28,9 @@ theme, shell, security — and is always present. **W-Packs** are the second lay
   messengers are alternatives by network, so there is no "messengers" bundle).
 - A bundle is **self-contained**: one directory under `/usr/share/w/packs/<bundle>/`
   carries everything it needs — packages, config, its w-style theme axis, its AI
-  knowledge, and a setup step. Installing it wires all of that up; the base system
-  carries zero references to bundle software.
+  knowledge, its MCP servers (if its software speaks MCP), and a setup step.
+  Installing it wires all of that up; the base system carries zero references to
+  bundle software.
 
 ## The `w-pack` command
 
@@ -142,11 +143,29 @@ its own skill** (`skills/<bundle>/SKILL.md`) — for example `skills/containers`
 skill is the single source of truth for how to *use* the bundle (its CLIs, common
 operations, gotchas, reset).
 
-There are **no dedicated per-bundle MCP tools** by design. Operate a bundle with its
-documented commands through your normal shell — rootless, user-scope operations
-(e.g. `docker ps`, `podman logs`, `systemctl --user start …`) need no privilege and
-no special tool. Reach for a privileged W tool only when the operation genuinely
-needs root.
+There are **no dedicated per-bundle MCP tools in `w-mcp`** by design. Operate a
+bundle with its documented commands through your normal shell — rootless,
+user-scope operations (e.g. `docker ps`, `podman logs`, `systemctl --user start …`)
+need no privilege and no special tool. Reach for a privileged W tool only when the
+operation genuinely needs root.
+
+A bundle **may bring its own MCP server(s)** instead — third-party servers for the
+software it installs, registered through the `mcp.d` channel
+(`/usr/share/w/ai/mcp.d/<name>.conf`, put there by `w-pack install`, taken away by
+`w-pack remove`). `w-ai` hands every registered server to whichever host it
+launches, so those tools simply appear in your session next to `w_*`. The
+`graphics` bundle is the first: an Inkscape server (`mcpinkscape`, typed SVG
+drawing/export tools) and a GIMP bridge (`gimpmcp`, Python inside a running
+GIMP + viewport screenshots). Two rules follow from how they are installed:
+
+- They are **per account** (a uv tool in `~/.local/bin`, a plug-in in
+  `~/.config`), so a server is offered only when its files exist for the
+  account running `w-ai`. If the bundle is `[machine]` for someone, or `w-ai
+  status` shows `MCP extra: … (missing)`, the fix is `w-pack setup <bundle>` — no
+  sudo — and a fresh `w-ai` launch (the flags are computed per launch).
+- They are the bundle's, not W's: how to use them is in that bundle's own skill
+  (`skills/<bundle>`), including any manual step the software needs (the GIMP
+  bridge must be started inside GIMP each session).
 
 ## MCP tools
 

@@ -8,8 +8,9 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from typing import Annotated, Literal, get_args
 
-from core import run, tool, prompt
+from core import desc, prompt, run, tool
 
 DOMAIN = "w-desktop"
 
@@ -25,6 +26,9 @@ DOMAIN = "w-desktop"
 # safely). Expressions mirror the live hotkeys catalog + the wiki
 # (Configuring/Basics/Dispatchers).
 _HYPR_DIR = ("left", "right", "up", "down")
+_HYPR_ACTIONS = Literal["close", "kill", "center", "pin", "cycle", "fullscreen", "maximize",
+                        "float", "focus-window", "focus", "move", "swap", "workspace",
+                        "move-to-workspace", "focus-monitor", "move-to-monitor"]
 
 # Fixed (no-arg) actions that Hyprland lets you aim at a specific window via its
 # `window` field — action -> (Lua method, extra constant fields).
@@ -197,7 +201,7 @@ def register(mcp):
             )
         return "\n".join(out)
 
-    @tool(mcp, domain=DOMAIN, minimal=True)
+    @tool(mcp, domain=DOMAIN)
     def w_bar_status() -> str:
         """Status bar composition (Tier 0, read-only): which outputs carry a bar
         and, for each one, every block's on/off state. Wraps `w-bar status`.
@@ -210,27 +214,19 @@ def register(mcp):
         return run(["w-bar", "status"])
 
     @tool(mcp, domain=DOMAIN)
-    def w_bar_set(output: str, block: str = "", state: str = "") -> str:
-        """Show or hide a status-bar block, or the whole bar, on ONE output
-        (Tier 1: user-scope, reversible, no polkit).
-          output  the monitor's connector name, e.g. eDP-1 / HDMI-A-1 (from
-                  w_bar_status). Required — there is no "all monitors" form,
-                  because the whole point of this setting is per-monitor.
-          block   a block id from w_bar_status. Omit it to switch the WHOLE bar
-                  on that output.
-          state   on | off, or `default` (blocks only) to drop the per-monitor
-                  override and follow the config's own value again.
-        Applies live — the bar redraws immediately, no restart. Switching a bar
-        off KEEPS that output's per-block choices, so switching it back on
-        restores exactly what was there; say so rather than warning about losing
-        settings. Geometry, colours and the bar's position are NOT here: position
-        is `w-appearance bar-position`, everything else about the bar's shape
-        belongs to the active theme (see the w-theming skill)."""
+    def w_bar_set(
+        output: Annotated[str, desc("connector name from w_bar_status, e.g. eDP-1; one output per call — the setting is per-monitor")],
+        state: Annotated[Literal["on", "off", "default"], desc("`default` (blocks only) drops the per-monitor override")],
+        block: Annotated[str, desc("block id from w_bar_status; omit to switch the whole bar on that output")] = "",
+    ) -> str:
+        """Show or hide a status-bar block, or the whole bar, on ONE output (Tier 1:
+        user-scope, live, reversible). Switching a bar off keeps its per-block
+        choices, so nothing is lost. Position, geometry and colours are not here —
+        see the w-desktop skill."""
         if not output:
             return "output is required — name the monitor (see w_bar_status)"
-        allowed = ("on", "off", "default") if block else ("on", "off")
-        if state not in allowed:
-            return f"state must be one of: {', '.join(allowed)}"
+        if state == "default" and not block:
+            return "state 'default' applies to a block only; use on/off for the whole bar"
         cmd = ["w-bar", "block", output, block, state] if block \
             else ["w-bar", "monitor", output, state]
         out = run(cmd)
@@ -242,51 +238,30 @@ def register(mcp):
         return run(["w-bar", "status"])
 
     @tool(mcp, domain=DOMAIN, minimal=True)
-    def w_notify(summary: str, body: str = "", urgency: str = "normal") -> str:
-        """Show a desktop notification in W's notification stack (Tier 1: user-scope,
-        harmless). `summary` is the title, `body` optional detail. Use it to surface a
-        result or a heads-up in the desktop itself — it does not replace your reply in
-        the chat. Goes through `w-notify send`, W's own entry point, so the alert obeys
-        the user's notification settings like any other app's.
-
-        Choose `urgency` by what the user must DO, not by how pleased you are with the
-        result — it decides how the alert looks and how long it stays:
-
-        - `critical` — the user must act, and missing it has a real cost: a reboot is
-          required to finish an upgrade, the disk is nearly full, a backup failed.
-          Critical alerts are red, never auto-dismiss, and are the only ones that pass
-          through Do Not Disturb. Use it sparingly; every needless critical trains the
-          user to ignore the next one.
-        - `normal` (default) — worth knowing, no action owed: a long task finished, a
-          digest is ready.
-        - `low` — background chatter the user may never look at.
-
-        Notifications sent while DND is on (or from a muted app) are recorded in the
-        history rather than shown — see the w-notifications skill."""
+    def w_notify(
+        summary: Annotated[str, desc("title line")],
+        body: Annotated[str, desc("optional detail")] = "",
+        urgency: Annotated[Literal["low", "normal", "critical"], desc("critical only when the user must act and missing it costs (reboot needed, disk nearly full, backup failed): it never auto-dismisses and passes DND. low = background chatter")] = "normal",
+    ) -> str:
+        """Show a desktop notification (Tier 1: user-scope, harmless). Surfaces a
+        result in the desktop itself; it does not replace your reply in the chat.
+        Under DND or a per-app mute it goes to history instead of the screen
+        (w-notifications skill)."""
         s = summary.strip()
         if not s:
             return "(provide a summary line for the notification)"
-        u = urgency.strip().lower()
-        if u not in ("low", "normal", "critical"):
-            u = "normal"
-        out = run(["w-notify", "send", "-u", u, "-a", "W Assistant", s, body.strip()])
+        out = run(["w-notify", "send", "-u", urgency, "-a", "W Assistant", s, body.strip()])
         return f"notified: {s}" if out == "(no output)" else out
 
     @tool(mcp, domain=DOMAIN)
-    def w_screenshot(mode: str = "full") -> str:
+    def w_screenshot(
+        mode: Annotated[Literal["full", "output", "window"], desc("full = all outputs, output = focused monitor, window = focused window")] = "full",
+    ) -> str:
         """Capture the screen to ~/Pictures/Screenshots and return the saved path
-        (Tier 1: user-scope). `mode` is 'full' (all outputs), 'output' (the focused
-        monitor), or 'window' (the focused window) — interactive region select is
-        intentionally not exposed to the model. Wraps `w-screenshot <mode> --save`.
-
-        Capturing does NOT imply analyzing: this tool only saves the file and returns
-        its path. Do not read back or describe the image unless the user explicitly
-        asks you to — reading it costs vision tokens and sends the screen's contents to
-        the provider, which the user did not request by asking for a screenshot."""
-        m = mode.strip().lower()
-        if m not in ("full", "output", "window"):
-            return "(mode must be one of: full, output, window)"
-        err = run(["w-screenshot", m, "--save"], timeout=30)
+        (Tier 1: user-scope). Capturing is not analyzing: only save and report the
+        path — do not read the image back unless the user explicitly asks (vision
+        tokens + the screen's contents go to the provider)."""
+        err = run(["w-screenshot", mode, "--save"], timeout=30)
         # w-screenshot --save notifies but does not print the path; report the newest
         # capture so the model gets the concrete file it just created.
         shots = Path(os.path.expanduser("~/Pictures/Screenshots"))
@@ -296,12 +271,12 @@ def register(mcp):
         return err if err != "(no output)" else "(capture ran but no file was found — is a Wayland session active?)"
 
     @tool(mcp, domain=DOMAIN)
-    def w_launch_app(command: str) -> str:
-        """Launch a desktop application into the running session (Tier 1: user-scope,
-        no privilege — the same power the user's own shell has). `command` is a program
-        name and optional simple arguments (e.g. 'firefox', 'ghostty', 'code /home/u/p');
-        no shell syntax (pipes, redirects, globs, quotes). Started detached via `uwsm
-        app` so it joins the session cleanly. Prefer this over w_run for opening apps."""
+    def w_launch_app(
+        command: Annotated[str, desc("program name + simple arguments, e.g. 'firefox' or 'code /home/u/p'; no shell syntax (pipes, redirects, globs, quotes)")],
+    ) -> str:
+        """Launch a desktop application into the running session, detached via
+        `uwsm app` (Tier 1: user-scope — the same power the user's own shell has).
+        Prefer this over w_run for opening apps."""
         parts = command.split()
         if not parts:
             return "(name a program to launch)"
@@ -321,18 +296,11 @@ def register(mcp):
     @tool(mcp, domain=DOMAIN, minimal=True)
     def w_hypr_windows() -> str:
         """List every open window in the running Hyprland session (Tier 0,
-        read-only): address, app class, title, workspace, monitor, floating/tiled,
-        and whether it is focused, via `hyprctl clients`.
-
-        Call this BEFORE w_hypr_dispatch whenever the user refers to a window that
-        might not be the focused one ("move the browser to workspace 3", "swap the
-        windows on workspace 1 and 2", "focus the terminal"). Match the request to
-        a window here by its class/title, then pass that window's `address` as
-        w_hypr_dispatch's `target` (e.g. `address:0x55f...`) — address is exact and
-        the safest choice. If more than one window could plausibly match what the
-        user asked for (e.g. two Firefox windows), or the request is ambiguous in
-        any other way, do not guess: ask the user which one they mean, or which
-        workspace/window to use."""
+        read-only): address, class, title, workspace, monitor, floating/tiled,
+        focused. Call it before w_hypr_dispatch whenever the request may concern a
+        window other than the focused one, then pass the chosen window's
+        `address:…` as `target`. If more than one window could match, ask the user
+        instead of guessing."""
         if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
             return "(no Hyprland session reachable — the assistant is not running inside the graphical session)"
         try:
@@ -356,43 +324,20 @@ def register(mcp):
         return "\n".join(lines)
 
     @tool(mcp, domain=DOMAIN)
-    def w_hypr_dispatch(action: str, arg: str = "", target: str = "") -> str:
+    def w_hypr_dispatch(
+        action: Annotated[_HYPR_ACTIONS, desc("focus/move/swap: arg = left/right/up/down (focused window only). workspace, move-to-workspace: arg = 1-99, e+1 or e-1. focus-monitor, move-to-monitor: arg = +1 or -1. Others take no arg")],
+        arg: Annotated[str, desc("the action's argument, see `action`")] = "",
+        target: Annotated[str, desc("act on this window instead of the focused one: `address:0x…` from w_hypr_windows (exact, preferred) or class:/title:/initialclass:/initialtitle:/pid: (class/title are regexes)")] = "",
+    ) -> str:
         """Control windows and workspaces in the running Hyprland session (Tier 1:
-        user-scope, no privilege — the same power the user's own keybindings have).
-        Pick an `action` from this allowlist; some take an `arg`, and most accept an
-        optional `target` to act on a specific window instead of the focused one:
-
-          close | kill | center | pin | cycle | fullscreen | maximize | float
-                                             act on `target` window, or the focused one
-          focus-window                      focus `target` window (target required)
-          focus <left|right|up|down>        move keyboard focus (focused window only)
-          move <left|right|up|down>         move the focused window (focused window only)
-          swap <left|right|up|down>         swap the focused window (focused window only)
-          workspace <1-99|e+1|e-1>          switch the active workspace (e±1 = next/prev open)
-          move-to-workspace <1-99|e+1|e-1>  move `target` window (or focused) to a workspace
-          focus-monitor <+1|-1>             move focus to the next/previous monitor
-          move-to-monitor <+1|-1>           move `target` window (or focused) to a monitor
-
-        `target` selects a specific window instead of the focused one — call
-        w_hypr_windows first and pass its `address` (e.g. `address:0x55f...`), the
-        exact and safest choice. `class:...`/`title:...`/`initialclass:...`/
-        `initialtitle:...`/`pid:...` are also accepted, but class/title match as a
-        regex, so prefer address when more than one window could match. If the
-        request is ambiguous in any way (multiple candidate windows, an unclear
-        destination), ask the user to clarify instead of guessing which one to act on.
-
-        To move several windows in one request (e.g. "browser to 3, terminal to 4")
-        or swap the windows on two workspaces, call this tool once per window with
-        its own `target` — there is no bulk/multi-window action. Only these curated
-        dispatchers are allowed and every argument (including `target`) is
-        validated/escaped, so it cannot run arbitrary commands or Lua — use
-        w_launch_app to open apps. Returns a note (not an error) if no Hyprland
-        session is reachable from here."""
+        user-scope — the power of the user's own keybindings; only this curated
+        allowlist, never arbitrary commands). One call per window, there is no
+        bulk action; if the request is ambiguous (several matching windows, an
+        unclear destination) ask the user instead of guessing. Use w_launch_app to
+        open apps."""
         if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
             return "(no Hyprland session reachable — the assistant is not running inside the graphical session)"
         act = action.strip().lower()
-        if not act:
-            return "(name an action; see the tool description for the allowlist)"
         window_lit, werr = _hypr_window_sel(target)
         if werr:
             return werr
@@ -400,7 +345,7 @@ def register(mcp):
         if err:
             return err
         if expr is None:
-            return f"(unknown action '{act}'; see the tool description for the allowlist)"
+            return f"(unknown action '{act}'; allowed: {', '.join(get_args(_HYPR_ACTIONS))})"
         out = run(["hyprctl", "dispatch", expr])
         if out.strip().lower() in ("ok", "", "(no output)"):
             detail = act

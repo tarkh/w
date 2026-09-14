@@ -12,7 +12,7 @@ DOMAIN = "w-input"
 
 
 def register(mcp):
-    @tool(mcp, domain=DOMAIN, minimal=True)
+    @tool(mcp, domain=DOMAIN)
     def w_keyboard_status() -> str:
         """Keyboard layout ring: the ordered layouts, their variants, and the XKB
         options (including the `grp:*_toggle` layout-switch key). The first layout is
@@ -20,7 +20,7 @@ def register(mcp):
         with the `w-keyboard` CLI (add/remove/set-toggle/set-default)."""
         return run(["w-keyboard", "status"])
 
-    @tool(mcp, domain=DOMAIN, minimal=True)
+    @tool(mcp, domain=DOMAIN)
     def w_hotkeys_status() -> str:
         """Active keybinding profile and its effective bindings: each action token,
         the chord bound to it, and the source (default / profile / custom). Use it to
@@ -28,7 +28,7 @@ def register(mcp):
         profiles or rebind with the `w-hotkeys` CLI (use/set/reset/custom-add)."""
         return run(["w-hotkeys", "status"])
 
-    @tool(mcp, domain=DOMAIN, minimal=True)
+    @tool(mcp, domain=DOMAIN)
     def w_pointer_status() -> str:
         """Mouse and touchpad settings: speed, acceleration profile, scrolling, and —
         when the machine has a touchpad — tap-to-click, click method, disable-while-

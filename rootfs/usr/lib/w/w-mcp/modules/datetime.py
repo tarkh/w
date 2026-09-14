@@ -5,14 +5,15 @@
 # gets the two common actions (set the zone, turn sync on/off) plus a read. See the
 # w-datetime skill / w-time.md.
 import re
+from typing import Annotated, Literal
 
-from core import _actuate, _disabled_msg, _tool_on, run, tool
+from core import _actuate, _disabled_msg, _tool_on, desc, run, tool
 
 DOMAIN = "w-datetime"
 
 
 def register(mcp):
-    @tool(mcp, domain=DOMAIN, minimal=True)
+    @tool(mcp, domain=DOMAIN)
     def w_time_status() -> str:
         """Date/time state: the current local time, timezone, RTC clock and whether
         NTP network time sync is on (via `w-time status`). Read-only. Use
@@ -21,11 +22,11 @@ def register(mcp):
 
     # ── Tier 2 — privileged, actuated through polkit (com.w.ai.actuate) ──────
     @tool(mcp, domain=DOMAIN)
-    def w_timezone_set(timezone: str) -> str:
-        """Set the system timezone (Tier 2: privileged; polkit prompt). `timezone` is
-        an IANA zone name like 'Europe/Moscow' or 'America/New_York' (see
-        `w-time list-zones`). Reversible by setting another zone. Gated by
-        W_AI_TOOL_TIMEZONE."""
+    def w_timezone_set(
+        timezone: Annotated[str, desc("IANA zone name, e.g. 'Europe/Moscow' (browse with `w-time list-zones`)")],
+    ) -> str:
+        """Set the system timezone (Tier 2: privileged; polkit prompt). Reversible.
+        Gated by W_AI_TOOL_TIMEZONE."""
         if not _tool_on("TIMEZONE"):
             return _disabled_msg("w_timezone_set", "W_AI_TOOL_TIMEZONE")
         tz = timezone.strip()
@@ -34,10 +35,11 @@ def register(mcp):
         return _actuate("timezone-set", tz)
 
     @tool(mcp, domain=DOMAIN)
-    def w_ntp_set(state: str) -> str:
-        """Enable or disable NTP network time synchronisation (Tier 2: privileged;
-        polkit prompt). `state` is 'on' (systemd-timesyncd keeps the clock synced) or
-        'off' (clock set manually). Reversible. Gated by W_AI_TOOL_NTP."""
+    def w_ntp_set(
+        state: Annotated[Literal["on", "off"], desc("on = systemd-timesyncd keeps the clock synced; off = set manually")],
+    ) -> str:
+        """Enable or disable NTP network time sync (Tier 2: privileged; polkit
+        prompt). Reversible. Gated by W_AI_TOOL_NTP."""
         if not _tool_on("NTP"):
             return _disabled_msg("w_ntp_set", "W_AI_TOOL_NTP")
         s = state.strip().lower()

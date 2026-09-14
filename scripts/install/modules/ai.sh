@@ -1,7 +1,7 @@
 # modules/ai.sh — W Linux OS AI integration (apply.sh --ai)
 # apply.sh context: runs on the live system as root; post-boot only. Depends on
 # --rootfs, which lays down the whole AI layer: the knowledge tree
-# /usr/share/w/ai/ (AGENTS.md + llms.txt + skills), the MCP server
+# /usr/share/w/ai/ (AGENTS.md + skills), the MCP server
 # /usr/bin/w-mcp, and the w-hyprwiki-update systemd units. This module adds
 # only the runtime bits that generic rsync cannot: package deps, seeding the
 # Hyprland wiki checkout, and arming its refresh timer.

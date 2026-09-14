@@ -23,20 +23,53 @@ _MAX_CONTENT_BYTES = 32 * 1024
 _LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 _HEADING_RE = re.compile(r"^#{1,2}\s+\S", re.MULTILINE)
 _EXEC_SUFFIXES = (".sh", ".py", ".bin")
+# The description is the skill's line in the catalog every host sees at session
+# start (bin/w-mcp instructions / native skill lists), so it is budgeted like the
+# body: over the cap the catalog stops being an index and starts being the skill.
+_MAX_DESCRIPTION_BYTES = 600
+_KEY_RE = re.compile(r"^([A-Za-z_][\w-]*):(.*)$")
 
 
-def _parse_frontmatter(text):
-    """Minimal `key: value` frontmatter reader — same no-YAML-dependency approach
-    as modules/memory.py's _mem_parse and modules/skills.py's own parser."""
+def parse_frontmatter(text):
+    """No-YAML-dependency frontmatter reader shared by the linter, modules/skills.py
+    and the catalog (bin/w-mcp). Understands what a SKILL.md actually uses: plain
+    `key: value`, block scalars (`>`, `>-`, `|`, `|-` — folded to one line, since
+    every consumer wants the description as a single line) and list values
+    (`sources:`/`tools:` — skipped: their consumers parse them themselves). Same
+    approach as modules/memory.py's _mem_parse; the one parser for the format,
+    so a skill reads the same everywhere."""
     fm = {}
-    if text.startswith("---"):
-        end = text.find("\n---", 3)
-        if end != -1:
-            for line in text[3:end].splitlines():
-                if ":" in line and not line.lstrip().startswith("#"):
-                    k, v = line.split(":", 1)
-                    fm[k.strip()] = v.strip()
+    if not text.startswith("---"):
+        return fm
+    end = text.find("\n---", 3)
+    if end == -1:
+        return fm
+    key, block = None, None
+    for line in text[3:end].splitlines():
+        if key is not None and (line.startswith((" ", "\t")) or not line.strip()):
+            if block is not None and line.strip():
+                block.append(line.strip())
+            continue
+        if block is not None:
+            fm[key] = " ".join(block)
+        key, block = None, None
+        if line.lstrip().startswith("#") or not line.strip():
+            continue
+        m = _KEY_RE.match(line)
+        if not m:
+            continue
+        key, value = m.group(1), m.group(2).strip()
+        if value in (">", ">-", "|", "|-"):
+            block = []
+        elif value:
+            fm[key] = value
+        # else: a list (`tools:`) or empty value — left to its own consumer
+    if block is not None:
+        fm[key] = " ".join(block)
     return fm
+
+
+_parse_frontmatter = parse_frontmatter  # older call sites
 
 
 def lint_skill(name, content, dir_files=(), existing_names=(), root="user"):
@@ -62,6 +95,9 @@ def lint_skill(name, content, dir_files=(), existing_names=(), root="user"):
                 errors.append(f"frontmatter missing required field '{field}'")
         if fm.get("name") and fm["name"] != name:
             errors.append(f"frontmatter name '{fm.get('name')}' != directory name '{name}'")
+        dsize = len(fm.get("description", "").encode())
+        if dsize > _MAX_DESCRIPTION_BYTES:
+            errors.append(f"description too long for the catalog: {dsize} bytes, cap is {_MAX_DESCRIPTION_BYTES}")
         if root == "user":
             for field in ("origin", "created"):
                 if not fm.get(field, "").strip():

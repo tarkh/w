@@ -1,17 +1,19 @@
 # w-mcp domain: software — install/remove official-repo packages (Tier 2, com.w.ai.actuate).
 import re
+from typing import Annotated
 
-from core import _actuate, _disabled_msg, _tool_on, tool
+from core import _actuate, _disabled_msg, _tool_on, desc, tool
 
 DOMAIN = "w-software"
 
 
 def register(mcp):
     @tool(mcp, domain=DOMAIN)
-    def w_pacman_install(packages: str) -> str:
-        """Install one or more official-repo packages (Tier 2: privileged; polkit
-        prompt). `packages` is a space-separated list of repo package names — no AUR,
-        no flags. Uses `pacman -S --needed`."""
+    def w_pacman_install(
+        packages: Annotated[str, desc("space-separated official-repo package names — no AUR, no flags")],
+    ) -> str:
+        """Install official-repo packages with `pacman -S --needed` (Tier 2:
+        privileged; polkit prompt)."""
         if not _tool_on("PACMAN"):
             return _disabled_msg("w_pacman_install", "W_AI_TOOL_PACMAN")
         pkgs = [p for p in packages.split() if p.strip()]
@@ -23,12 +25,12 @@ def register(mcp):
         return _actuate("pacman-install", *pkgs, timeout=600)
 
     @tool(mcp, domain=DOMAIN)
-    def w_pacman_remove(packages: str) -> str:
-        """Remove one or more installed packages, with their unneeded dependencies and
-        config files (Tier 2: privileged; polkit prompt). `packages` is a
-        space-separated list of package names. Uses `pacman -Rns` (snap-pac takes a
-        pre-transaction snapshot, so this is rollback-safe). Gated by
-        W_AI_TOOL_PACMAN."""
+    def w_pacman_remove(
+        packages: Annotated[str, desc("space-separated installed package names")],
+    ) -> str:
+        """Remove packages with their unneeded dependencies and config files,
+        `pacman -Rns` (Tier 2: privileged; polkit prompt). snap-pac snapshots
+        first, so it is rollback-safe. Gated by W_AI_TOOL_PACMAN."""
         if not _tool_on("PACMAN"):
             return _disabled_msg("w_pacman_remove", "W_AI_TOOL_PACMAN")
         pkgs = [p for p in packages.split() if p.strip()]

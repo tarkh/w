@@ -16,6 +16,6 @@
 hl.window_rule({
   match  = { class = "^([Bb]itwarden)$" },
   float  = true,
-  size   = { "min(800, monitor_w * 0.9)", "min(790, monitor_h * 0.9)" },
+  size   = { "min(900, monitor_w * 0.9)", "min(800, monitor_h * 0.9)" },
   center = true,
 })

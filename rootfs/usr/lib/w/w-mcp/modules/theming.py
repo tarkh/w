@@ -1,5 +1,7 @@
 # w-mcp domain: theming — active theme (Tier 0 read + Tier 1 user-scope switch).
-from core import prompt, run, tool
+from typing import Annotated, Literal
+
+from core import desc, prompt, run, tool
 
 DOMAIN = "w-theming"
 
@@ -33,11 +35,9 @@ def register(mcp):
 
     # Tier 1: safe, reversible, user-scope (no privilege, no polkit).
     @tool(mcp, domain=DOMAIN, minimal=True)
-    def w_theme_set(name: str) -> str:
+    def w_theme_set(name: Annotated[str, desc("a theme from `w-theme list` / w_theme_status")]) -> str:
         """Switch the active W theme for the current user (Tier 1: user-scope,
-        reversible, no root — wraps `w-theme set`). Changing the system/boot theme
-        needs root and is out of scope for this tool. List choices with
-        `w-theme list` or w_theme_status."""
+        reversible). The system/boot theme needs root and is not offered here."""
         if not name.strip():
             return "(provide a theme name; see w_theme_status or `w-theme list`)"
         return run(["w-theme", "set", name])
@@ -45,31 +45,16 @@ def register(mcp):
     @tool(mcp, domain=DOMAIN)
     def w_theme_new(
         name: str,
-        wallpaper: str,
-        appearance: str = "dark",
-        contrast: str = "medium",
-        seed_index: int = 0,
+        wallpaper: Annotated[str, desc("path to the image; its palette becomes the theme")],
+        appearance: Literal["dark", "light"] = "dark",
+        contrast: Annotated[Literal["low", "medium", "high"], desc("medium = calibrated default, low = soft pastel (tinted canvas), high = crisp; none lowers legibility")] = "medium",
+        seed_index: Annotated[int, desc("which dominant colour to build around, 0 = most dominant")] = 0,
     ) -> str:
         """Build a personal theme from an image (Tier 1: writes only
-        ~/.config/w/themes, no root — wraps `w-theme new`). The wallpaper is
-        cover-cropped to every resolution tier and its palette becomes the theme;
-        `appearance` is dark or light. Undo with w_theme_rm. Building a SYSTEM
-        theme needs root and is deliberately not offered here.
-
-        `contrast` is low, medium or high: medium is the calibrated default, low
-        is the soft pastel end (it tints the canvas, which is what makes a light
-        theme readable as tinted paper rather than a white sheet), high is crisp.
-        No level lowers legibility. `seed_index` picks which of the image's
-        dominant colours the theme is built around, 0 being the most dominant;
-        an image with one hue only has 0.
-
-        Takes tens of seconds (image conversion), so tell the user it is running."""
+        ~/.config/w/themes). Undo with w_theme_rm; a SYSTEM theme needs root and is
+        not offered. Takes tens of seconds, so tell the user it is running."""
         if not name.strip() or not wallpaper.strip():
             return "(provide a theme name and the path to an image)"
-        if appearance not in ("dark", "light"):
-            return "(appearance must be 'dark' or 'light')"
-        if contrast not in ("low", "medium", "high"):
-            return "(contrast must be 'low', 'medium' or 'high')"
         if seed_index < 0:
             return "(seed_index counts from 0, the most dominant colour)"
         return run(
@@ -79,12 +64,10 @@ def register(mcp):
         )
 
     @tool(mcp, domain=DOMAIN)
-    def w_theme_rm(name: str) -> str:
+    def w_theme_rm(name: Annotated[str, desc("a personal theme; system themes are refused")]) -> str:
         """Delete one of this user's personal themes (Tier 1: touches only
-        ~/.config/w/themes — wraps `w-theme rm`). If it is the active theme the
-        session falls back to the system one first. System themes are refused;
-        removing those needs root on the CLI. This is NOT reversible — the theme
-        would have to be rebuilt from its wallpaper, so confirm with the user."""
+        ~/.config/w/themes). NOT reversible — confirm with the user. If it is the
+        active theme the session falls back to the system one first."""
         if not name.strip():
             return "(provide a theme name; see `w-theme list`)"
         return run(["w-theme", "rm", name])

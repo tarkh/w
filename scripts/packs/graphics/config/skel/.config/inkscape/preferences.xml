@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Inkscape preferences, seeded once by the W graphics bundle (w-pack, class
+     `user`): Inkscape owns this file from here on and fills in everything else
+     with its own defaults on first exit. Why seed at all: on a first run the
+     Quick Setup screen applies its default "Colorful" row, which hard-codes
+     the GTK theme to Adwaita — a fresh Inkscape on W therefore opens in
+     Adwaita, not in W's w-gtk. This is the state the Quick Setup row cannot
+     produce (verified against Inkscape 1.4.4): no gtkTheme = "Use system
+     theme (w-gtk)", the multicolor symbolic icon set, and /options/boot/theme
+     "custom" so the first-run Quick Setup finds no row to apply and leaves
+     these values alone. Pick anything else in Preferences → Interface →
+     Theming and it stays: W never overwrites this file. -->
+<inkscape
+   version="1">
+  <group
+     id="options">
+    <group
+       id="boot"
+       theme="custom" />
+  </group>
+  <group
+     id="theme"
+     preferDarkTheme="0"
+     darkTheme="1"
+     symbolicIcons="1"
+     symbolicDefaultBaseColors="1"
+     symbolicDefaultHighColors="0"
+     iconTheme="multicolor"
+     syntax-color-theme="inkscape-dark">
+    <group
+       id="multicolor"
+       symbolicBaseColor="3958107135"
+       symbolicSuccessColor="10029823"
+       symbolicWarningColor="4279865599"
+       symbolicErrorColor="10086143" />
+  </group>
+</inkscape>

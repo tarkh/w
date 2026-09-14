@@ -1,0 +1,26 @@
+# office bundle — re-render the Obsidian axis whenever the vault registry changes.
+#
+# The axis (400-obsidian) can only theme vaults it can find, and the ONLY place
+# that knows vault paths is Obsidian's own registry ~/.config/obsidian/obsidian.json,
+# rewritten by the app on every vault create/open. A vault created AFTER the
+# last render (fresh install: login renders nothing, the first vault appears
+# minutes later) would otherwise sit on the default theme until the next login
+# or theme switch. Watching the registry closes that gap: w.css lands in the new
+# vault, enabled, within a moment of its creation — a vault outside $HOME too,
+# the registry holds absolute paths.
+#
+# PathChanged (not PathModified): one trigger per finished write, not per chunk.
+# The file need not exist yet — systemd watches the closest existing parent, so
+# the very first registry write (first-ever Obsidian launch) fires as well.
+
+[Unit]
+Description=Re-theme Obsidian vaults when the vault registry changes
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Path]
+PathChanged=%h/.config/obsidian/obsidian.json
+Unit=w-obsidian-vaults.service
+
+[Install]
+WantedBy=graphical-session.target

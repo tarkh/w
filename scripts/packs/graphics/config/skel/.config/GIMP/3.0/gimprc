@@ -1,0 +1,11 @@
+# GIMP gimprc — seeded once by the W graphics bundle (w-pack, class `user`):
+# GIMP rewrites this file itself on exit, keeping these values. Two settings
+# make GIMP follow the W theme instead of its own dark look:
+#   theme "System"             GTK-themed chrome — the W gtk theme (w-gtk)
+#   theme-color-scheme system  light/dark from GTK's prefer-dark (W appearance axis)
+# Verified against GIMP 3.2.4: the `prefer-dark-theme` key the system gimprc
+# still documents is stale and fails the parser (the whole file is then ignored
+# and backed up as gimprc~) — do not add it.
+
+(theme "System")
+(theme-color-scheme system)

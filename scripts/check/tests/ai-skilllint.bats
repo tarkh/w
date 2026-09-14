@@ -27,6 +27,34 @@ print(len(reports), len(bad), bad)
   [[ "$result" == "22 0 {}" ]]
 }
 
+@test "lint_shipped_tree: every W-Pack skill (scripts/packs/*/ai/SKILL.md) passes as a system skill" {
+  # A bundle's skill lands in /usr/share/w/ai/skills/<pack>/ on install and enters
+  # the same catalog as the shipped tree — same lint, same description budget.
+  result="$(lint_py "
+from pathlib import Path
+bad = {}
+for md in sorted(Path('$REPO/scripts/packs').glob('*/ai/SKILL.md')):
+    r = sl.lint_skill(md.parent.parent.name, md.read_text(), root='system')
+    if r['errors']:
+        bad[md.parent.parent.name] = r['errors']
+print(bad)")"
+  [[ "$result" == "{}" ]]
+}
+
+@test "parse_frontmatter: block scalars fold, lists are skipped, comments ignored" {
+  result="$(lint_py "
+fm = sl.parse_frontmatter('---\\nname: x\\n# c\\ndescription: |\\n  a\\n\\n  b\\nsources:\\n  - path: p\\ntools:\\n  - w_t\\ntags: [a, b]\\n---\\nbody')
+print(fm)")"
+  [[ "$result" == "{'name': 'x', 'description': 'a b', 'tags': '[a, b]'}" ]]
+}
+
+@test "lint_skill: rejects a description over the catalog budget" {
+  result="$(lint_py "
+d = 'w' * 601
+print(sl.lint_skill('long-desc', '---\\nname: long-desc\\ndescription: ' + d + '\\n---\\n# H', root='system')['errors'])")"
+  [[ "$result" == *"description too long for the catalog"* ]]
+}
+
 @test "lint_skill: rejects an invalid name" {
   result="$(lint_py "print(sl.lint_skill('Not Valid!', '---\nname: x\ndescription: d\n---\n\n# H\nbody'))")"
   [[ "$result" == *"'valid': False"* ]]

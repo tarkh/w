@@ -5,7 +5,7 @@ order: 10
 summary: What a pack is, the bundles W offers, installing one for the machine and setting it up for your account, and how to undo it.
 sources:
   - path: .claude/library/packs.md
-    sha256: 7729deb8225e6173cb7c2aeba67b7fa521849e2e74d71849c3ca89d6fa52c2e1
+    sha256: 2ac246a6c2d1d8ee77fc3381df5f509b65c06f6dc5db4dec6ce5d3c6c11ca459
 ---
 
 W installs in two layers. The **base** is everything a working desktop needs and
@@ -40,6 +40,14 @@ it into the desktop — so a pack arrives configured, not merely downloaded.
   left alone and you pick the file once in the app (Settings → Chat settings →
   Chat background → Choose from file). Either way, from then on every theme
   switch recolours a running Telegram live.
+- **graphics** — 2D creative work: GIMP for raster editing and photo retouching
+  (with the G'MIC filter suite), Inkscape for vector drawing and design, Krita
+  for digital painting. All three follow the W theme (Krita through its "W"
+  theme, selected for you unless you had picked another). The pack also
+  wires [the AI assistant](ai.md) into both editors: it can draw, edit and
+  export vector documents through an Inkscape server, and run edits inside a
+  running GIMP and look at the result — with whatever model your profile uses,
+  local or cloud. Generative painting in Krita is planned for a companion pack.
 - **ai-extra** — the advanced stack for [the AI assistant](ai.md#advanced): local
   models, semantic memory, better web search.
 

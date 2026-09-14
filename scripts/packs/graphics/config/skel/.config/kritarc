@@ -1,0 +1,8 @@
+# kritarc — seeded once by the W graphics bundle (w-pack, class `user`): Krita
+# owns this file from here on and merges its own settings in on save. The one
+# key W cares about selects Krita's "W" theme — the KDE colour scheme the W
+# qt axis renders into ~/.local/share/color-schemes/W.colors on every theme
+# switch (Krita lists every scheme found there under Settings → Themes).
+# Choose another theme in Krita and it stays: W never overwrites this file.
+[theme]
+Theme=W

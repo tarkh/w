@@ -50,7 +50,8 @@ def _search_knowledge(query, max_results=5):
 def register(mcp):
     @tool(mcp, domain=DOMAIN, minimal=True)
     def w_search_knowledge(query: str, max_results: int = 5) -> str:
-        """Search the W knowledge base (AGENTS.md + skills, user overlay included)
-        and return the most relevant files with matching snippets. Prefer this over
-        dumping whole skills — it keeps context minimal."""
+        """Keyword search over the W knowledge base — AGENTS.md + skills, user
+        overlay included (Tier 0). The fallback when no catalog entry fits, not a
+        substitute for the catalog. Returns matching files with a snippet each;
+        then w_skill_read the one that matched."""
         return _search_knowledge(query, max_results)

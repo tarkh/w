@@ -1,15 +1,13 @@
 ---
 name: bitwarden
 description: >-
-  Working with the `bitwarden` W-Pack on W Linux: the Bitwarden desktop app as the
-  user's password manager and SSH agent — how biometric unlock reaches W's auth
-  card through polkit, why the vault needs the login keyring, how `w-ssh` hands the
-  SSH agent over and back, and why per-host key selectors (`w-ssh sync`) are needed
-  at all. Load this when the user asks about Bitwarden, their password manager,
-  vault unlock, biometric/fingerprint unlock of a password manager, SSH keys stored
-  in a vault, "too many authentication failures" on ssh or git push, or the browser
-  extension's connection to the desktop app, and `w-pack status bitwarden` reports
-  installed.
+  The `bitwarden` W-Pack: the Bitwarden desktop app as the user's password
+  manager and SSH agent — biometric unlock through W's auth card (polkit), why
+  the vault needs the login keyring, how `w-ssh` hands the SSH agent over and
+  back, and per-host key selectors (`w-ssh sync`). Load this for Bitwarden, the
+  password manager, vault or biometric unlock, SSH keys kept in a vault, "too many
+  authentication failures" on ssh/git push, or the browser extension's link to the
+  desktop app — when `w-pack status bitwarden` reports installed.
 ---
 
 # W-Pack: bitwarden

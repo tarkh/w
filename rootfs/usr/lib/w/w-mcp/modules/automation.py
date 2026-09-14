@@ -5,8 +5,9 @@
 # The real logic lives in `w-ai recipe/run-recipe/schedule`; these tools are thin
 # fronts so the model can drive it without a shell. See ai-integration.md, Этап 4.
 import re
+from typing import Annotated
 
-from core import run, tool
+from core import desc, run, tool
 
 DOMAIN = "w-automation"
 
@@ -22,7 +23,7 @@ def _valid_recipe_name(name):
 
 
 def register(mcp):
-    @tool(mcp, domain=DOMAIN, minimal=True)
+    @tool(mcp, domain=DOMAIN)
     def w_recipe_list() -> str:
         """List available automation recipes (Tier 0, read-only): the system
         catalog plus any user-added overlay recipe. Each is a goose task file
@@ -31,15 +32,14 @@ def register(mcp):
         return run(["w-ai", "recipe", "list"])
 
     @tool(mcp, domain=DOMAIN)
-    def w_schedule_add(recipe: str, oncalendar: str) -> str:
+    def w_schedule_add(
+        recipe: Annotated[str, desc("a name from w_recipe_list")],
+        oncalendar: Annotated[str, desc("systemd OnCalendar expression: 'daily', '*-*-* 09:00:00', 'Mon *-*-* 09:00:00', '*:0/30'")],
+    ) -> str:
         """Run a recipe periodically on a systemd user timer (Tier 1: user-scope,
-        reversible — no privilege, no polkit prompt; about as reversible as editing
-        a crontab entry). `recipe` must be a name from w_recipe_list; `oncalendar`
-        is a systemd OnCalendar expression (e.g. 'daily', '*-*-* 09:00:00',
-        'Mon *-*-* 09:00:00', '*:0/30'). One schedule per recipe name — adding again
-        replaces the previous time rather than stacking a second timer. Only offer
-        this when the user explicitly asks for a recurring/scheduled task; never
-        create one unprompted."""
+        reversible like a crontab entry). One schedule per recipe — adding again
+        replaces the time. Only when the user explicitly asks for a recurring
+        task; never create one unprompted."""
         if not _valid_recipe_name(recipe):
             return "(recipe must be a bare name like 'morning-digest' — see w_recipe_list)"
         cal = oncalendar.strip()
@@ -47,7 +47,7 @@ def register(mcp):
             return "(provide an OnCalendar expression, e.g. 'daily' or '*:0/30')"
         return run(["w-ai", "schedule", "add", recipe.strip(), cal], timeout=30)
 
-    @tool(mcp, domain=DOMAIN, minimal=True)
+    @tool(mcp, domain=DOMAIN)
     def w_schedule_list() -> str:
         """List active recipe schedules (Tier 0, read-only): recipe name plus
         next/last run time, via systemd user timers."""

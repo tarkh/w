@@ -5,35 +5,24 @@
 # Split out of desktop.py 2026-09-04 when that skill hit the 32 KiB cap; the seam
 # is the one --mcp already enforces (one domain module = one skill). See
 # ai-integration.md / ai-authoring.md.
-from core import run, tool
+from typing import Annotated, Literal
+
+from core import desc, run, tool
 
 DOMAIN = "w-displays"
 
 
 def register(mcp):
-    @tool(mcp, domain=DOMAIN, minimal=True)
+    @tool(mcp, domain=DOMAIN)
     def w_monitor_status() -> str:
-        """Monitor layout (Tier 0, read-only): every connected output with its live
-        mode/scale/rotation/position, whether it is enabled/focused/primary (the W
-        concept of "where the bar and login card live"), its saved `w-monitor` rule
-        if one exists, a handful of its available modes, and the scale factors
-        Hyprland accepts for its current mode. Wraps `w-monitor list`/`status`/
-        `modes`/`scales` — the same fragment-backed source of truth the CLI and the
-        Hub Displays panel use. Modes are capped to the top 5 (by resolution then
-        refresh rate) per output, not the full list, to stay compact. Only pick a
-        scale from the `valid scales` line: the compositor rejects any other value
-        on reload and substitutes its own (both width/scale and height/scale must be
-        exact integers on the 1/120 grid) — `w-monitor scale` refuses them too.
-
-        Read-only: there is no monitor-mutation tool here on purpose. Changing a
-        setting means running `w-monitor <cmd> <output> ...` yourself (rootless,
-        the session is the user's own — no polkit needed), or `w-monitor greeter
-        ...` for the login-screen scope (root). Before mutating, match the output
-        the user means against the names listed here; if the wording doesn't map
-        unambiguously to one output (e.g. "the left one" with two similarly placed
-        monitors, or a name you're not sure of), ask which one they mean instead of
-        guessing — a wrong `disable`/`primary` can strand the desktop on a dark
-        screen. Returns a note (not an error) if no display is reachable from here."""
+        """Monitor layout (Tier 0, read-only): every connected output with its
+        live mode/scale/rotation/position, enabled/focused/primary flags, its
+        saved `w-monitor` rule, top-5 available modes and the scale factors the
+        compositor accepts (pick only from `valid scales`). There is no mutation
+        tool on purpose — changes are `w-monitor <cmd> <output> …` in the shell;
+        when the wording does not map to exactly one output, ask which one before
+        touching it (a wrong disable/primary strands the desktop). See the
+        w-displays skill."""
         list_out = run(["w-monitor", "list", "--porcelain"])
         if list_out.startswith("(command not found") or list_out.startswith("(exit") or list_out.startswith("(timed out"):
             return list_out
@@ -82,44 +71,28 @@ def register(mcp):
             body = "\n".join(entries) if entries else "(no live displays detected)"
         return f"Primary: {primary or '(none set)'}\n{body}"
 
-    @tool(mcp, domain=DOMAIN, minimal=True)
+    @tool(mcp, domain=DOMAIN)
     def w_nightlight_status() -> str:
-        """Night light / blue-light filter (Tier 0, read-only): the mode
-        (off | schedule | always), the night and day colour temperatures in
-        kelvin, the night window, and whether the screen is being tinted RIGHT
-        NOW (plus the value actually on screen, which mid-transition sits
-        between the two — report that, not the destination). Wraps
-        `w-nightlight status`. The engine is hyprsunset, driven by a config W
-        renders — so this answers correctly even with no session reachable from
-        here, and "mode is schedule" does not by itself mean the filter is on."""
+        """Night light / blue-light filter (Tier 0, read-only): mode
+        (off/schedule/always), night and day colour temperatures, the night
+        window, and whether the screen is tinted RIGHT NOW with the value actually
+        on screen (mid-transition it sits between the two — report that). "mode is
+        schedule" does not by itself mean the filter is on."""
         return run(["w-nightlight", "status"])
 
     @tool(mcp, domain=DOMAIN)
-    def w_nightlight_set(mode: str = "", temperature: int = 0,
-                         start: str = "", end: str = "",
-                         day_temperature: int = 0) -> str:
+    def w_nightlight_set(
+        mode: Annotated[Literal["", "off", "schedule", "always"], desc("empty = unchanged")] = "",
+        temperature: Annotated[int, desc("NIGHT colour temperature in kelvin, 1000-20000; lower is warmer (4300 = W default, 3000 clearly amber). 0 = unchanged")] = 0,
+        start: Annotated[str, desc("night window start, HH:MM — give start and end together, they must differ")] = "",
+        end: Annotated[str, desc("night window end, HH:MM")] = "",
+        day_temperature: Annotated[int, desc("DAY end of the transition, 1000-20000; 6600 = screen untouched by day, anything else is an all-day tint (not an off switch). 0 = unchanged")] = 0,
+    ) -> str:
         """Change the night light (Tier 1: user-scope, reversible, no polkit).
-        Pass any combination:
-          mode        off | schedule | always
-          temperature NIGHT colour temperature in kelvin, 1000-20000. Lower is
-                      warmer; 4300 is W's default, 3000 is clearly amber.
-          day_temperature
-                      the DAY end of the transition, same range. 6600 (the
-                      default) means the screen is left completely untouched;
-                      anything else is a real tint that stays on all day. Use it
-                      when the user wants a permanently warmer/cooler screen, or
-                      when the start of a transition shows a visible step on
-                      their panel. It is NOT an off switch — `mode off` always
-                      means an untouched screen whatever this is set to.
-          start / end "HH:MM" — both are needed to move the window, and they
-                      must differ (a zero-length window is `mode always`).
-        Applies immediately and SMOOTHLY: the screen eases to the new value over
-        a couple of seconds rather than jumping, so "nothing happened yet" for a
-        moment is normal. Omitted arguments are left alone. Note that setting
-        `schedule` outside the night window changes nothing on screen until the
-        window opens — say so rather than letting the user think it failed."""
-        if mode and mode not in ("off", "schedule", "always"):
-            return "mode must be one of: off, schedule, always"
+        Pass any combination; omitted arguments stay. Applies at once but eases
+        over a couple of seconds, and `schedule` set outside the night window
+        changes nothing on screen until it opens — say so rather than letting the
+        user think it failed. Returns the resulting status."""
         if bool(start) != bool(end):
             return "start and end must be given together (both 'HH:MM')"
         if not (mode or temperature or start or day_temperature):

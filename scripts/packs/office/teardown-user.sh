@@ -4,14 +4,15 @@
 # `w-pack unsetup office` (rootless, for whoever asks), with:
 #   BUNDLE_NAME  BUNDLE_DIR  PACK_USER  PACK_HOME  PACK_AS_ROOT (1|0)  PACK_PACKAGES
 #
-# setup-user.sh only triggered an axis render; its artefacts in this account
-# are the w.css snippets the axis left in its Obsidian vaults — and the axis
-# itself was just removed from the w-style drop-in root by w-pack. Take both
-# artefacts with it, or the account keeps a themed file nothing left on the
-# machine will ever refresh again:
+# setup-user.sh triggered an axis render and switched on the vault-registry
+# watcher; the render's artefacts in this account are the w.css snippets the
+# axis left in its Obsidian vaults — and the axis itself was just removed from
+# the w-style drop-in root by w-pack. Take all of it back, or the account keeps
+# a themed file nothing left on the machine will ever refresh again:
 #   1. <vault>/.obsidian/snippets/w.css        — W's file, removed outright
 #   2. "w" in <vault>/.obsidian/appearance.json — the entry the axis' guarded
 #      enable added; taken out of the array, every other key preserved
+#   3. the w-obsidian-vaults.path wants-symlink — the watcher, stopped + unlinked
 #
 # NOT removed, by design:
 #   * The vaults and every note in them — user data, never touched.
@@ -36,8 +37,11 @@ USER_HOME="${PACK_HOME:?}"
 cd "$USER_HOME" 2>/dev/null || cd /tmp || true
 
 # ── 0. Is Obsidian running for this account? ───────────────────────────────────
+# The Arch package runs the app under the system Electron (`/usr/lib/electronNN/
+# electron /usr/lib/obsidian/app.asar`), so the process name is "electron" —
+# match the asar on the command line, never `-x obsidian` (matches nothing).
 obs_running=0
-pgrep -u "$USER_NAME" -x obsidian >/dev/null 2>&1 && obs_running=1
+pgrep -u "$USER_NAME" -f 'obsidian/app\.asar' >/dev/null 2>&1 && obs_running=1
 
 # ── 1. The axis-rendered snippets + the enable entries, one per vault ──────────
 # Vault paths are user data; the registry is the only channel that knows them.
@@ -77,7 +81,22 @@ else
 fi
 [[ $obs_running -eq 0 ]] || warn "Obsidian is running — appearance.json left alone (a stale snippet name is invisible and harmless)."
 
-# ── 2. What stays, and why ─────────────────────────────────────────────────────
+# ── 2. Stop watching the vault registry ────────────────────────────────────────
+# The symlink is removed by hand for the same reason setup-user.sh wrote it by
+# hand: at firstboot, or over runuser, `systemctl --user` addresses ROOT's manager.
+LINK="$USER_HOME/.config/systemd/user/graphical-session.target.wants/w-obsidian-vaults.path"
+if [[ -L "$LINK" || -e "$LINK" ]]; then
+  rm -f "$LINK"
+  info "New Obsidian vaults are no longer themed on creation for $USER_NAME."
+fi
+if [[ -d /run/systemd/system ]]; then
+  if [[ "${PACK_AS_ROOT:-0}" == 1 ]]; then sysctl_user=(systemctl --user --machine="$USER_NAME@.host")
+  else sysctl_user=(systemctl --user); fi
+  "${sysctl_user[@]}" stop w-obsidian-vaults.path >/dev/null 2>&1 || true
+  "${sysctl_user[@]}" daemon-reload >/dev/null 2>&1 || true
+fi
+
+# ── 3. What stays, and why ─────────────────────────────────────────────────────
 info "Kept: your vaults and notes; ~/.config/obsidian (Obsidian's own state)."
 
 info "office user teardown complete."

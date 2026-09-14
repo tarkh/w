@@ -167,10 +167,132 @@ preset() { ai_file "hosts/$1"; }
 # and a table that pretended otherwise would hide the difference, not remove it.
 # Sourced one field at a time in an isolated subshell (w-pack's meta_field idiom)
 # so a malformed preset can't leak variables into the launcher.
+# One field of a shell-sourced manifest (host.conf, mcp.d/*.conf), read in an
+# isolated subshell — the same reader idiom w-pack's meta_field uses.
+conf_field() {                                # <file> <FIELD>
+  local conf="$1" field="$2"
+  ( set +u; source "$conf" 2>/dev/null; printf '%s' "${!field:-}" )
+}
+
 host_field() {
   local host="$1" field="$2" conf
   conf="$(preset "$host/host.conf")" || return 0
-  ( set +u; source "$conf" 2>/dev/null; printf '%s' "${!field:-}" )
+  conf_field "$conf" "$field"
+}
+
+# ── Extra MCP servers: drop-ins <root>/mcp.d/<name>.conf ─────────────────────
+# The fourth pack channel (env.d / zshrc.d / rules.d / mcp.d, packs.md): a W-Pack
+# whose software speaks MCP registers its server here and every host gets it at
+# launch — as a launch flag, never as a line in ~/.claude, ~/.codex or goose's
+# config.yaml, the same rule W's own layers follow. Nothing in w-mcp's core
+# changes per pack (the Ф5 decision stands: no per-domain tools there); the
+# pack owns its server, and `w-pack remove` takes the file with it.
+#
+# Shell-sourced like host.conf. Fields:
+#   COMMAND   the server executable (PATH name, or a path — `~` expands)
+#   ARGS      whitespace-split arguments (`~/` expands per word)
+#   REQUIRES  what must exist for THIS account before the server is offered:
+#             a path or a PATH name, default COMMAND. A drop-in is a machine
+#             file, but the servers packs ship are per-user (uv tools in
+#             ~/.local/bin, plug-ins in ~/.config), so an account that never
+#             ran `w-pack setup <bundle>` must simply not see it — a missing
+#             REQUIRES skips the drop-in silently rather than handing the host
+#             a command that dies at spawn.
+# Name = file stem, `^[a-z0-9-]+$` (it becomes the server name in every host's
+# config — tool ids derive from it). The user overlay wins by file name.
+# Fields are joined with US (\x1f), not TAB: tab is IFS whitespace, so `read`
+# would collapse the empty ARGS of a server that takes none and shift `ok` into
+# the args column — the VM run of the graphics bundle showed exactly that.
+MCP_FS=$'\x1f'
+mcp_dropins() {                               # [all] → name<US>cmd<US>args<US>ok|missing|invalid
+  local want="${1:-active}" root f name cmd args req state seen=$'\n'
+  for root in "$USER_ROOT" "$SYS_ROOT"; do
+    for f in "$root"/mcp.d/*.conf; do
+      [[ -f "$f" ]] || continue
+      name="$(basename "$f" .conf)"
+      [[ "$seen" == *$'\n'"$name"$'\n'* ]] && continue
+      seen+="$name"$'\n'
+      cmd="$(conf_field "$f" COMMAND)"; args="$(conf_field "$f" ARGS)"
+      req="$(conf_field "$f" REQUIRES)"; req="${req:-$cmd}"
+      cmd="${cmd/#\~/$HOME}"; req="${req/#\~/$HOME}"
+      local w expanded=""
+      for w in $args; do expanded+="${w/#\~/$HOME} "; done
+      args="${expanded% }"
+      state=ok
+      if [[ -z "$cmd" || ! "$name" =~ ^[a-z0-9-]+$ ]]; then state=invalid
+      elif [[ "$req" == */* ]]; then [[ -e "$req" ]] || state=missing
+      else command -v "$req" >/dev/null 2>&1 || state=missing
+      fi
+      [[ "$want" == all || "$state" == ok ]] || continue
+      printf '%s%s%s%s%s%s%s\n' "$name" "$MCP_FS" "$cmd" "$MCP_FS" "$args" "$MCP_FS" "$state"
+    done
+  done
+}
+
+# Claude Code takes MCP servers from a JSON file, so the drop-ins are merged
+# with the shipped preset into a per-launch file under the runtime dir (the
+# same place the user plugin wrapper lives). No drop-ins → the preset itself,
+# untouched. Python does the merge: it is on every W machine (w-mcp), and JSON
+# escaping by hand is how a stray quote in an argument becomes a broken host.
+claude_mcp_config() {
+  local base rows; base="$(preset claude/mcp.json)" || return 1
+  rows="$(mcp_dropins)"
+  [[ -n "$rows" ]] || { echo "$base"; return 0; }
+  local dir="${XDG_RUNTIME_DIR:-$CACHE_DIR}/w-ai" out
+  out="$dir/mcp.json"
+  if install -d -m700 "$dir" && W_MCP_ROWS="$rows" python3 - "$base" "$out" <<'EOF'
+import json, os, sys
+base, out = sys.argv[1:3]
+with open(base, encoding="utf-8") as fh:
+    cfg = json.load(fh)
+servers = cfg.setdefault("mcpServers", {})
+for row in os.environ["W_MCP_ROWS"].splitlines():
+    name, cmd, args, _state = row.split("\x1f")
+    servers[name] = {"command": cmd, "args": args.split()}
+with open(out, "w", encoding="utf-8") as fh:
+    json.dump(cfg, fh, indent=2)
+EOF
+  then echo "$out"; else err "could not merge mcp.d drop-ins — launching with w-mcp only"; echo "$base"; fi
+}
+
+# Goose and Codex take the same list as launch flags — see launch_host.
+goose_mcp_args() {                            # → --with-extension "<cmd> <args>" …
+  local n c a _
+  while IFS="$MCP_FS" read -r n c a _; do
+    [[ -n "$n" ]] || continue
+    printf -- '--with-extension\n%s\n' "$c${a:+ $a}"
+  done < <(mcp_dropins)
+}
+
+# Pack MCP servers (mcp.d), the same way: dotted keys, TOML values. Each server
+# also gets Codex's per-server "explicitly trust" approval level — the same
+# stance w-mcp itself gets in launch_host: a pack the user installed through W
+# is consent for the assistant to drive that software, so Codex's per-call
+# prompts stay for its own tools and for servers wired up by hand.
+codex_mcp_args() {                            # → -c mcp_servers.<n>.command="…" -c …args=[…] -c …approval="approve" …
+  local n c a _ w list
+  while IFS="$MCP_FS" read -r n c a _; do
+    [[ -n "$n" ]] || continue
+    printf -- '-c\nmcp_servers.%s.command=%s\n' "$n" "$(printf '%s' "$c" | toml_string)"
+    list=""
+    for w in $a; do list+="${list:+, }$(printf '%s' "$w" | toml_string)"; done
+    printf -- '-c\nmcp_servers.%s.args=[%s]\n' "$n" "$list"
+    printf -- '-c\nmcp_servers.%s.default_tools_approval_mode="approve"\n' "$n"
+  done < <(mcp_dropins)
+}
+
+# The MCP servers this launch exempts from Claude Code's per-call approval
+# prompts: w-mcp itself plus every active mcp.d drop-in. Same trust line as
+# codex_mcp_args — W-curated and installed through W (a pack install IS the
+# consent); servers the user wires up by hand are not listed and keep the
+# host's own approval flow. Bare `mcp__<server>` is Claude Code's server-wide
+# allow rule (all tools of that server, no wildcard needed).
+claude_allowed_tools() {                      # → mcp__w-mcp [mcp__<dropin>…] — one per line
+  local n
+  echo "mcp__w-mcp"
+  while IFS="$MCP_FS" read -r n _ _ _; do
+    [[ -n "$n" ]] && echo "mcp__$n"
+  done < <(mcp_dropins)
 }
 
 known_host() { preset "$1/host.conf" >/dev/null 2>&1; }
@@ -435,11 +557,49 @@ _goose_ext_keys() {
   ' "$1"
 }
 
+# Pre-approve every w-mcp tool in goose's own permission store
+# (~/.config/goose/permission.yaml). GOOSE_MODE=auto — W's default — already
+# approves everything; this seed keeps the same invariant when the user
+# deliberately picks approve/smart_approve, where goose consults this file and
+# prompts for every tool without an always_allow entry. W-curated tools are
+# tier-audited and the privileged ones stop at W's polkit prompt regardless,
+# so a host-side confirm on top is double-gating. Written ONLY when the file
+# does not exist: once present it is the user's (goose configure and the
+# session prompts own every later edit, and goose refuses to start on a
+# corrupted file — hence the minimal, atomic writer). The tool list comes from
+# w-mcp itself, so it tracks the profile in effect; mcp.d pack servers are not
+# enumerable this way and stay at goose's defaults in strict modes (auto, the
+# default, approves them anyway).
+_goose_seed_permissions() {
+  local dst="$HOME/.config/goose/permission.yaml" tmp tools
+  [[ -f "$dst" ]] && return 0
+  [[ -d "$(dirname "$dst")" ]] || return 0
+  command -v w-mcp >/dev/null 2>&1 || return 0
+  tools="$(w-mcp --selftest 2>/dev/null | sed -n 's/^tools ([0-9]*): //p')"
+  [[ -n "$tools" ]] || return 0
+  tmp="$(mktemp "$dst.XXXXXX")" || return 0
+  {
+    echo "# Seeded once by W (w-ai): goose's approve/smart_approve modes keep"
+    echo "# prompting for the host's own tools but never for W's MCP tools —"
+    echo "# privileged actions stop at W's polkit prompt (com.w.ai.actuate)"
+    echo "# regardless of this file. Yours from here on: 'goose configure' →"
+    echo "# Tool Permission, and the session approval prompts, edit it."
+    echo "user:"
+    echo "  always_allow:"
+    printf '%s\n' "$tools" | tr ',' '\n' \
+      | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' -e 's/^/  - w-mcp__/'
+    echo "  ask_before: []"
+    echo "  never_allow: []"
+  } > "$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$dst"
+}
+
 # Seed the goose config + hints from the W preset on first run. copy-if-absent so
 # user edits are never overwritten. Done at runtime (per-user) — apply.sh runs as
 # root and cannot seed every user's home.
 seed_goose() {
-  local dst="$HOME/.config/goose" src_cfg src_hints
+  local dst="$HOME/.config/goose" src_cfg src_hints cfg
   install -d -m700 "$dst"
   src_cfg="$(preset goose/config.yaml)" || true
   if [[ ! -f "$dst/config.yaml" && -n "$src_cfg" ]]; then
@@ -448,6 +608,16 @@ seed_goose() {
   if [[ ! -f "$dst/.goosehints" ]] && src_hints="$(preset goose/.goosehints)"; then
     install -m600 "$src_hints" "$dst/.goosehints"
   fi
+  # Telemetry, for configs that predate the preset carrying the key (copy-if-
+  # absent never reaches them): goose blocks its first interactive session on
+  # the consent question whenever the key is unset, so W answers it in advance.
+  # Upsert-if-absent only — an existing value is the user's own answer, written
+  # there by goose itself when they answered the prompt or ran goose configure.
+  cfg="$dst/config.yaml"
+  if [[ -f "$cfg" ]] && ! grep -q '^GOOSE_TELEMETRY_ENABLED:' "$cfg"; then
+    printf '\n# W default: telemetry off — re-enable any time with `goose configure`.\nGOOSE_TELEMETRY_ENABLED: false\n' >> "$cfg"
+  fi
+  _goose_seed_permissions
   # Warn (never auto-fix) if the user's config carries an extension key this
   # preset doesn't pin — e.g. upstream goose reseeded something new on its own,
   # or the file predates a preset update. See ai-integration.md §4 (Этап 2).
@@ -737,9 +907,14 @@ launch_host() {
       [[ -n "${MODE:-}" ]]  && export GOOSE_MODE="$MODE"
       export_provider_key "$provider"
       [[ "$provider" == ollama && -n "${OLLAMA_HOST:-}" ]] && export OLLAMA_HOST
+      # Pack MCP servers (mcp.d) ride --with-extension, repeatable, for this
+      # launch only — config.yaml keeps the pinned W preset, seed_goose's
+      # unknown-extension warning stays meaningful.
+      local -a ext=()
+      mapfile -t ext < <(goose_mcp_args)
       echo "w-ai: host=$host provider=$provider model=${MODEL:-default} mode=${MODE:-default}"
-      [[ -n "$seed" ]] && exec goose run -t "$seed" --interactive
-      exec goose session
+      [[ -n "$seed" ]] && exec goose run -t "$seed" --interactive "${ext[@]}"
+      exec goose session "${ext[@]}"
       ;;
     claude)
       need_bin claude "claude is not installed — run: w-ai host install claude"
@@ -759,7 +934,11 @@ launch_host() {
       #                             purpose — a plugin-bundled server registers as
       #                             plugin:w:w-mcp and its tools as
       #                             mcp__w:w-mcp__*, which no permission rule or
-      #                             skill written against mcp__w-mcp__* would match
+      #                             skill written against mcp__w-mcp__* would match.
+      #                             The preset also sets W_AI_SKILLS_NATIVE=1 for
+      #                             the server: the skill catalog already arrives
+      #                             natively via --plugin-dir, so w-mcp leaves it
+      #                             out of its `instructions` (one copy in context)
       #   --append-system-prompt-file  identity: AGENTS.md, stable and first in
       #                             context, which is what makes it cache-anchored
       #                             (ai-integration.md §7)
@@ -770,7 +949,21 @@ launch_host() {
       # Repeatable flag: the agent-authored overlay rides a second plugin root, so
       # its skills load as `w-user:<name>` beside the system tree's `w:<name>`.
       if user_plugin="$(claude_user_plugin)"; then args+=(--plugin-dir "$user_plugin"); fi
-      if mcp_cfg="$(preset claude/mcp.json)";  then args+=(--mcp-config "$mcp_cfg"); fi
+      # W's own tool surface never waits on Claude Code's approval prompts:
+      # w-mcp and the mcp.d pack servers are W-curated (installing a pack is the
+      # consent to let the assistant drive that software), and the privileged
+      # tools stop at W's polkit prompt whatever this flag says — a host-side
+      # confirm on top would be double-gating. Bare mcp__<server> is CC's
+      # server-wide allow rule; servers the user wires up by hand are not on the
+      # list and keep the normal approval flow. Ahead of the remaining flags on
+      # purpose: --allowedTools is variadic and would swallow a positional
+      # prompt placed after it.
+      local -a allow=()
+      mapfile -t allow < <(claude_allowed_tools)
+      args+=(--allowedTools "${allow[@]}")
+      # The preset merged with the mcp.d drop-ins (claude_mcp_config): still one
+      # file, still non-strict.
+      if mcp_cfg="$(claude_mcp_config)";        then args+=(--mcp-config "$mcp_cfg"); fi
       if agents_md="$(ai_file AGENTS.md)";     then args+=(--append-system-prompt-file "$agents_md"); fi
       # NEEDS_MODEL=no: Claude Code chooses interactively (/model). A MODEL in the
       # profile is an explicit pin, so honour it — but only when the profile is
@@ -801,7 +994,18 @@ launch_host() {
       # Knowledge has no per-launch root in Codex (fixed discovery paths only),
       # so W's skills reach it through w-mcp — MCP resources + w_search_knowledge
       # — exactly as they reach goose. hosts/codex/README.md has the opt-ins.
-      local -a args=(-c 'mcp_servers.w-mcp.command="w-mcp"')
+      local -a args=(
+        -c 'mcp_servers.w-mcp.command="w-mcp"'
+        # Same approval stance as the claude branch: W's own server is trusted
+        # outright. "approve" is Codex's per-server trust level — it leaves the
+        # global approval_policy and the sandbox of Codex's own tools untouched
+        # (pack servers get the same per-server line in codex_mcp_args).
+        -c 'mcp_servers.w-mcp.default_tools_approval_mode="approve"'
+      )
+      # Pack MCP servers (mcp.d), the same way: dotted keys, TOML values.
+      local -a ext=()
+      mapfile -t ext < <(codex_mcp_args)
+      args+=("${ext[@]}")
       local agents_md
       if agents_md="$(ai_file AGENTS.md)"; then
         args+=(-c "developer_instructions=$(toml_string < "$agents_md")")
@@ -999,6 +1203,13 @@ cmd_status() {
   else
     echo "w-mcp    : NOT installed (run 'sudo apply.sh --ai')"
   fi
+  # Pack servers (mcp.d): every drop-in with its state for THIS account.
+  local n state extra=""
+  while IFS="$MCP_FS" read -r n _ _ state; do
+    [[ -n "$n" ]] || continue
+    extra+="${extra:+, }$n$([[ "$state" == ok ]] || echo " ($state)")"
+  done < <(mcp_dropins all)
+  if [[ -n "$extra" ]]; then echo "MCP extra: $extra"; fi
 }
 
 cmd_config() {
@@ -1014,7 +1225,7 @@ cmd_config() {
 #HOST=goose
 #PROVIDER=openrouter
 #MODEL=
-#MODE=smart_approve
+#MODE=auto
 EOF
   fi
   exec "${EDITOR:-${VISUAL:-micro}}" "$USER_CONF"

@@ -23,6 +23,7 @@ import importlib
 import inspect
 import re
 import sys
+import typing
 from pathlib import Path
 
 import core
@@ -249,6 +250,60 @@ def _check_disabled_tool_stub(registry):
     return problems
 
 
+# ── Schema budget ("docstring = interface") ──────────────────────────────────
+# The tool schemas are the largest fixed cost of every request (ai-integration.md
+# §7): a host resends all of them each turn. What the model needs at call time is
+# the interface — what the tool does, its parameters, their allowed values — and
+# that is all a docstring may carry. Allowed values go into the schema as an
+# `enum` (a `Literal[...]` annotation), the meaning of a parameter into its
+# `Field(description=...)`, and everything about behaviour/consequences/internals
+# into the domain skill, which the model reads on demand. Same budget the skill
+# catalog line has (skill_linter._MAX_DESCRIPTION_BYTES).
+_MAX_DOC_BYTES = 600
+_MAX_PARAM_DESC_BYTES = 200
+_PROSE_ENUM_RE = re.compile(r"[\w+-]+ \| [\w+-]+")
+
+
+def _param_descriptions(fn):
+    """{param: description} from Annotated[..., Field(description=...)] metadata."""
+    out = {}
+    try:
+        hints = typing.get_type_hints(fn, include_extras=True)
+    except Exception:  # noqa: BLE001 — unresolvable hints are schema-validity's problem
+        return out
+    for pname, hint in hints.items():
+        if typing.get_origin(hint) is not typing.Annotated:
+            continue
+        for meta in typing.get_args(hint)[1:]:
+            desc = getattr(meta, "description", None)
+            if desc:
+                out[pname] = desc
+    return out
+
+
+def _check_schema_budget(registry):
+    """Every tool's wire description (the dedented docstring) fits _MAX_DOC_BYTES,
+    never spells an enumeration in prose (`on | off` belongs in a Literal so the
+    host gets a real `enum`), and each parameter description fits
+    _MAX_PARAM_DESC_BYTES."""
+    problems = []
+    for r in registry:
+        doc = inspect.cleandoc(r["fn"].__doc__ or "")
+        n = len(doc.encode())
+        if n > _MAX_DOC_BYTES:
+            problems.append(f"{r['name']}: docstring is {n} B (cap {_MAX_DOC_BYTES}) — move "
+                            "behaviour to the skill, values to Literal, parameter meaning to Field")
+        m = _PROSE_ENUM_RE.search(doc)
+        if m:
+            problems.append(f"{r['name']}: enumerates values in prose ({m.group(0)!r}) — "
+                            "use a Literal[...] annotation so the schema carries an enum")
+        for pname, desc in _param_descriptions(r["fn"]).items():
+            n = len(desc.encode())
+            if n > _MAX_PARAM_DESC_BYTES:
+                problems.append(f"{r['name']}.{pname}: description is {n} B (cap {_MAX_PARAM_DESC_BYTES})")
+    return problems
+
+
 # ── AGENTS.md structural lint ──────────────────────────────────────────────
 # The generic (memory/tools/security/knowledge) section names from the original
 # design draft don't match this AGENTS.md's actual headings — mapped to the real ones.
@@ -284,6 +339,16 @@ def _check_agents_md(agents_path, registry):
         if m.group(1) not in names:
             problems.append(f"AGENTS.md: mentions `{m.group(1)}` — no such tool in the registry")
 
+    # The skill catalog is generated from the skills' own frontmatter (modules/
+    # skills.py) and delivered natively or via `instructions`; a hand-written copy
+    # here would be a second index that drifts. Prose may name a skill; a list
+    # entry per skill may not.
+    skills_dir = agents_path.parent / "skills"
+    if skills_dir.is_dir():
+        for sk in sorted(p.name for p in skills_dir.iterdir() if p.is_dir()):
+            if re.search(rf"^\s*[-*] +`?{re.escape(sk)}`?\s*[:—-]", text, re.MULTILINE):
+                problems.append(f"AGENTS.md: lists skill `{sk}` — the catalog is generated, not hand-written")
+
     opens, closes = text.count("{{"), text.count("}}")
     if opens != closes:
         problems.append(f"AGENTS.md: unbalanced template braces ({{{{={opens}, }}}}={closes})")
@@ -302,6 +367,7 @@ def collect_checks(registry, lib_dir, agents_path):
         "privilege-invariant": _check_privilege_invariant(Path(lib_dir)),
         "tier2-guard": _check_tier2_guard(registry),
         "disabled-tool-stub": _check_disabled_tool_stub(registry),
+        "schema-budget": _check_schema_budget(registry),
         "agents-md-lint": _check_agents_md(Path(agents_path), registry),
     }
 

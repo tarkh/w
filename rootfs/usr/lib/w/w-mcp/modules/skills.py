@@ -19,9 +19,10 @@
 # warnings are non-blocking and surface in the response.
 import datetime
 import re
+from typing import Annotated
 
-from core import SYS_ROOT, USER_ROOT, tool
-from skill_linter import lint_skill
+from core import SYS_ROOT, USER_ROOT, desc, tool
+from skill_linter import lint_skill, parse_frontmatter
 
 DOMAIN = "shared"
 
@@ -54,18 +55,52 @@ def _user_skill_names():
 
 
 def _parse_skill_frontmatter(text):
-    """Minimal `key: value` frontmatter reader for a SKILL.md — same no-YAML-
-    dependency approach as modules/memory.py's _mem_parse, applied to the fields
-    w_skill_add itself writes (name/description/origin/tags/created/updated)."""
-    fm = {}
-    if text.startswith("---"):
-        end = text.find("\n---", 3)
-        if end != -1:
-            for line in text[3:end].splitlines():
-                if ":" in line and not line.lstrip().startswith("#"):
-                    k, v = line.split(":", 1)
-                    fm[k.strip()] = v.strip()
-    return fm
+    """One parser for the format (skill_linter.parse_frontmatter): block-scalar
+    descriptions of shipped skills and the single-line ones w_skill_add writes
+    read the same way here, in the linter and in the catalog."""
+    return parse_frontmatter(text)
+
+
+def catalog():
+    """Every skill the assistant can open, in KNOWLEDGE_ROOTS precedence (user
+    overlay first, so a same-named user skill shadows the system one): a list of
+    {name, description, scope, path}. THE index of the knowledge layer — the
+    session-start catalog (bin/w-mcp instructions), w_skill_list, the resource
+    descriptions and the CLI all render this one list, generated from the
+    SKILL.md frontmatter, so no hand-written copy of it exists to drift."""
+    out, seen = [], set()
+    for root, scope in ((USER_ROOT, "user"), (SYS_ROOT, "system")):
+        d = root / "skills"
+        if not d.is_dir():
+            continue
+        for sk in sorted(p for p in d.iterdir() if p.is_dir()):
+            md = sk / "SKILL.md"
+            if sk.name in seen or not md.is_file():
+                continue
+            seen.add(sk.name)
+            fm = parse_frontmatter(md.read_text(errors="replace"))
+            out.append({"name": sk.name, "description": fm.get("description", "").strip(),
+                        "scope": scope, "path": md})
+    return out
+
+
+def render_catalog(entries=None):
+    """The catalog as the text block a host folds into its system prompt (bin/w-mcp
+    `instructions`, unless the host loads SKILL.md natively — see there). Name +
+    description per skill, nothing else: this is the progressive-disclosure index,
+    the bodies come one at a time through w_skill_read."""
+    entries = catalog() if entries is None else entries
+    if not entries:
+        return ""
+    lines = ["## Skill catalog",
+             "Detailed W knowledge is split into skills. Pick the ONE whose description "
+             "matches the task and read it with w_skill_read(name) before acting — never "
+             "read them all, never guess what a skill says. `[user]` marks skills authored "
+             "for this user's own workflows (w_skill_add)."]
+    for e in entries:
+        tag = "[user] " if e["scope"] == "user" else ""
+        lines.append(f"- {tag}{e['name']}: {e['description']}")
+    return "\n".join(lines)
 
 
 def _parse_tags(raw):
@@ -199,18 +234,10 @@ def _skill_add(name, description, content, tags, overwrite):
 
 
 def _skill_list():
-    sys_names = sorted(_sys_skill_names())
-    user_names = _user_skill_names()
-    if not sys_names and not user_names:
+    entries = catalog()
+    if not entries:
         return "(no skills found)"
-    lines = []
-    for n in sys_names:
-        lines.append(f"[system] {n}")
-    for n in user_names:
-        s = _load_user_skill(n)
-        desc = f": {s['description']}" if s and s["description"] else ""
-        lines.append(f"[user]   {n}{desc}")
-    return "\n".join(lines)
+    return "\n".join(f"[{e['scope']:<6}] {e['name']}: {e['description']}" for e in entries)
 
 
 def _skill_show(name):
@@ -239,43 +266,42 @@ def _skill_rm(name):
 
 def register(mcp):
     @tool(mcp, domain=DOMAIN)
-    def w_skill_add(name: str, description: str, content: str, tags: str = "", overwrite: bool = False) -> str:
-        """Author a skill in your user-space knowledge overlay (Tier 1: user-scope,
-        reversible) — a markdown file future sessions will find via
-        w_search_knowledge and read like any built-in skill. ONLY call this after
-        explicit user consent: they asked you to remember/save a workflow, said
-        "we often do this", or asked you to create a skill outright — never as a
-        proactive suggestion after ordinary Q&A or a one-off task. Only worth
-        creating if the content captures user-specific data (paths, hosts, project
-        names, commands, env vars) you could not reconstruct from general
-        knowledge — "how to install nginx" is not a skill. One skill = one
-        repeatable workflow (name a verb or verb+noun, e.g. `deploy-frontend`, not
-        a broad `docker`). `name` must match ^[a-z0-9-]{2,40}$ and cannot reuse a
-        system skill's name (refused). `tags` is a short comma-separated list you
-        fill in from the content, for future search/dedup. This tool refuses by
-        itself if an existing user skill looks like a near-duplicate (same/similar
-        name, overlapping tags, or a close keyword match) — when that happens, ask
-        the user whether to update the matched skill (call again with its name and
-        overwrite=true) or create this one anyway (call again with overwrite=true).
-        Also refuses (regardless of overwrite) on an invalid name, empty
-        description/content, or content over 32KB. Before writing, the file is
-        also checked against the same structural lint used to gate shipped
-        skills — a malformed result is refused instead of written; a soundly
-        formed one with lint warnings (e.g. missing heading) is still created,
-        with the warnings noted in the response."""
+    def w_skill_add(
+        name: Annotated[str, desc("^[a-z0-9-]{2,40}$, a verb or verb+noun (`deploy-frontend`, not `docker`); a system skill's name is refused")],
+        description: Annotated[str, desc("one line, when to use it")],
+        content: Annotated[str, desc("the workflow, markdown, under 32KB")],
+        tags: Annotated[str, desc("short comma-separated list drawn from the content, for search/dedup")] = "",
+        overwrite: Annotated[bool, desc("update the same-named skill, or create despite a near-duplicate")] = False,
+    ) -> str:
+        """Author a skill in your user-space overlay (Tier 1: user-scope,
+        reversible) — future sessions find it in the catalog like a built-in one.
+        ONLY after explicit user consent (they asked to save a workflow, said "we
+        often do this"), never proactively; and only for user-specific knowledge
+        (paths, hosts, commands) you could not reconstruct — "how to install
+        nginx" is not a skill. Refuses a
+        near-duplicate of an existing user skill: ask the user whether to update
+        it (its name + overwrite=true) or create anyway (overwrite=true). A
+        malformed file is refused; lint warnings are reported, not fatal."""
         return _skill_add(name, description, content, tags, overwrite)
 
     @tool(mcp, domain=DOMAIN, minimal=True)
+    def w_skill_read(name: str) -> str:
+        """Read one skill's full text (Tier 0) — the step after the catalog: pick
+        the single skill whose description matches the task, read it, act. System
+        and user skills alike (a user skill shadows a same-named system one). Do
+        not page through skills to "look around"; when no catalog entry fits, use
+        w_search_knowledge."""
+        return _skill_show(name)
+
+    @tool(mcp, domain=DOMAIN)
     def w_skill_list() -> str:
-        """List every available skill — system (built-in) and user-authored (your
-        overlay), scope marked, with a one-line description for user skills. Tier
-        0, read-only. Check this (or just call w_skill_add, which dedup-checks on
-        its own) before authoring a new skill."""
+        """The skill catalog — every skill you can w_skill_read, one description
+        each (Tier 0). Usually already in your context; call it again after
+        w_skill_add or once the context was compacted."""
         return _skill_list()
 
     @tool(mcp, domain=DOMAIN)
-    def w_skill_rm(name: str) -> str:
-        """Delete a skill from your user-space overlay by name (Tier 1,
-        user-scope). Refuses on a system skill's name — those cannot be removed
-        this way. There is no undo beyond re-authoring it."""
+    def w_skill_rm(name: Annotated[str, desc("a user-overlay skill; system skills are refused")]) -> str:
+        """Delete a skill from your user-space overlay (Tier 1, user-scope). No
+        undo beyond re-authoring it."""
         return _skill_rm(name)

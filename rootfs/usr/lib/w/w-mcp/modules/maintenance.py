@@ -17,32 +17,26 @@
 # window the snapshot notice's button opens, through the same one verb, so the two cannot
 # drift apart.
 import subprocess
+from typing import Annotated, Literal
 
-from core import _actuate, _disabled_msg, _tool_on, run, tool
+from core import _actuate, _disabled_msg, _tool_on, desc, run, tool
 
 DOMAIN = "w-maintenance"
 
 
 def register(mcp):
-    @tool(mcp, domain=DOMAIN, minimal=True)
-    def w_snapshot_list(config: str = "root") -> str:
-        """List btrfs/snapper snapshots. `config` is 'root' (system) or 'home'
-        (default: root). Read-only."""
-        cfg = config.strip().lower()
-        if cfg not in ("root", "home"):
-            return "(config must be 'root' or 'home')"
-        return run(["snapper", "-c", cfg, "list"])
+    @tool(mcp, domain=DOMAIN)
+    def w_snapshot_list(config: Literal["root", "home"] = "root") -> str:
+        """List btrfs/snapper snapshots of the system (root) or home (Tier 0,
+        read-only)."""
+        return run(["snapper", "-c", config, "list"])
 
-    @tool(mcp, domain=DOMAIN, minimal=True)
+    @tool(mcp, domain=DOMAIN)
     def w_snapshot_rollback_plan() -> str:
-        """Explain how to roll this machine back to a snapshot. Read-only: it reports
-        which boot path the machine has and whether it is currently running from a
-        snapshot, then gives the command the user must run themselves.
-
-        Use w_snapshot_list to show the available snapshots and their dates, and this
-        to see where the machine currently stands. The rollback itself is started with
-        w_snapshot_rollback_start once the user has chosen — it opens a terminal where
-        they authenticate and confirm; it is never completed on their behalf."""
+        """Where this machine stands for a rollback (Tier 0, read-only): its boot
+        path, whether it is currently running from a snapshot, and the command the
+        user would run. Pair with w_snapshot_list; the rollback itself is opened by
+        w_snapshot_rollback_start once the USER has chosen."""
         return run(["w-rollback", "status"]) + (
             "\n\nWhen the user has chosen a snapshot, call w_snapshot_rollback_start with\n"
             "its number — that opens the rollback in a terminal for them to confirm.\n\n"
@@ -51,21 +45,14 @@ def register(mcp):
         )
 
     @tool(mcp, domain=DOMAIN)
-    def w_snapshot_rollback_start(number: int = -1) -> str:
-        """Open a rollback for the user to confirm (Tier 1: user-scope, opens a window;
-        it does NOT roll anything back by itself). `number` is a snapshot from
-        w_snapshot_list; omit it when the machine is booted from a snapshot and that is
-        the one to restore.
-
-        A terminal opens in the session: W's password window asks the user to
-        authenticate, then the rollback shows exactly what it will do and waits for them
-        to type 'yes'. Nothing changes unless they do, and the system being replaced is
-        kept either way.
-
-        Workflow: w_snapshot_list to show what is available -> let the USER say which one
-        -> call this with that number -> tell them a window has opened and what it will
-        ask. Never pick the snapshot for them: rolling back takes the whole system to an
-        earlier state, and only they know what since then still matters."""
+    def w_snapshot_rollback_start(
+        number: Annotated[int, desc("snapshot number from w_snapshot_list, chosen by the USER; omit (-1) when booted from a snapshot and that is the one to restore")] = -1,
+    ) -> str:
+        """Open a rollback for the user to confirm (Tier 1: user-scope). It does
+        NOT roll anything back itself: a terminal opens, W asks for the password,
+        shows what will happen and waits for 'yes'. Never pick the snapshot for
+        the user — only they know what since then still matters. Tell them a window
+        has opened. Details: the w-maintenance skill."""
         if number < -1:
             return "(number must be a snapshot number from w_snapshot_list)"
         cmd = ["w-rollback", "launch"] + ([str(number)] if number >= 0 else [])
@@ -84,26 +71,16 @@ def register(mcp):
         )
 
     @tool(mcp, domain=DOMAIN)
-    def w_sync_update(action: str = "plan") -> str:
-        """Update W itself on the edge channel (git-checkout install), two-step like
-        w_system_update:
-
-          action='plan'  (read-only, no prompt) — fetches and shows incoming commits
-                         plus the current channel/state. ALWAYS run this first. On a
-                         'stable' channel machine this returns a clear no-op message
-                         (edge-only feature) instead of doing anything.
-          action='apply' (privileged; polkit prompt) — fetch, snapshot ~/home,
-                         `git pull --ff-only`, then a selective `apply.sh` for only
-                         the changed modules. Never reboots on its own even if the
-                         pulled release requests one — it only reports that.
-
-        Workflow: plan → if the commit list looks risky or large, tell the user and
-        get a go-ahead → apply. Gated by W_AI_TOOL_SYNC."""
+    def w_sync_update(
+        action: Annotated[Literal["plan", "apply"], desc("plan = read-only: incoming commits + channel state, run it FIRST; apply = privileged (polkit): pull + selective apply.sh")] = "plan",
+    ) -> str:
+        """Update W itself on the edge channel (Tier 2 on apply; polkit prompt).
+        Two-step: plan → if the commit list looks risky or large, get the user's
+        go-ahead → apply. A stable-channel machine gets a no-op message. Never
+        reboots on its own, only reports that one is due. Gated by W_AI_TOOL_SYNC."""
         act = action.strip().lower()
         if act in ("", "plan"):
             return run(["w-sync", "log"], timeout=60) + "\n\n" + run(["w-sync", "status"])
-        if act != "apply":
-            return "(action must be 'plan' or 'apply')"
         if not _tool_on("SYNC"):
             return _disabled_msg("w_sync_update", "W_AI_TOOL_SYNC")
         return _actuate("sync-update", timeout=1800)

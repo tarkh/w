@@ -2,19 +2,21 @@
 # single subsystem skill: re-run any apply.sh module, set the locale, or (off by
 # default) run an arbitrary root command. Tier 2, via com.w.ai.actuate.
 import re
+from typing import Annotated
 
-from core import _actuate, _disabled_msg, _tool_on, tool
+from core import _actuate, _disabled_msg, _tool_on, desc, tool
 
 DOMAIN = "shared"
 
 
 def register(mcp):
     @tool(mcp, domain=DOMAIN)
-    def w_apply_module(module: str) -> str:
+    def w_apply_module(
+        module: Annotated[str, desc("bare module name without dashes, e.g. 'dns', 'firewall', 'style', 'quickshell'")],
+    ) -> str:
         """Re-run one W apply.sh module to (re)configure a subsystem (Tier 2:
-        privileged; polkit prompt). `module` is the bare module name without dashes
-        (e.g. 'dns', 'firewall', 'style', 'quickshell') — runs `apply.sh --<module>`
-        from the on-disk W source tree."""
+        privileged; polkit prompt) — `apply.sh --<module>` from the on-disk W
+        source tree."""
         if not _tool_on("APPLY"):
             return _disabled_msg("w_apply_module", "W_AI_TOOL_APPLY")
         m = module.strip().lstrip("-")
@@ -23,10 +25,11 @@ def register(mcp):
         return _actuate("apply-module", m, timeout=1800)
 
     @tool(mcp, domain=DOMAIN)
-    def w_locale_set(locale: str) -> str:
-        """Set the system locale / LANG (Tier 2: privileged; polkit prompt). `locale`
-        is a locale name like 'en_US.UTF-8' or 'ru_RU.UTF-8' (it must be enabled in
-        locale.gen). Takes effect on the next login. Gated by W_AI_TOOL_LOCALE."""
+    def w_locale_set(
+        locale: Annotated[str, desc("e.g. 'en_US.UTF-8', 'ru_RU.UTF-8'; must be enabled in locale.gen")],
+    ) -> str:
+        """Set the system locale / LANG (Tier 2: privileged; polkit prompt). Takes
+        effect at the next login. Gated by W_AI_TOOL_LOCALE."""
         if not _tool_on("LOCALE"):
             return _disabled_msg("w_locale_set", "W_AI_TOOL_LOCALE")
         loc = locale.strip()

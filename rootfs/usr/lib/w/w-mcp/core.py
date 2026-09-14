@@ -13,6 +13,7 @@
 
 import fnmatch
 import grp
+import inspect
 import os
 import pwd
 import re
@@ -258,19 +259,64 @@ def resolve_profile():
     return "full"
 
 
+# Parameter metadata: `Annotated[T, desc("…")]` puts the text into that
+# property's JSON-Schema `description`, and a `Literal[...]` annotation becomes
+# its `enum` — so the interface lives in the schema and the docstring stays
+# short (contract.py schema-budget). pydantic ships with python-mcp on the
+# target; the dev checker imports modules without it, so a duck-typed stand-in
+# keeps the annotations importable there (contract reads `.description`).
+try:
+    from pydantic import Field as _Field
+except ImportError:
+    class _Field:
+        def __init__(self, description=""):
+            self.description = description
+
+
+def desc(text):
+    """Schema description for one parameter (≤ contract._MAX_PARAM_DESC_BYTES)."""
+    return _Field(description=text)
+
+
+def _strip_titles(schema):
+    """JSON Schema minus pydantic's auto `title` keys (`"title": "Unit"` on every
+    property, `"title": "w_logsArguments"` on the object) — they carry nothing a
+    model can use and are resent on every request by hosts that forward the
+    schema as-is (Goose keeps them; Claude Code forwards everything)."""
+    if isinstance(schema, dict):
+        return {k: _strip_titles(v) for k, v in schema.items() if k != "title"}
+    if isinstance(schema, list):
+        return [_strip_titles(x) for x in schema]
+    return schema
+
+
 def tool(mcp, *, domain, minimal=False):
     """Decorator: register a function as an MCP tool and record its metadata.
 
-    Wraps FastMCP's own mcp.tool() (so the wire schema is identical — same
-    signature + docstring) and appends {name, domain, minimal} to REGISTRY. In the
-    minimal profile, a tool not flagged minimal is recorded but NOT offered.
-    Use as `@tool(mcp, domain=DOMAIN, minimal=True)` inside a module's register().
+    Wraps FastMCP's own mcp.tool() and appends {name, domain, minimal} to
+    REGISTRY. In the minimal profile, a tool not flagged minimal is recorded but
+    NOT offered. Use as `@tool(mcp, domain=DOMAIN, minimal=True)` inside a
+    module's register().
+
+    Wire hygiene (ai-integration.md §7 — the schema block is the biggest fixed
+    cost per request): the description is the *dedented* docstring (FastMCP
+    ships `fn.__doc__` verbatim, 8 spaces of source indentation per line);
+    `structured_output=False` drops the auto `{"result": str}` outputSchema
+    every `-> str` tool would otherwise carry (~140 B × N tools, zero meaning —
+    hosts read the text content); property titles are stripped after the fact
+    (`_tool_manager` is FastMCP-private, hence the getattr guard: on an SDK
+    that renames it the titles simply stay — a few KB, never a failure).
     """
     def deco(fn):
         REGISTRY.append({"name": fn.__name__, "domain": domain, "minimal": minimal, "fn": fn})
         if PROFILE == "minimal" and not minimal:
             return fn  # out of profile: recorded, but not exposed to the host
-        return mcp.tool()(fn)
+        out = mcp.tool(description=inspect.cleandoc(fn.__doc__ or ""), structured_output=False)(fn)
+        mgr = getattr(mcp, "_tool_manager", None)
+        t = mgr.get_tool(fn.__name__) if mgr is not None else None
+        if t is not None:
+            t.parameters = _strip_titles(t.parameters)
+        return out
     return deco
 
 

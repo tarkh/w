@@ -231,6 +231,16 @@ apply_rootfs() {
     echo "  rootfs/ is empty, skipping."
   fi
 
+  # rsync adds and updates, never removes: a shipped file that the repo retired
+  # would stay on every installed machine forever (and, being under a path W
+  # still reads, keep acting — llms.txt was searched by w_search_knowledge).
+  # One line per retired path, removed on every apply; drop the line once the
+  # path is older than the oldest supported install.
+  local retired=(
+    /usr/share/w/ai/llms.txt   # 2026-09-14: the skill catalog is generated (w-mcp instructions)
+  )
+  rm -f "${retired[@]}"
+
   # Record the /etc paths W ships, so the .pacnew reconciler (alpm hook
   # 96-w-pacnew-reconcile) knows which .pacnew are W-owned noise and can drop them.
   # Regenerated from the source tree on every apply → never drifts.

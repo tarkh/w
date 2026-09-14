@@ -437,3 +437,163 @@ EOF
   host_logged_in ghost cached
   [ ! -e "$CACHE_DIR/auth-ghost" ]
 }
+
+# ── mcp.d: pack MCP servers reach every host as launch flags ─────────────────
+# The drop-in is a machine file but the servers packs ship are per-user, so the
+# one promise worth a test is the presence guard: an account without the
+# bundle's user layer must not be handed a command that dies at spawn.
+_mcp_fixture() {
+  US=$'\x1f'
+  SYS_ROOT="$BATS_TEST_TMPDIR/sys"; USER_ROOT="$BATS_TEST_TMPDIR/user"
+  HOME="$BATS_TEST_TMPDIR/home"; export HOME
+  mkdir -p "$SYS_ROOT/mcp.d" "$SYS_ROOT/hosts/claude" "$HOME"
+  cp "$REPO/rootfs/usr/share/w/ai/hosts/claude/mcp.json" "$SYS_ROOT/hosts/claude/"
+  # present: a PATH command; absent: a per-user file that setup-user.sh would
+  # have created; path-form: COMMAND is a ~-path, ARGS carry a ~-path too.
+  printf 'COMMAND="true"\nARGS="--stdio -v"\n' > "$SYS_ROOT/mcp.d/present.conf"
+  printf 'COMMAND="python3"\nARGS="~/.local/share/w/x/server.py"\nREQUIRES="~/.local/share/w/x/server.py"\n' \
+    > "$SYS_ROOT/mcp.d/absent.conf"
+}
+
+@test "mcp.d: a drop-in whose REQUIRES is missing is not offered, but is listed" {
+  _mcp_fixture
+  run mcp_dropins
+  [[ "$output" == "present${US}true${US}--stdio -v${US}ok" ]]
+  run mcp_dropins all
+  [[ "$output" == *"absent${US}python3${US}$HOME/.local/share/w/x/server.py${US}missing"* ]]
+}
+
+@test "mcp.d: the per-user file appearing activates the drop-in, tilde expanded" {
+  _mcp_fixture
+  mkdir -p "$HOME/.local/share/w/x"; : > "$HOME/.local/share/w/x/server.py"
+  run mcp_dropins
+  [[ "$output" == *"absent${US}python3${US}$HOME/.local/share/w/x/server.py${US}ok"* ]]
+}
+
+@test "mcp.d: the user overlay wins by file name" {
+  _mcp_fixture
+  mkdir -p "$USER_ROOT/mcp.d"
+  printf 'COMMAND="false"\n' > "$USER_ROOT/mcp.d/present.conf"
+  run mcp_dropins
+  [[ "$output" == "present${US}false${US}${US}ok" ]]
+}
+
+@test "mcp.d: a bad name or an empty COMMAND is invalid, never offered" {
+  _mcp_fixture
+  printf 'COMMAND="true"\n' > "$SYS_ROOT/mcp.d/Bad_Name.conf"
+  printf 'ARGS="x"\n'       > "$SYS_ROOT/mcp.d/nocmd.conf"
+  run mcp_dropins all
+  [[ "$output" == *"Bad_Name${US}true${US}${US}invalid"* ]]
+  [[ "$output" == *"nocmd${US}${US}x${US}invalid"* ]]
+  run mcp_dropins
+  [[ "$output" == "present${US}true${US}--stdio -v${US}ok" ]]
+}
+
+@test "mcp.d: goose gets one --with-extension per active server" {
+  _mcp_fixture
+  run goose_mcp_args
+  [[ "$output" == $'--with-extension\ntrue --stdio -v' ]]
+}
+
+@test "mcp.d: a server with no ARGS gets no stray argument (goose + codex)" {
+  _mcp_fixture
+  printf 'COMMAND="true"\n' > "$SYS_ROOT/mcp.d/present.conf"
+  run goose_mcp_args
+  [[ "$output" == $'--with-extension\ntrue' ]]
+  run codex_mcp_args
+  [[ "$output" == $'-c\nmcp_servers.present.command="true"\n-c\nmcp_servers.present.args=[]\n-c\nmcp_servers.present.default_tools_approval_mode="approve"' ]]
+}
+
+@test "mcp.d: codex gets dotted keys with TOML values" {
+  _mcp_fixture
+  run codex_mcp_args
+  [[ "$output" == $'-c\nmcp_servers.present.command="true"\n-c\nmcp_servers.present.args=["--stdio", "-v"]\n-c\nmcp_servers.present.default_tools_approval_mode="approve"' ]]
+}
+
+@test "mcp.d: claude gets the preset merged with the active servers, w-mcp kept" {
+  _mcp_fixture
+  cfg="$(claude_mcp_config)"
+  [[ "$cfg" == "$XDG_RUNTIME_DIR/w-ai/mcp.json" ]]
+  python3 -c '
+import json,sys; s=json.load(open(sys.argv[1]))["mcpServers"]
+assert s["w-mcp"]["command"]=="w-mcp", s
+assert s["present"]=={"command":"true","args":["--stdio","-v"]}, s
+assert "absent" not in s, s' "$cfg"
+}
+
+@test "mcp.d: no drop-ins — claude launches with the untouched preset" {
+  _mcp_fixture
+  rm "$SYS_ROOT"/mcp.d/*.conf
+  cfg="$(claude_mcp_config)"
+  [[ "$cfg" == "$SYS_ROOT/hosts/claude/mcp.json" ]]
+  [[ ! -e "$XDG_RUNTIME_DIR/w-ai/mcp.json" ]]
+}
+
+# ── Host approval policy: W's own servers are never host-gated ────────────────
+# The OS is the boundary (polkit, Tier-2), so a host-side confirm on top of
+# W-curated tools is double-gating. What each host gets: goose — a seeded
+# permission.yaml; codex — per-server default_tools_approval_mode="approve";
+# claude — server-wide allow rules. Foreign, hand-registered servers keep each
+# host's own approval flow.
+
+@test "approval: claude allow rules cover w-mcp and active pack servers only" {
+  _mcp_fixture
+  run claude_allowed_tools
+  [[ "${lines[0]}" == "mcp__w-mcp" ]]
+  [[ "${lines[1]}" == "mcp__present" ]]
+  [[ "${#lines[@]}" -eq 2 ]]   # 'absent' (missing REQUIRES) is not offered
+}
+
+# A fake w-mcp answering --selftest with the real output shape (PATH seam: the
+# dev machine and CI have no W installed, the target machine has).
+_wmcp_fixture() {
+  HOME="$BATS_TEST_TMPDIR/permhome"; export HOME
+  mkdir -p "$HOME/.config/goose" "$BATS_TEST_TMPDIR/bin"
+  printf '#!/bin/sh\necho "w-mcp self-test OK"\necho "profile: full (2/2 tools offered)"\necho "tools (2): w_alpha, w_beta"\n' \
+    > "$BATS_TEST_TMPDIR/bin/w-mcp"
+  chmod +x "$BATS_TEST_TMPDIR/bin/w-mcp"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"; export PATH
+}
+
+@test "approval: goose permission.yaml is seeded from w-mcp's own tool list" {
+  _wmcp_fixture
+  _goose_seed_permissions
+  local f="$HOME/.config/goose/permission.yaml"
+  [[ -f "$f" ]]
+  grep -q '^user:' "$f"
+  grep -qxF '  always_allow:' "$f"
+  grep -qxF '  - w-mcp__w_alpha' "$f"
+  grep -qxF '  - w-mcp__w_beta' "$f"
+  grep -qxF '  ask_before: []' "$f"      # goose's serde needs all three lists
+  grep -qxF '  never_allow: []' "$f"
+}
+
+@test "approval: an existing permission.yaml is never rewritten" {
+  _wmcp_fixture
+  printf 'user:\n  always_allow:\n  - developer__shell\n  ask_before: []\n  never_allow: []\n' \
+    > "$HOME/.config/goose/permission.yaml"
+  _goose_seed_permissions
+  grep -qxF '  - developer__shell' "$HOME/.config/goose/permission.yaml"
+  ! grep -q 'w-mcp__' "$HOME/.config/goose/permission.yaml"
+}
+
+@test "approval: no goose config dir or no w-mcp — silent no-op" {
+  HOME="$BATS_TEST_TMPDIR/emptyhome"; export HOME
+  _goose_seed_permissions
+  [[ ! -e "$HOME/.config/goose/permission.yaml" ]]
+}
+
+@test "approval: seed_goose answers goose's telemetry question in advance" {
+  # A config predating the preset key: the first-run consent prompt would block
+  # the session until answered; W appends the answer (upsert-if-absent only).
+  HOME="$BATS_TEST_TMPDIR/telhome"; export HOME
+  mkdir -p "$HOME/.config/goose"
+  printf 'GOOSE_PROVIDER: openai\nGOOSE_MODEL: m\n' > "$HOME/.config/goose/config.yaml"
+  seed_goose
+  grep -q '^GOOSE_TELEMETRY_ENABLED: false$' "$HOME/.config/goose/config.yaml"
+  # The user's own answer is never touched — a second run must not append again.
+  printf 'GOOSE_TELEMETRY_ENABLED: true\n' > "$HOME/.config/goose/config.yaml"
+  seed_goose
+  [[ "$(grep -c '^GOOSE_TELEMETRY_ENABLED:' "$HOME/.config/goose/config.yaml")" -eq 1 ]]
+  grep -q '^GOOSE_TELEMETRY_ENABLED: true$' "$HOME/.config/goose/config.yaml"
+}

@@ -52,6 +52,7 @@ nothing for W to export.
 ```
 claude --plugin-dir  /usr/share/w/ai/hosts/claude/plugin \
       [--plugin-dir  $XDG_RUNTIME_DIR/w-ai/user-plugin] \
+       --allowedTools mcp__w-mcp [mcp__<pack-server> …] \
        --mcp-config  /usr/share/w/ai/hosts/claude/mcp.json \
        --append-system-prompt-file /usr/share/w/ai/AGENTS.md \
        [--model <MODEL>] [<your question>]
@@ -71,20 +72,34 @@ claude --plugin-dir  /usr/share/w/ai/hosts/claude/plugin \
   directory stays a config directory. In the session the two trees are told apart
   by name: `w:w-network` is shipped, `w-user:<name>` is yours. A skill written
   *during* a session becomes a native skill on the **next** launch — until then it
-  is still reachable, as always, through `w_search_knowledge`.
+  is still reachable through `w_skill_list` / `w_skill_read`.
+- **`--allowedTools`** — W's own tool surface skips Claude Code's per-call
+  approval prompts: `mcp__w-mcp` (the bare server form is CC's server-wide
+  allow rule — every tool of that server) plus one entry per installed pack
+  server (`mcp.d`, merged into the same `--mcp-config` file). These servers
+  are W-curated and tier-audited; the privileged tools stop at W's polkit
+  prompt no matter what this flag says, so a host-side confirm on top would be
+  double-gating. Installing a pack **is** the consent for the assistant to
+  drive that software. MCP servers you register yourself are not on the list
+  and keep Claude Code's normal approval flow.
 - **`--mcp-config`** — the actions layer, `w-mcp`. Kept *outside* the plugin on
   purpose: a plugin-bundled server registers as `plugin:w:w-mcp` and its tools
   as `mcp__w:w-mcp__*`, which no permission rule or skill written against the
   normal `mcp__w-mcp__*` name would match. Not `--strict-mcp-config`, so your own
-  MCP servers still load alongside it.
+  MCP servers still load alongside it. The preset also hands the server
+  `W_AI_SKILLS_NATIVE=1`: the skill catalog already arrives natively through
+  `--plugin-dir`, so `w-mcp` leaves it out of its `instructions` — one copy in
+  context, not two.
 - **`--append-system-prompt-file`** — identity. Claude Code does **not** read
   `AGENTS.md` on its own (it reads `CLAUDE.md`, walking up from the working
   directory), so W passes it explicitly. Being stable and first in the context,
   it is also what makes the prompt cache work (ai-integration.md §7).
 
-Memory, tool tiers and polkit need no flags: they arrive through `w-mcp` exactly
-as they do under goose. A privileged (Tier-2) tool still raises W's own polkit
-prompt — the host's own approval mode is UX, not the security boundary.
+Memory and tool tiers need no flags: they arrive through `w-mcp` exactly as
+they do under goose. A privileged (Tier-2) tool still raises W's own polkit
+prompt — the host's approval mode is UX, not the security boundary, which is
+exactly why W pre-approves its own servers at the host level (`--allowedTools`
+above) instead of letting you confirm every read-only call by hand.
 
 ## Working on someone else's code
 

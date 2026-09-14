@@ -6,9 +6,20 @@ import os
 import re
 import shutil
 from pathlib import Path
+from typing import Annotated, Literal
 
-from core import (_actuate, _disabled_msg, _tool_on, conf_get, conf_policy_block, kv_file,
-                  prompt, run, tool)
+from core import (
+    _actuate,
+    _disabled_msg,
+    _tool_on,
+    conf_get,
+    conf_policy_block,
+    desc,
+    kv_file,
+    prompt,
+    run,
+    tool,
+)
 
 DOMAIN = "w-diagnostics"
 
@@ -110,9 +121,9 @@ def register(mcp):
 
         gpu_out = run(["lspci", "-nn"])
         gpus = [
-            re.sub(r"^\S+\s+\S.*?controller \[\w+\]: ", "", l, flags=re.I)
+            re.sub(r"^\S+\s+\S.*?controller \[\w+\]: ", "", l, flags=re.IGNORECASE)
             for l in gpu_out.splitlines()
-            if re.search(r"VGA compatible controller|3D controller|Display controller", l, re.I)
+            if re.search(r"VGA compatible controller|3D controller|Display controller", l, re.IGNORECASE)
         ]
         lines.append(f"GPU: {'; '.join(gpus) if gpus else '?'}")
 
@@ -138,34 +149,27 @@ def register(mcp):
         return "\n".join(lines)
 
     @tool(mcp, domain=DOMAIN, minimal=True)
-    def w_service_status(unit: str = "") -> str:
-        """systemd state. With `unit`, show that unit's status; otherwise list all
-        failed units. Read-only."""
+    def w_service_status(
+        unit: Annotated[str, desc("one unit to show; omit to list every failed unit")] = "",
+    ) -> str:
+        """systemd state (Tier 0, read-only): one unit's status, or all failed units."""
         if unit:
             return run(["systemctl", "status", "--no-pager", "--full", unit])
         return run(["systemctl", "--failed", "--no-pager", "--no-legend"])
 
     @tool(mcp, domain=DOMAIN, minimal=True)
     def w_logs(
-        unit: str = "",
-        lines: int = 50,
-        priority: str = "",
-        since: str = "",
-        until: str = "",
-        grep: str = "",
+        unit: Annotated[str, desc("scope to one systemd unit")] = "",
+        lines: Annotated[int, desc("cap on returned lines; applies together with the filters")] = 50,
+        priority: Annotated[str, desc("max level: emerg..debug or 0..7")] = "",
+        since: Annotated[str, desc("journalctl time: '1 hour ago', 'today', 'boot', '2026-07-24 10:00'")] = "",
+        until: Annotated[str, desc("journalctl time, same syntax as since")] = "",
+        grep: Annotated[str, desc("case-insensitive regex on the message text — the key noun/error of the complaint, e.g. 'wifi|NetworkManager', 'ALSA|pipewire'")] = "",
     ) -> str:
-        """Journald logs — the point-search tool for a specific complaint, not just a
-        tail. Prefer `grep` (+ a narrow `since`) over raising `lines`: a targeted match
-        stays small and relevant, a bigger tail just dumps noise.
-
-        `grep` is a regex (case-insensitive) matched against the message text — pull
-        the key noun/error out of what the user described (e.g. grep='wifi|NetworkManager'
-        for "wifi keeps dropping", grep='ALSA|pipewire' for "sound crackles").
-        `since`/`until` accept journalctl time syntax ('1 hour ago', 'today', 'boot',
-        '2026-07-24 10:00', or a plain timestamp) — bound the window before widening it.
-        `unit` scopes to one systemd unit, `priority` filters by level (emerg..debug or
-        0..7), `lines` caps the result (still applies together with grep/since/until).
-        Reads what the invoking user can see."""
+        """Journald logs (Tier 0, read-only) — the point-search tool for a specific
+        complaint, not just a tail. Prefer `grep` plus a narrow `since` over raising
+        `lines`: a targeted match stays small and relevant, a bigger tail dumps
+        noise. Bound the window before widening it."""
         cmd = ["journalctl", "--no-pager", "-n", str(max(1, min(lines, 1000)))]
         if unit:
             cmd += ["-u", unit]
@@ -184,10 +188,11 @@ def register(mcp):
     )
 
     @tool(mcp, domain=DOMAIN)
-    def w_service_restart(unit: str) -> str:
-        """Restart one named systemd unit (Tier 2: privileged; polkit prompt). `unit`
-        is a full unit name (e.g. 'sshd.service', 'NetworkManager.service') — use
-        w_service_status first to find a failed one. Gated by W_AI_TOOL_MAINTAIN."""
+    def w_service_restart(
+        unit: Annotated[str, desc("full unit name, e.g. 'sshd.service' — find a failed one with w_service_status")],
+    ) -> str:
+        """Restart one systemd unit (Tier 2: privileged; polkit prompt). Gated by
+        W_AI_TOOL_MAINTAIN."""
         if not _tool_on("MAINTAIN"):
             return _disabled_msg("w_service_restart", "W_AI_TOOL_MAINTAIN")
         u = unit.strip()
@@ -196,10 +201,12 @@ def register(mcp):
         return _actuate("service-restart", u)
 
     @tool(mcp, domain=DOMAIN)
-    def w_service_enable(unit: str, state: str) -> str:
-        """Enable or disable (and start/stop now) one named systemd unit (Tier 2:
-        privileged; polkit prompt). `unit` is a full unit name; `state` is 'enable'
-        or 'disable'. Gated by W_AI_TOOL_MAINTAIN."""
+    def w_service_enable(
+        unit: Annotated[str, desc("full unit name, e.g. 'sshd.service' or 'foo.timer'")],
+        state: Literal["enable", "disable"],
+    ) -> str:
+        """Enable or disable one systemd unit, starting/stopping it now (Tier 2:
+        privileged; polkit prompt). Gated by W_AI_TOOL_MAINTAIN."""
         if not _tool_on("MAINTAIN"):
             return _disabled_msg("w_service_enable", "W_AI_TOOL_MAINTAIN")
         u = unit.strip()
@@ -210,7 +217,7 @@ def register(mcp):
             return "(state must be 'enable' or 'disable')"
         return _actuate("service-enable", u, st)
 
-    @tool(mcp, domain=DOMAIN, minimal=True)
+    @tool(mcp, domain=DOMAIN)
     def w_logs_status() -> str:
         """Log retention overview: how many days W keeps logs and current disk usage
         across all three log nodes — the systemd journal, /var/log flat files
@@ -219,12 +226,10 @@ def register(mcp):
         return run(["w-logs", "status"], timeout=30)
 
     @tool(mcp, domain=DOMAIN)
-    def w_logs_retention(days: int) -> str:
-        """Set how many days W keeps logs, EVERYWHERE at once (Tier 2: privileged;
-        polkit prompt). One number governs the journal (MaxRetentionSec), /var/log
-        flat files (logrotate), and /var/log/w/ (systemd-tmpfiles). `days` is 1..3650.
-        This is the durable policy; use w_logs_vacuum only for a one-off trim right
-        now. Gated by W_AI_TOOL_MAINTAIN."""
+    def w_logs_retention(days: Annotated[int, desc("1..3650")]) -> str:
+        """Set how many days W keeps logs, everywhere at once — journal, /var/log,
+        /var/log/w/ (Tier 2: privileged; polkit prompt). The durable policy; for a
+        one-off trim use w_logs_vacuum. Gated by W_AI_TOOL_MAINTAIN."""
         if not _tool_on("MAINTAIN"):
             return _disabled_msg("w_logs_retention", "W_AI_TOOL_MAINTAIN")
         if not (1 <= days <= 3650):
@@ -233,19 +238,13 @@ def register(mcp):
         return blocked or _actuate("logs-retention", str(days))
 
     @tool(mcp, domain=DOMAIN)
-    def w_logs_vacuum(value: str, mode: str = "time") -> str:
-        """Trim old journald entries NOW to free disk space (Tier 2: privileged;
-        polkit prompt). A one-off cleanup of the journal only — it does not change the
-        durable policy (use w_logs_retention for that) and does not touch /var/log or
-        /var/log/w/ (those are age-cleaned by logrotate/tmpfiles on their timers).
-
-          mode='time' (default) — `value` is how much history to KEEP, e.g. '2w'
-                       (2 weeks), '30d', '6month': a number plus one of
-                       s/min/h/d/w/month/y.
-          mode='size'          — `value` is the max total size to KEEP, e.g. '500M',
-                       '2G': a number plus one of B/K/M/G/T.
-
-        Gated by W_AI_TOOL_MAINTAIN."""
+    def w_logs_vacuum(
+        value: Annotated[str, desc("how much to KEEP: mode=time → number + s/min/h/d/w/month/y (e.g. '2w', '30d'); mode=size → number + B/K/M/G/T (e.g. '500M')")],
+        mode: Literal["time", "size"] = "time",
+    ) -> str:
+        """Trim old journald entries NOW to free disk (Tier 2: privileged; polkit
+        prompt). One-off, journal only — the durable policy is w_logs_retention,
+        and /var/log is cleaned by its own timers. Gated by W_AI_TOOL_MAINTAIN."""
         if not _tool_on("MAINTAIN"):
             return _disabled_msg("w_logs_vacuum", "W_AI_TOOL_MAINTAIN")
         m = mode.strip().lower()

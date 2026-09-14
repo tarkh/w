@@ -15,6 +15,13 @@
 # w-ai also warns (does not auto-fix) if a user's existing config.yaml carries an
 # extension key this preset doesn't know about — see seed_goose() in w-ai.
 # Decision rationale for each: ai-integration.md §4.
+#
+# Telemetry: off — W's privacy default (the same call this image makes for
+# Firefox and Zed). Seeding the key does double duty: goose asks its first-run
+# interactive consent question ("Share anonymous usage data?") whenever this
+# key is unset, and that question blocks the first session until answered.
+# Re-enable any time with `goose configure`.
+GOOSE_TELEMETRY_ENABLED: false
 
 extensions:
   # Goose's built-in shell/file extension — lets the assistant actually operate

@@ -20,10 +20,14 @@
 # other key); "w" already present → nothing; key present without "w" → the
 # user's own curation — including "had w and turned it off" (Obsidian keeps the
 # key with an empty array, verified live) — and is NEVER touched, so the in-app
-# toggle stays a real opt-out that no re-render overrides. The write only
-# happens with Obsidian closed: a running app holds the file in memory and
-# rewrites it on settings changes, so writing under it races and loses — a
-# skipped pass self-heals on the next render (login or theme switch).
+# toggle stays a real opt-out that no re-render overrides. The write is safe
+# under a RUNNING Obsidian too (verified live): the app never re-reads the file,
+# only writes its own in-memory state, and that state either already contains
+# "w" (loaded from our write at vault open) or lacks the key altogether — in
+# which case a rewrite merely returns the vault to "fresh", healed by the next
+# render. It never manufactures a curated list, so no guard is needed; the one
+# the axis used to carry (`pgrep -x obsidian`) matched nothing anyway — the
+# Arch package runs under the system Electron and the process is "electron".
 #
 # Both .theme-dark and .theme-light carry the SAME values: a W theme has one
 # appearance (the same call as the gtk twins), and Obsidian's "adaptive" base
@@ -34,9 +38,19 @@
 # them without a restart, so `w-theme set` recolours a running Obsidian. Writes
 # are in-place (same inode), the idiom that keeps Zed live.
 #
+# A vault created AFTER a render is reached by the registry watcher the bundle
+# ships (w-obsidian-vaults.path → `w-style apply obsidian` on every write to
+# obsidian.json, i.e. every vault create/open) — on a fresh install the first
+# vault appears well after the login render, and without the watcher it would
+# sit on Obsidian's default theme until the next login. The window that vault
+# opened in still shows the default until the app restarts (Obsidian reads
+# appearance.json at vault load only); the snippet is already listed, so a
+# manual toggle applies it at once.
+#
 # As root this axis is a no-op: /etc/skel holds no vaults. Per-account renders
-# happen at every login (env-hyprland → w-style apply user) and immediately at
-# bundle install (setup-user.sh). Band 400 = per-app GUI config.
+# happen at every login (env-hyprland → w-style apply user), immediately at
+# bundle install (setup-user.sh) and on every registry change (the watcher).
+# Band 400 = per-app GUI config.
 DESC="Obsidian markdown editor palette"
 
 OBSIDIAN_REGISTRY_REL=".config/obsidian/obsidian.json"
@@ -252,41 +266,38 @@ EOF
   # Three states, one action — see the header. The key observation that makes
   # "curated" trustworthy: after a toggle-off Obsidian KEEPS the key with an
   # empty array, so "key exists" reliably means "a human has curated snippets
-  # here", never "fresh". Missing/unreadable file → fresh.
-  if pgrep -u "$UID" -x obsidian >/dev/null 2>&1; then
-    echo "w-style: obsidian — app running, enable pass skipped (self-heals on the next render with it closed)."
-  else
-    local ap state
-    for v in "${vaults[@]}"; do
-      ap="$v/.obsidian/appearance.json"
-      if [[ ! -f "$ap" ]]; then
-        printf '%s\n' '{"enabledCssSnippets":["w"]}' >"$ap" \
-          && chmod 644 "$ap" 2>/dev/null \
-          && echo "w-style: obsidian — snippet enabled by default in $(basename "$v")"
-        continue
-      fi
-      state="$(jq -r 'if ((.enabledCssSnippets // []) | index("w")) != null then "on"
-                     elif has("enabledCssSnippets") then "curated"
-                     else "fresh" end' "$ap" 2>/dev/null)" || state="err"
-      case "$state" in
-        on) ;;  # already enabled — the css refresh above is all it needs
-        curated)
-          echo "w-style: obsidian — $(basename "$v"): snippet list is user-curated, toggle is yours"
-          ;;
-        fresh)
-          if jq '.enabledCssSnippets = ["w"]' "$ap" >"$ap.tmp" 2>/dev/null && mv -f "$ap.tmp" "$ap"; then
-            echo "w-style: obsidian — snippet enabled by default in $(basename "$v")"
-          else
-            rm -f "$ap.tmp"
-            echo "w-style: obsidian — cannot update $ap, skipped." >&2
-          fi
-          ;;
-        *)
-          echo "w-style: obsidian — $ap unreadable, skipped." >&2
-          ;;
-      esac
-    done
-  fi
+  # here", never "fresh". Missing/unreadable file → fresh. Runs whether or not
+  # the app is open (header: why that is safe).
+  local ap state
+  for v in "${vaults[@]}"; do
+    ap="$v/.obsidian/appearance.json"
+    if [[ ! -f "$ap" ]]; then
+      printf '%s\n' '{"enabledCssSnippets":["w"]}' >"$ap" \
+        && chmod 644 "$ap" 2>/dev/null \
+        && echo "w-style: obsidian — snippet enabled by default in $(basename "$v")"
+      continue
+    fi
+    state="$(jq -r 'if ((.enabledCssSnippets // []) | index("w")) != null then "on"
+                   elif has("enabledCssSnippets") then "curated"
+                   else "fresh" end' "$ap" 2>/dev/null)" || state="err"
+    case "$state" in
+      on) ;;  # already enabled — the css refresh above is all it needs
+      curated)
+        echo "w-style: obsidian — $(basename "$v"): snippet list is user-curated, toggle is yours"
+        ;;
+      fresh)
+        if jq '.enabledCssSnippets = ["w"]' "$ap" >"$ap.tmp" 2>/dev/null && mv -f "$ap.tmp" "$ap"; then
+          echo "w-style: obsidian — snippet enabled by default in $(basename "$v")"
+        else
+          rm -f "$ap.tmp"
+          echo "w-style: obsidian — cannot update $ap, skipped." >&2
+        fi
+        ;;
+      *)
+        echo "w-style: obsidian — $ap unreadable, skipped." >&2
+        ;;
+    esac
+  done
 
   echo "w-style: obsidian done (snippet refreshed; enable state follows the three-state rule)."
 }

@@ -286,7 +286,7 @@ _SEARCH_PROVIDERS = {"ddgs": _ddgs_search, "brave": _brave_search}
 
 
 def register(mcp):
-    @tool(mcp, domain=DOMAIN, minimal=True)
+    @tool(mcp, domain=DOMAIN)
     def w_web_fetch(url: str, max_chars: int = 8000) -> str:
         """Fetch a web page and return its title + extracted text (stdlib HTML
         parser by default, or trafilatura if the user has it installed, for higher
@@ -302,7 +302,7 @@ def register(mcp):
         text = _trafilatura_extract(html_text, max_chars) or _stdlib_extract(html_text, max_chars)
         return wrap_untrusted(text)
 
-    @tool(mcp, domain=DOMAIN, minimal=True)
+    @tool(mcp, domain=DOMAIN)
     def w_web_search(query: str, max_results: int = 5) -> str:
         """Web search. Tries providers in order: `ddgs` (if the user installed it —
         `uv tool install ddgs`, free, no key) then the Brave Search API (needs a

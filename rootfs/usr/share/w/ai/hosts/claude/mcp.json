@@ -2,7 +2,10 @@
   "mcpServers": {
     "w-mcp": {
       "command": "w-mcp",
-      "args": []
+      "args": [],
+      "env": {
+        "W_AI_SKILLS_NATIVE": "1"
+      }
     }
   }
 }

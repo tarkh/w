@@ -50,6 +50,7 @@ nothing for W to export.
 
 ```
 codex -c 'mcp_servers.w-mcp.command="w-mcp"' \
+      -c 'mcp_servers.w-mcp.default_tools_approval_mode="approve"' \
       -c 'developer_instructions="<contents of /usr/share/w/ai/AGENTS.md>"' \
       [--model <MODEL>] [<your question>]
 ```
@@ -62,19 +63,34 @@ layers, with nothing written to `~/.codex/config.toml`:
   state, W's tools, the shared memory. Registered under its plain name, so tool
   names match what W's skills and docs say. Your own MCP servers from
   `~/.codex/config.toml` still load alongside it.
+- **`-c mcp_servers.w-mcp.default_tools_approval_mode="approve"`** — W's own
+  tool surface skips Codex's per-call approval prompts. `approve` is Codex's
+  per-server "explicitly trust" level: it touches neither the global
+  `approval_policy` nor the sandbox of Codex's own tools — those keep their
+  defaults, and so do MCP servers you register yourself. w-mcp's tools are
+  tier-audited and the privileged ones stop at W's polkit prompt regardless,
+  so a host-side confirm on top would be double-gating. Pack servers (`mcp.d`)
+  get the same per-server line — installing a pack through W is the consent
+  for the assistant to drive that software.
 - **`-c developer_instructions`** — identity. Codex reads `AGENTS.md` from the
   project it is started in and from `~/.codex/`, neither of which is W's to
   write to, so W passes the file's text inline as developer instructions.
 - **Knowledge** — W's skills reach Codex through `w-mcp`, exactly as they reach
-  goose: as MCP resources and through `w_search_knowledge`. Codex discovers
-  native skills only from fixed paths (`~/.agents/skills`, `/etc/codex/skills`,
-  the repository), none of which can be handed to a single launch, and W does
-  not touch them.
+  goose: the skill catalog (name + description of every skill, generated from
+  the skills themselves) rides the server's `instructions` — Codex shows it as
+  the description of its `mcp__w_mcp` tool — and a skill's body is one
+  `w_skill_read(name)` call away (or a `read_mcp_resource` of the same
+  `w-knowledge://` resource). Codex discovers native skills only from fixed
+  paths (`~/.agents/skills`, `/etc/codex/skills`, the repository), none of
+  which can be handed to a single launch, and W does not touch them.
 
-Memory, tool tiers and polkit need no flags: they arrive through `w-mcp`
+Memory and tool tiers need no flags: they arrive through `w-mcp`
 exactly as they do under goose. A privileged (Tier-2) tool still raises W's own
 polkit prompt — Codex's approval and sandbox settings are its UX, not the
-security boundary. MCP servers run outside Codex's command sandbox.
+security boundary, which is exactly why W pre-approves its own servers at the
+host level (the `default_tools_approval_mode` line above) instead of letting
+you confirm every read-only call by hand. MCP servers run outside Codex's
+command sandbox.
 
 ## Working on someone else's code
 

@@ -1,16 +1,13 @@
 ---
 name: w-input
 description: >-
-  Input configuration on W Linux: keyboard shortcuts (the w-hotkeys CLI, profiles
-  and the Hub Hotkeys section), keyboard layouts and typing behaviour (w-keyboard —
-  the layout ring, toggle key, key auto-repeat, NumLock), mouse and touchpad
-  settings (w-pointer — speed, acceleration, scrolling, tap-to-click, click method,
-  disable-while-typing, drag modes, swipe gestures), and the system language /
-  locale (w-locale, LANG). Load this for anything about keybindings, remapping keys,
-  keyboard layouts, mouse or touchpad behaviour, the input language, the system
-  locale, or why part of the interface is still in another language after switching
-  it (language packs, Firefox translations, spell-checking dictionaries, the Linux
-  console font — the w-langpack language profile).
+  Input on W Linux: keyboard shortcuts (w-hotkeys, profiles, the Hub Hotkeys
+  section), keyboard layouts and typing behaviour (w-keyboard: layout ring, toggle
+  key, auto-repeat, NumLock), mouse and touchpad (w-pointer: speed, acceleration,
+  scrolling, tap-to-click, gestures), and the system language/locale (w-locale,
+  LANG, the w-langpack language profile). Load this for keybindings, remapping,
+  layouts, mouse/touchpad behaviour, the interface language, or why part of the UI
+  is still in another language after switching it.
 sources:
   - path: .claude/library/w-hotkeys.md
     sha256: cedb796f65ff1c859ff32b9f37987cfa9d2980fb1d5f7469a56c959d942e4e8e
