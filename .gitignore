@@ -52,3 +52,6 @@ authorized_keys
 .claude/settings.local.json
 ark.sh
 mise.toml
+
+# Opencode
+opencode.json

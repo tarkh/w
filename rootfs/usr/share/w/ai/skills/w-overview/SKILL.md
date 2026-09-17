@@ -7,7 +7,7 @@ description: >-
   before answering questions about how W is organized or which command to use.
 sources:
   - path: .claude/library/essentials.md
-    sha256: b751d019b722444a9b932a092ca7eefdd664d385c73713295a1631f5e02ee768
+    sha256: 768d56b523b2573efaa55daa4bbf217713d432f8984af9b6b769d0d063430c33
 ---
 
 # W Overview

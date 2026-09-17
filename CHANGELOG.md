@@ -8,6 +8,43 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.16.1
+
+- **Session restore: tabbed windows and Firefox windows come back correctly.**
+  Two longstanding defects, both present up to and including v0.16.0:
+  - **Window groups (tabbed windows)** came back scattered over the workspace
+    instead of as groups. Every member of a group reports the same content
+    rectangle, so the restore could not read the split tree and fell back to
+    tiling the windows in arrival order. A group is now one tile of the tree —
+    its tab bar accounted for — and is reassembled after the tree is in place:
+    tabs in the saved order, the tab that was on top on top. Dwindle only; a
+    *floating* group returns as separate floating windows and a group's lock
+    state is not restored.
+  - **Firefox** windows came back as one window of tabs plus one blank (or
+    swapped). W launched `firefox` once per saved window, but a second launch is
+    a remote command to the instance already running and opens a blank window.
+    Firefox keeps its own session, so it is now launched once and each window it
+    brings back is placed where a window with the same title was. At logout W
+    also finishes Firefox's own "closed in series" memory in its session file —
+    Firefox's own pass stops at any older closed pop-up and drops the rest,
+    which on a real profile is why a second window went missing.
+  - Firefox restores the *tabs inside* a window only if its own
+    **Settings → Home and startup → "Open previous windows and tabs"** is on; W
+    does not switch that on for you. Hub → System → Session now says so when you
+    turn restore on.
+  - If you keep personal relaunch overrides in `~/.config/w/session-apps.tsv`,
+    the file gains an optional flag column; two-column rows keep working. Flags:
+    `own-session` (the Firefox case above) and `=` in the command column to keep
+    the recorded command line.
+- **RGB lighting is more reliable.** The theme's colour was sent to the `openrgb`
+  daemon by guessing when it had come up; on a slow login the send happened
+  before the daemon knew its devices and was lost. W now waits until `openrgb`
+  reports devices (up to 20 s) before colouring, so RGB matches the theme on the
+  first try. This affects the RGB feature introduced in v0.16.0.
+- The desktop guide (`w-guide`, Hub → Documentation) and the on-box assistant
+  explain that window groups come back as groups and where Firefox's tab-restore
+  setting lives — in English and Russian.
+
 ## v0.16.0
 
 - **Lock screen reworked (hyprlock + hypridle).** Two defects, both present in

@@ -812,6 +812,19 @@ Item {
                     onActivated: menuLayer.openMenu(sessModeRow, options, root.sessMode,
                                                    (id) => root.runSession(["w-session", "mode", id]))
                 }
+                // What the restore cannot do by itself. Windows come back; what is
+                // in them is each program's own memory, and for a browser that is
+                // a setting the user has to switch on in the browser — W does not
+                // set it (see w-session.md, "own-session"). Said here, once, at the
+                // moment the mode is switched on, rather than discovered at login.
+                Text {
+                    width: parent.width
+                    visible: root.sessMode === "restore"
+                    text: Strings.t("sess.browserHint")
+                    color: Colors.muted
+                    font.family: Fonts.family; font.pixelSize: 11
+                    wrapMode: Text.WordWrap
+                }
                 // What is stored right now — a fact, not a control. Acting on the
                 // snapshot by hand (save it, open it, throw it away, keep several
                 // under names) is the layouts panel's job, not a settings screen's:

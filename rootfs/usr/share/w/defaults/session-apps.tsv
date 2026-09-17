@@ -16,14 +16,24 @@
 #     service, a portal, or a wrapper that has already exec'd away;
 #   • the cmdline is correct but WRONG FOR W — see the terminals below.
 #
-# Format: <initialClass regex>\t<command>
+# Format: <initialClass regex>\t<command>[\t<flag>...]
 #   The regex is anchored (`foot` matches `foot`, not `footclient`) and matched
 #   against the window's `initialClass`, never its live class: a program that
 #   renames itself at runtime must still be recognisable a reboot later.
 #   The command is run through `sh -c` in the window's saved working directory,
 #   so a relative path in it means what it meant when the window was open.
-#   First match wins; a command of `-` means "never relaunch this class".
+#   First match wins; a command of `-` means "never relaunch this class", and
+#   `=` means "the recorded command line is fine" — a row that only sets flags.
 #   '#' and blank lines are ignored.
+#
+# Flags:
+#   own-session   The program keeps its own session and ONE launch brings back
+#                 every window it had. `w-session` therefore launches it once
+#                 for all of its saved windows, waits for them, and puts each
+#                 back where a window with the same title was. Launching it once
+#                 per window would not open the saved windows — the second
+#                 launch is a remote command to the running instance and opens
+#                 a blank one.
 
 # Terminals resolve to `w-term`, not to the binary they happened to be.
 #
@@ -37,3 +47,10 @@
 # your work (a shell in a repo, yazi, nvim), is preserved either way.
 com\.mitchellh\.ghostty	w-term
 foot	w-term
+
+# Firefox restores its own windows and tabs (Settings → Home and startup → "Open
+# previous windows and tabs"). Closing its windows one by one at logout marks
+# them as a series to reopen, and `w-session close` finishes that series for it
+# once it has quit (Firefox's own pass stops at any older closed window). See
+# w-session.md.
+firefox	=	own-session

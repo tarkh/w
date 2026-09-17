@@ -63,6 +63,11 @@ fresh, or off. **Super+O** saves or applies a named, reusable layout.
 Do-not-reopen apps (e.g. a password manager you want empty after every login)
 are excluded in the session settings; see `w-session` for the details.
 
+Window groups (tabbed windows) come back as groups, tabs in order. What is
+*inside* a window is each program's own memory: browser tabs return only if
+the browser restores them itself — in Firefox, **Settings → Home and startup → "Open
+previous windows and tabs"**; W does not switch that on for you.
+
 ## Screenshots
 
 <kbd>Super+PrintScreen</kbd> opens the region picker; the result lands in the

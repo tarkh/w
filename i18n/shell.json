@@ -972,6 +972,10 @@
     "en": "Windows come back on their workspaces at the next login. What is inside them is up to each program.",
     "ru": "Окна вернутся на свои воркспейсы при следующем входе. Что внутри них — на усмотрение каждой программы."
   },
+  "sess.browserHint": {
+    "en": "Browser tabs come back only if the browser restores them itself — Firefox: Settings → Home and startup → “Open previous windows and tabs”.",
+    "ru": "Вкладки браузера вернутся, только если браузер восстанавливает их сам — Firefox: Настройки → Домашняя страница и запуск → «Открывать предыдущие окна и вкладки»."
+  },
   "sess.modeLabel": {
     "en": "Remember session",
     "ru": "Запоминать сессию"

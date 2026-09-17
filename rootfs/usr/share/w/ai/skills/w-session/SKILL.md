@@ -8,7 +8,7 @@ description: >-
   named layout — not for the systemd/uwsm session itself, which is w-desktop.
 sources:
   - path: .claude/library/w-session.md
-    sha256: 95f3ba9608fdb9f56d3a181f41c32223cf8771027560496bb3775bc44aeda676
+    sha256: 63975e239ed7ccb8df0f22733888eb062da19c326dc258bfb34cc3cfe70bff59
   - path: .claude/library/quickshell-layouts.md
     sha256: 61e8015efd56cad555527ac27253d8261731379c703b7e25f9b8799fab142149
 tools:
@@ -76,10 +76,24 @@ What it restores well, and what it cannot:
 - **In-app content** — each program's own persistence does that work (browsers reopen
   tabs, editors reopen files named on the command line). Scrollback and unsaved edits do
   not come back.
+- **Window groups (tabbed windows)** — restored as groups, tabs in the saved order, the
+  tab that was on top on top; the group takes its old tile of the split tree. Only on
+  dwindle; the group's lock state is not restored, and a *floating* group comes back as
+  separate floating windows.
 - **Two windows of one single-instance program** — they share a pid and often a title,
   so nothing external tells them apart. Restore launches same-class windows one at a
   time precisely to keep them distinct, but a terminal's *contents* can still be matched
   to the wrong window of the pair. Say "best-effort" rather than claiming exactness.
+- **Programs that keep their own session (Firefox)** are the exception to "one launch
+  per window": flagged `own-session` in `session-apps.tsv`, they are launched ONCE and
+  every window they bring back is put where a window with the same title was. Whether
+  the tabs come back at all is the browser's own setting — Firefox: Settings → Home and startup →
+  "Open previous windows and tabs" — and W does not switch it on. Without it, Firefox
+  reopens one blank window and the other saved slots are simply dropped. At logout W closes
+  Firefox's windows one by one and then finishes Firefox's own "closed in series" memory
+  in its session file (Firefox's pass stops at any older closed pop-up), so every window
+  comes back; a window opened seconds before logout may still be lost — that is Firefox's
+  save interval, not W.
 - **Terminals** restore through `w-term` (W's single terminal entry point), not through
   whichever binary they happened to be, so a later terminal switch does not strand the
   saved session.
@@ -125,8 +139,8 @@ this could, and reattaching from here would fight them.
 In `w-conf cat session`: `EXCLUDE_CLASSES` (space-separated anchored regexes of window
 classes never to record — installers, one-shot wizards, a game) and `MAX_WINDOWS` (cap;
 over it, the least recently focused windows are dropped). Personal relaunch overrides
-live in `~/.config/w/session-apps.tsv` (`<class regex>\t<command>`, `-` meaning never
-relaunch).
+live in `~/.config/w/session-apps.tsv` (`<class regex>\t<command>[\t<flag>…]`, `-` meaning
+never relaunch, `=` meaning keep the recorded command line; flag `own-session` — see above).
 
 ```sh
 w-session status                  # mode, autosave floor, what is stored

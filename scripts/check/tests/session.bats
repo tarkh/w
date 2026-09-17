@@ -164,6 +164,68 @@ print(ws.prune_tree(t, set()))"
   [ "${lines[1]}" = "None" ]
 }
 
+# ── Groups: one tile of the tree, members in tab order ────────────────────────
+
+# Three windows on one workspace: a group of two (same content rect, shifted
+# down by the 24 px bar) beside a plain window. The rects are the VM
+# measurement (Hyprland 0.56.2, gaps_out 4 + height 20).
+group_wins() {
+  cat <<'EOF'
+W = [
+  {"id": 0, "_addr": "0xa", "_grouped": ["0xa", "0xb"], "floating": False, "at": [10, 72],  "size": [936, 939], "focusOrder": 3},
+  {"id": 1, "_addr": "0xb", "_grouped": ["0xa", "0xb"], "floating": False, "at": [10, 72],  "size": [936, 939], "focusOrder": 1},
+  {"id": 2, "_addr": "0xc", "_grouped": [],             "floating": False, "at": [958, 48], "size": [936, 963], "focusOrder": 0},
+]
+EOF
+}
+
+@test "a group is one tile: its head is the leaf and the tree still builds" {
+  # Fed raw, two identical rects overlap and no straight cut exists — the tree
+  # is None and phase 2 deals the workspace in order, which is the "scattered
+  # after login" symptom this exists to fix.
+  run ws "$(group_wins)
+print(ws.build_tree([(w['id'], (*w['at'], *w['size'])) for w in W]))
+g = ws.collect_groups(W)
+t = ws.build_tree(ws.group_tiles(W, g, lambda n: 24))
+print(g, t['split'], ws.tree_leaves(t))"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "None" ]
+  [ "${lines[1]}" = "[{'members': [0, 1]}] h [0, 2]" ]
+}
+
+@test "the group's tile gets the bar back, so the ratio is measured from the real cut" {
+  run ws "$(group_wins)
+tiles = dict(ws.group_tiles(W, ws.collect_groups(W), lambda n: 24))
+print(tiles[0], tiles[2])"
+  [ "$status" -eq 0 ]
+  [ "$output" = "(10, 48, 936, 963) (958, 48, 936, 963)" ]
+}
+
+@test "a group is listed in tab order, and a group of one saved member is no group" {
+  # The compositor's `grouped` order is the tab order; a member that was not
+  # saved (excluded, trimmed) simply is not there.
+  run ws "$(group_wins)
+W[0]['_grouped'] = W[1]['_grouped'] = ['0xb', '0xa']
+print(ws.collect_groups(W))
+print(ws.collect_groups([W[0], W[2]]))"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "[{'members': [1, 0]}]" ]
+  [ "${lines[1]}" = "[]" ]
+}
+
+@test "a group whose head never came back is re-headed onto the next member" {
+  # The tree leaf follows the alias; a group left with one member is not
+  # assembled, its survivor is an ordinary leaf already.
+  run ws "
+alias, kept = ws.live_groups([{'members': [0, 1, 2]}, {'members': [5, 6]}], {1, 2, 5})
+print(alias, kept)
+t = ws.alias_tree({'split': 'h', 'ratio': 1.0, 'a': {'leaf': 0}, 'b': {'leaf': 5}}, alias)
+print(ws.tree_leaves(t))"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "{0: 1} [{'members': [1, 2]}]" ]
+  [ "${lines[1]}" = "[1, 5]" ]
+}
+
 # ── The launch expression ─────────────────────────────────────────────────────
 
 @test "every relaunch goes through uwsm app onto the hidden staging workspace" {
@@ -241,6 +303,141 @@ print(ws.mapped_command(m, 'unlisted'))    # no entry: fall back to /proc/cmdlin
   [ "${lines[1]}" = "firefox" ]
   [ "${lines[2]}" = "-" ]
   [ "${lines[3]}" = "None" ]
+}
+
+@test "a row of '=' keeps the recorded command line and only carries its flags" {
+  cat > "$BATS_TEST_TMPDIR/vendor.tsv" <<'EOF'
+firefox	=	own-session
+zen	zen-browser
+EOF
+  run ws "
+ws.VENDOR_APPS = '$BATS_TEST_TMPDIR/vendor.tsv'
+ws.proc_cmdline = lambda pid: ['/usr/lib/firefox/firefox']
+ws.proc_cwd = lambda pid: '/home/w'
+m = ws.app_map()
+print(sorted(ws.app_flags(m, 'firefox')), sorted(ws.app_flags(m, 'zen')), sorted(ws.app_flags(m, 'foot')))
+print(ws.resolve_relaunch({'pid': 1, 'initialClass': 'firefox'}, m, [], 'off'))"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "['own-session'] [] []" ]
+  [ "${lines[1]}" = "('/usr/lib/firefox/firefox', '/home/w', False, '')" ]
+}
+
+# ── Own-session programs: one launch, windows matched by title ────────────────
+
+@test "a title key drops the unread counter and case, nothing else" {
+  run ws "
+print(ws.title_key('(52) Inbox — Mozilla Firefox'), '|', ws.title_key('  Inbox — Mozilla Firefox '), '|', ws.title_key(''))"
+  [ "$status" -eq 0 ]
+  [ "$output" = "inbox — mozilla firefox | inbox — mozilla firefox | " ]
+}
+
+@test "an own-session lane launches once and credits its windows by title, not arrival" {
+  # Two Firefox entries: workspace 1 had the docs window, workspace 2 the mail
+  # window. The program brings them back in ITS order — mail first. Title
+  # matching is what keeps each on its own workspace; the arrival order was
+  # what swapped them.
+  run ws "
+W = [{'id': 0, 'class': 'firefox', 'cmd': 'firefox', 'ownSession': True, 'liveTitle': 'Docs — Mozilla Firefox'},
+     {'id': 1, 'class': 'firefox', 'cmd': 'firefox', 'ownSession': True, 'liveTitle': '(3) Mail — Mozilla Firefox'},
+     {'id': 2, 'class': 'foot',    'cmd': 'foot'}]
+launched = []
+ws.dispatch_raw = lambda expr: launched.append(expr) or True
+p = ws.Parker(W)
+now = 100.0
+p._launch_ready(now); p._launch_ready(now)
+print(len(launched), sorted(p.inflight), p.inflight['firefox']['wids'])
+p._on_open('0xa', ws.PARK_WORKSPACE, 'firefox')
+p._on_open('0xb', ws.PARK_WORKSPACE, 'firefox')
+print('firefox' in p.inflight, p.unmatched)
+ws.hypr_json = lambda *a: [{'address': '0xa', 'title': 'Mail — Mozilla Firefox'},
+                           {'address': '0xb', 'title': 'Docs — Mozilla Firefox'}]
+p._settle_by_title()
+print(p.addr, p.stray)"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "2 ['firefox', 'foot'] [0, 1]" ]
+  [ "${lines[1]}" = "False [([0, 1], ['0xa', '0xb'])]" ]
+  [ "${lines[2]}" = "{0: '0xb', 1: '0xa'} []" ]
+}
+
+@test "own-session windows no title claims are dealt in arrival order; extras are strays" {
+  run ws "
+W = [{'id': 0, 'class': 'firefox', 'cmd': 'firefox', 'ownSession': True, 'liveTitle': 'A'},
+     {'id': 1, 'class': 'firefox', 'cmd': 'firefox', 'ownSession': True, 'liveTitle': 'B'}]
+ws.dispatch_raw = lambda expr: True
+ws.TITLE_WAIT = 0
+p = ws.Parker(W)
+p.unmatched = [([0, 1], ['0xa', '0xb', '0xc'])]
+ws.hypr_json = lambda *a: [{'address': a, 'title': 'Untitled'} for a in ('0xa', '0xb', '0xc')]
+p._settle_by_title()
+print(p.addr, p.stray)"
+  [ "$status" -eq 0 ]
+  [ "$output" = "{0: '0xa', 1: '0xb'} ['0xc']" ]
+}
+
+@test "the snapshot marks own-session windows so the restore knows to launch once" {
+  cat > "$BATS_TEST_TMPDIR/vendor.tsv" <<'EOF'
+b	=	own-session
+EOF
+  run ws "$(fake_hypr)
+ws.VENDOR_APPS = '$BATS_TEST_TMPDIR/vendor.tsv'
+s = ws.take_snapshot({'MAX_WINDOWS': '40'})
+print({w['class']: w['ownSession'] for w in s['windows']})"
+  [ "$status" -eq 0 ]
+  [ "$output" = "{'c': False, 'b': True, 'a': False}" ]
+}
+
+# ── Firefox's closing series, finished for it ─────────────────────────────────
+
+@test "mozlz4 round-trips a session document, and refuses what is not one" {
+  run ws "
+import os
+doc = {'windows': [{'tabs': [{'entries': [{'url': 'https://example.com/'}]}], 'title': 'Пример — ' * 400}], 'selectedWindow': 1}
+p = os.path.join('$BATS_TEST_TMPDIR', 's.jsonlz4')
+ws.mozlz4_write(p, doc)
+print(open(p, 'rb').read(8), ws.mozlz4_read(p) == doc, os.path.exists(p + '.w-tmp'))
+open(p, 'wb').write(b'not a session')
+try: ws.mozlz4_read(p)
+except ValueError as e: print('refused:', e)"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "b'mozLz40\\x00' True False" ]
+  [ "${lines[1]}" = "refused: not a mozlz4 file" ]
+}
+
+@test "the closing series is moved back into the session, older closed windows are not" {
+  # The host case: a 20-tab window closed in series and flagged, behind a
+  # sign-in pop-up closed hours earlier. Firefox walks from the oldest entry and
+  # stops there; W moves exactly the flagged windows closed since its request.
+  run ws "
+st = {'windows': [{'title': 'last'}],
+      '_closedWindows': [{'title': 'series', 'closedAt': 2000, '_shouldRestore': True, 'closedId': 7},
+                         {'title': 'earlier popup', 'closedAt': 1500, '_shouldRestore': True},
+                         {'title': 'morning popup', 'closedAt': 100}]}
+print(ws.resurrect_closed_windows(st, 1900))
+print([w['title'] for w in st['windows']], [w['title'] for w in st['_closedWindows']])
+print('_shouldRestore' in st['windows'][0], 'closedAt' in st['windows'][0])
+print(ws.resurrect_closed_windows({'windows': [], '_closedWindows': []}, 0))"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "1" ]
+  [ "${lines[1]}" = "['series', 'last'] ['earlier popup', 'morning popup']" ]
+  [ "${lines[2]}" = "False False" ]
+  [ "${lines[3]}" = "0" ]
+}
+
+@test "only an own-session program whose EVERY window is closing gets its session finished" {
+  cat > "$BATS_TEST_TMPDIR/vendor.tsv" <<'EOF'
+firefox	=	own-session
+EOF
+  run ws "
+ws.VENDOR_APPS = '$BATS_TEST_TMPDIR/vendor.tsv'
+ws.firefox_profile = lambda pid: '/home/w/.mozilla/firefox/w.default'
+C = [{'initialClass': 'firefox', 'pid': 10, 'address': '0xa'},
+     {'initialClass': 'firefox', 'pid': 10, 'address': '0xb'},
+     {'initialClass': 'foot',    'pid': 11, 'address': '0xc'}]
+print(ws.own_session_quits(C, {'0xa', '0xb', '0xc'}))
+print(ws.own_session_quits(C, {'0xa', '0xc'}))"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "{10: '/home/w/.mozilla/firefox/w.default'}" ]
+  [ "${lines[1]}" = "{}" ]
 }
 
 # ── Programs running inside a terminal ────────────────────────────────────────

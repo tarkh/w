@@ -82,6 +82,7 @@ import shlex
 import shutil
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import time
@@ -108,6 +109,8 @@ PARK_WORKSPACE = "special:w-restore"   # hidden staging area for phase 1
 PARK_TIMEOUT = 45.0      # the whole of phase 1 gives up after this
 WINDOW_TIMEOUT = 20.0    # one window has this long to map before its lane moves on
 LANE_GAP_SEC = 0.15      # spacing between launches: a login is not a fork bomb
+OWN_SESSION_GRACE = 3.0  # an own-session program: how long its next window may trail the last
+TITLE_WAIT = 5.0         # ...and how long its windows get to be titled before they are matched
 DEBOUNCE_SEC = 2.0       # daemon: quiet period after an event before writing
 RESTORE_LOCK_MAX = 300   # a restore lock older than this is stale, ignore it
 SNAPSHOT_VERSION = 2
@@ -255,14 +258,14 @@ def _read_patterns(path, two_column):
                 if not line or line.startswith("#"):
                     continue
                 if two_column:
-                    parts = line.split("\t", 1)
-                    if len(parts) != 2 or not parts[1].strip():
+                    parts = [p.strip() for p in line.split("\t")]
+                    if len(parts) < 2 or not parts[1]:
                         continue
-                    pat, val = parts[0].strip(), parts[1].strip()
+                    pat, val, flags = parts[0], parts[1], frozenset(f for f in parts[2:] if f)
                 else:
-                    pat, val = line, line
+                    pat, val, flags = line, line, frozenset()
                 try:
-                    rows.append((re.compile(f"^(?:{pat})$"), val))
+                    rows.append((re.compile(f"^(?:{pat})$"), val, flags))
                 except re.error:
                     warn(f"{path}: malformed pattern: {pat}")
     except FileNotFoundError:
@@ -284,10 +287,18 @@ def app_map():
 
 
 def mapped_command(entries, cls):
-    for pat, cmd in entries:
+    for pat, cmd, _ in entries:
         if pat.match(cls or ""):
             return cmd
     return None
+
+
+def app_flags(entries, cls):
+    """The flags of the first matching row, e.g. {"own-session"}."""
+    for pat, _, flags in entries:
+        if pat.match(cls or ""):
+            return flags
+    return frozenset()
 
 
 def terminal_allowlist():
@@ -505,6 +516,13 @@ def prog_name(pid):
     return st["comm"] if st else ""
 
 
+def title_key(title):
+    """A window title reduced to what survives a restart: a leading unread
+    counter — "(52) Inbox", the YouTube/Gmail idiom — comes and goes with the
+    page, and case is not identity."""
+    return re.sub(r"^\(\d+\)\s*", "", title or "").strip().casefold()
+
+
 def title_names(title, name):
     """Does this window title identify the program `name`?
 
@@ -698,6 +716,81 @@ def monitor_origins():
         return {}
 
 
+def groupbar_extent():
+    """members -> pixels the group bar reserves ABOVE a grouped window's content.
+
+    `hyprctl clients` reports a window's content rect, and for a group member
+    that rect starts below the tab bar: measured, a group sat at y=72 where a
+    plain window in the same slot sits at y=48. Fed to build_tree as is, that
+    24 px lands on one side of every vertical cut the group takes part in and
+    the ratio drifts. So the group's TILE — the rect the layout actually
+    assigned — is recovered by adding the bar back, and the bar's height is
+    asked of the compositor rather than assumed: the formula is
+    CHyprGroupBarDecoration::getPositioningInfo (0.56.2), verified against
+    the 24 px measurement (gaps_out 4 + height 20).
+    """
+    def opt(name, key):
+        try:
+            return (hypr_json("getoption", name) or {}).get(key) or 0
+        except (RuntimeError, OSError, ValueError):
+            return 0
+    if not opt("group:groupbar:enabled", "bool"):
+        return lambda n: 0
+    titled = opt("group:groupbar:gradients", "bool") or opt("group:groupbar:render_titles", "bool")
+    height = int(opt("group:groupbar:height", "int")) if titled else 0
+    gap = int(opt("group:groupbar:gaps_out", "int"))
+    keep = 1 if opt("group:groupbar:keep_upper_gap", "bool") else 0
+    indicator = int(opt("group:groupbar:indicator_height", "int")) + int(opt("group:groupbar:indicator_gap", "int"))
+    if opt("group:groupbar:stacked", "bool"):
+        return lambda n: (gap + indicator + height) * n + keep * gap
+    return lambda n: gap * (1 + keep) + indicator + height
+
+
+def collect_groups(wins):
+    """[{"members": [id, ...]}] for the tiled groups among one workspace's windows.
+
+    Members are listed in TAB ORDER — the order the compositor reports in
+    `grouped`, which is also the order phase 2 inserts them back in. A group
+    is only a group here if at least two of its members were saved: a member
+    that was excluded or trimmed simply does not exist for the snapshot, and a
+    group of one is a plain window with a bar on it.
+    """
+    by_addr = {w["_addr"]: w for w in wins if w.get("_addr")}
+    seen, groups = set(), []
+    for w in wins:
+        if w["floating"] or not w.get("_grouped"):
+            continue
+        key = frozenset(w["_grouped"])
+        if key in seen:
+            continue
+        seen.add(key)
+        members = [by_addr[a]["id"] for a in w["_grouped"] if a in by_addr and not by_addr[a]["floating"]]
+        if len(members) >= 2:
+            groups.append({"members": members})
+    return groups
+
+
+def group_tiles(wins, groups, bar):
+    """[(leaf id, rect)] for build_tree: one tile per group, its head as the leaf.
+
+    Every member of a group reports the same content rect, so fed in raw they
+    overlap and no straight cut exists — the tree comes back None and the
+    workspace degrades to dealing in order, which is exactly the "scattered
+    after login" symptom. The head stands in for the group, and the tile is
+    widened upwards by the bar the compositor reserved (`bar(members)`, see
+    groupbar_extent).
+    """
+    by_id = {w["id"]: w for w in wins}
+    tile_of = {}
+    for g in groups:
+        head = by_id[g["members"][0]]
+        extent = bar(len(g["members"]))
+        tile_of[head["id"]] = (head["at"][0], head["at"][1] - extent, head["size"][0], head["size"][1] + extent)
+    hidden = {m for g in groups for m in g["members"][1:]}
+    return [(w["id"], tile_of.get(w["id"], (w["at"][0], w["at"][1], w["size"][0], w["size"][1])))
+            for w in wins if not w["floating"] and w["id"] not in hidden]
+
+
 def resolve_relaunch(client, apps, allow, term_mode):
     """(command, cwd, remapped, terminal-program) for one window.
 
@@ -718,7 +811,7 @@ def resolve_relaunch(client, apps, allow, term_mode):
         if payload:
             argv = proc_cmdline(payload)
             name = prog_name(payload)
-            allowed = term_mode == "all" or any(p.match(name) for p, _ in allow)
+            allowed = term_mode == "all" or any(p.match(name) for p, *_ in allow)
             if argv and allowed:
                 # `w-term -e` opens the machine's configured terminal running
                 # this command, so switching terminals cannot strand the entry.
@@ -727,7 +820,7 @@ def resolve_relaunch(client, apps, allow, term_mode):
     cmd = mapped_command(apps, cls)
     if cmd == "-":
         return (None, "", False, "")       # the table says: never relaunch this
-    if cmd is not None:
+    if cmd is not None and cmd != "=":     # "=" is a row that only carries flags
         return (cmd, proc_cwd(pid) or "", True, "")
     argv = proc_cmdline(pid)
     if not argv:
@@ -756,9 +849,12 @@ def take_snapshot(values):
             continue
         ws = c.get("workspace") or {}
         windows.append({
+            "_addr": c.get("address") or "",
+            "_grouped": c.get("grouped") or [],
             "class": cls,
             "liveClass": c.get("class") or "",
             "title": c.get("initialTitle") or "",
+            "liveTitle": c.get("title") or "",
             "workspace": {"id": ws.get("id"), "name": ws.get("name") or ""},
             "monitor": mons.get(c.get("monitor"), ""),
             "at": c.get("at") or [0, 0],
@@ -773,6 +869,7 @@ def take_snapshot(values):
             "cwd": cwd,
             "remapped": remapped,
             "term": term,
+            "ownSession": "own-session" in app_flags(apps, cls),
         })
 
     # Over the cap, keep what was most recently in use: focusHistoryID counts up
@@ -787,26 +884,32 @@ def take_snapshot(values):
         w["id"] = i
 
     # One split tree per workspace, over its TILED windows only — floating ones
-    # sit above the layout and come back by coordinate.
-    grouped = {}
+    # sit above the layout and come back by coordinate. A group is one tile of
+    # that tree (its head stands in for it) and is listed separately, members in
+    # tab order, for phase 2 to reassemble once the tree is in place.
+    per_ws = {}
     for w in windows:
-        grouped.setdefault(w["workspace"]["name"], []).append(w)
+        per_ws.setdefault(w["workspace"]["name"], []).append(w)
+    bar = groupbar_extent() if any(w["_grouped"] for w in windows) else (lambda n: 0)
     workspaces = []
-    for name, group in grouped.items():
-        tiled = [(w["id"], (w["at"][0], w["at"][1], w["size"][0], w["size"][1]))
-                 for w in group if not w["floating"]]
+    for name, wins in per_ws.items():
+        groups = collect_groups(wins)
+        tiled = group_tiles(wins, groups, bar)
         tree = build_tree(tiled)
         if tiled and tree is None:
             warn(f"workspace {name}: arrangement is not a tree of straight cuts, "
                  "saving order only")
         workspaces.append({
             "name": name,
-            "id": group[0]["workspace"]["id"],
-            "monitor": group[0]["monitor"],
+            "id": wins[0]["workspace"]["id"],
+            "monitor": wins[0]["monitor"],
             "tree": tree,
-            "order": [w["id"] for w in group if not w["floating"]],
-            "floating": [w["id"] for w in group if w["floating"]],
+            "order": [w["id"] for w in wins if not w["floating"]],
+            "floating": [w["id"] for w in wins if w["floating"]],
+            "groups": groups,
         })
+    for w in windows:
+        del w["_addr"], w["_grouped"]
 
     active = []
     try:
@@ -1042,6 +1145,17 @@ class Parker:
                 one at a time, each waited for, is what keeps "the terminal that
                 was in ~/src" distinct from "the terminal that was in /etc".
 
+    An OWN-SESSION program (`own-session` in session-apps.tsv — Firefox) is the
+    one exception to "one launch per entry": it keeps its own session and one
+    launch brings back every window it had. A second launch would not open a
+    second saved window — it is a remote command to the instance already
+    running, and it opens a BLANK one (measured; that was "one window with my
+    tabs, one empty"). So its lane launches once, accepts up to as many windows
+    as it has entries, and only then decides which is which — by TITLE, since
+    the windows arrive in the program's own order, not the snapshot's, and
+    order alone is what swapped the two Firefox windows between workspaces.
+    What no title claims is dealt in arrival order, as before.
+
     A window whose class matches no lane is NOT simply set aside. The relaunch
     can legitimately produce a different class than the one saved — `w-term`
     opens whichever terminal the machine is configured for, so a session saved
@@ -1057,9 +1171,11 @@ class Parker:
         self.lanes = {}                    # class -> [window id, ...] still to launch
         for w in windows:
             self.lanes.setdefault(w["class"], []).append(w["id"])
-        self.inflight = {}                 # class -> (window id, deadline)
+        self.own = {w["class"] for w in windows if w.get("ownSession")}
+        self.inflight = {}                 # class -> {wid | wids, got, due, at}
         self.addr = {}                     # window id -> window address
         self.stray = []                    # addresses that matched no lane
+        self.unmatched = []                # own-session lanes: (wids, addrs) to settle by title
         self.sock = None
 
     def open(self):
@@ -1082,11 +1198,20 @@ class Parker:
     def _launch_ready(self, now):
         for cls, queue in self.lanes.items():
             if queue and cls not in self.inflight:
-                wid = queue.pop(0)
-                dispatch_raw(park_expr(self.windows[wid]))
-                self.inflight[cls] = {"wid": wid, "due": now + WINDOW_TIMEOUT, "at": now}
+                if cls in self.own:
+                    wids, queue[:] = list(queue), []
+                    dispatch_raw(park_expr(self.windows[wids[0]]))
+                    self.inflight[cls] = {"wids": wids, "got": [], "due": now + WINDOW_TIMEOUT, "at": now}
+                else:
+                    wid = queue.pop(0)
+                    dispatch_raw(park_expr(self.windows[wid]))
+                    self.inflight[cls] = {"wid": wid, "due": now + WINDOW_TIMEOUT, "at": now}
                 return True
         return False
+
+    def _own_done(self, cls):
+        st = self.inflight.pop(cls)
+        self.unmatched.append((st["wids"], st["got"]))
 
     def _lane_for(self, cls):
         """Which in-flight lane a newly opened window belongs to."""
@@ -1094,7 +1219,7 @@ class Parker:
             return cls
         oldest = sorted(self.inflight.items(), key=lambda kv: kv[1]["at"])
         for lane, st in oldest:
-            if self.windows[st["wid"]].get("remapped"):
+            if self.windows[st.get("wid") or st["wids"][0]].get("remapped"):
                 return lane
         return oldest[0][0] if oldest else None
 
@@ -1108,6 +1233,13 @@ class Parker:
         lane = self._lane_for(cls)
         if lane is None:
             self.stray.append(addr)        # nothing in flight: not ours to claim
+            return
+        st = self.inflight[lane]
+        if "wids" in st:
+            st["got"].append(addr)
+            st["due"] = time.monotonic() + OWN_SESSION_GRACE
+            if len(st["got"]) >= len(st["wids"]):
+                self._own_done(lane)
             return
         self.addr[self.inflight.pop(lane)["wid"]] = addr
 
@@ -1138,6 +1270,54 @@ class Parker:
             self._on_open(addr, parts[1], parts[2])
         return buf
 
+    def _settle_by_title(self):
+        """Credit an own-session lane's windows to its entries by title.
+
+        The titles are asked of the compositor rather than taken from the
+        `openwindow` event: a restored browser window maps as "Mozilla Firefox"
+        and is titled after its tab a moment later. Polling stops as soon as
+        the arrived titles can each be claimed by a DISTINCT entry — not merely
+        "each title is one the snapshot knows": the placeholder is itself the
+        title of a blank window, so with one blank entry saved, two windows
+        still reading "Mozilla Firefox" is a window not yet titled, not a
+        match. The normal case costs one round trip; TITLE_WAIT is the ceiling
+        for a window whose title never settles, and that one is dealt by
+        arrival order.
+        """
+        if not self.unmatched:
+            return
+        wanted = {}
+        for wids, _ in self.unmatched:
+            for w in wids:
+                key = title_key(self.windows[w]["liveTitle"])
+                wanted[key] = wanted.get(key, 0) + 1
+        arrived = {a for _, got in self.unmatched for a in got}
+        titles, deadline = {}, time.monotonic() + TITLE_WAIT
+        while True:
+            try:
+                titles = {c["address"]: c.get("title") or "" for c in hypr_json("clients")
+                          if c.get("address") in arrived}
+            except (RuntimeError, OSError, ValueError):
+                titles = {}
+            seen = {}
+            for t in titles.values():
+                seen[title_key(t)] = seen.get(title_key(t), 0) + 1
+            if all(n <= wanted.get(k, 0) for k, n in seen.items()) or time.monotonic() > deadline:
+                break
+            time.sleep(0.25)
+        for wids, got in self.unmatched:
+            free = list(got)
+            for wid in wids:
+                key = title_key(self.windows[wid]["liveTitle"])
+                hit = next((a for a in free if key and title_key(titles.get(a, "")) == key), None)
+                if hit:
+                    self.addr[wid] = hit
+                    free.remove(hit)
+            rest = [w for w in wids if w not in self.addr]
+            for wid, addr in zip(rest, free, strict=False):
+                self.addr[wid] = addr
+            self.stray.extend(free[len(rest):])
+
     def run(self):
         self.open()
         deadline = time.monotonic() + PARK_TIMEOUT
@@ -1153,11 +1333,21 @@ class Parker:
             now = time.monotonic()
             for cls, st in list(self.inflight.items()):
                 if now > st["due"]:
-                    warn(f"{self.windows[st['wid']]['class']}: no window appeared, skipping")
-                    del self.inflight[cls]
+                    if "wids" in st:
+                        if len(st["got"]) < len(st["wids"]):
+                            warn(f"{cls}: {len(st['got'])} of {len(st['wids'])} window(s) appeared")
+                        self._own_done(cls)
+                    else:
+                        warn(f"{self.windows[st['wid']]['class']}: no window appeared, skipping")
+                        del self.inflight[cls]
         self.close()
+        for cls, st in list(self.inflight.items()):   # phase timeout: settle what arrived
+            if "wids" in st:
+                self._own_done(cls)
+        self._settle_by_title()
         # Whatever is left over on both sides belongs together: entries that
         # never saw a matching class, and windows whose class matched no lane.
+        self.stray = [a for a in self.stray if a not in self.addr.values()]
         missing = sorted(wid for wid in self.windows if wid not in self.addr)
         for wid, addr in zip(missing, self.stray, strict=False):
             self.addr[wid] = addr
@@ -1214,6 +1404,71 @@ def place_floating(win, addr, origins):
                  {"x": size[0], "y": size[1], "relative": False, "window": sel})
     dispatch("hl.dsp.window.move",
              {"x": at[0] - ox, "y": at[1] - oy, "relative": False, "window": sel})
+
+
+def alias_tree(node, alias):
+    """Rename leaves: a group's tree leaf is its head, and a head that never
+    came back is stood in for by the first member that did (see live_groups),
+    so the group keeps its slot instead of losing it with one window."""
+    if node is None:
+        return None
+    if "leaf" in node:
+        return {"leaf": alias.get(node["leaf"], node["leaf"])}
+    return {"split": node["split"], "ratio": node["ratio"],
+            "a": alias_tree(node["a"], alias), "b": alias_tree(node["b"], alias)}
+
+
+def live_groups(groups, present):
+    """(alias, groups) narrowed to the members that actually reopened.
+
+    A group whose head is missing is re-headed onto its first surviving member
+    and the alias records that so the tree can follow; a group left with fewer
+    than two members is no longer a group and simply is not assembled — the one
+    survivor is an ordinary leaf already.
+    """
+    alias, kept = {}, []
+    for g in groups or []:
+        members = [m for m in g.get("members") or [] if m in present]
+        if not members:
+            continue
+        if members[0] != g["members"][0]:
+            alias[g["members"][0]] = members[0]
+        if len(members) >= 2:
+            kept.append(dict(g, members=members))
+    return alias, kept
+
+
+def assemble_group(members, ws_name, addr_of, by_id):
+    """Turn the head, already in its tile, into a group and tab the rest onto it.
+
+    Each member is dealt the way phase 2 deals a split — focus the tail (the
+    group's current tab), `preselect r`, move the member in — so it lands in
+    a known place, immediately RIGHT of the group; `into_group = "l"` then
+    folds it back in. Measured (VM, 0.56.2): the tab order comes out in
+    insertion order, the moved window becomes the current tab, and the group
+    returns to the full tile. The direction is known because it was chosen,
+    which is what makes this independent of `group_on_movetoworkspace` (which
+    only merges into a workspace's SOLITARY group) and of how many groups the
+    workspace ends up with. Last, the member that was on top is focused, which
+    is what brings its tab forward.
+    """
+    head, tail = members[0], members[0]
+    if not addr_of.get(head):
+        return
+    dispatch("hl.dsp.focus", {"window": f"address:{addr_of[head]}"})
+    dispatch("hl.dsp.group.toggle", {"window": f"address:{addr_of[head]}"})
+    for m in members[1:]:
+        addr = addr_of.get(m)
+        if not addr:
+            continue
+        dispatch("hl.dsp.focus", {"window": f"address:{addr_of[tail]}"})
+        layout_msg("preselect r")
+        move_to(addr, ws_name)
+        if dispatch("hl.dsp.window.move", {"window": f"address:{addr}", "into_group": "l"}):
+            tail = m
+    top = min(members, key=lambda m: by_id[m].get("focusOrder", 9999))
+    if addr_of.get(top):
+        dispatch("hl.dsp.focus", {"window": f"address:{addr_of[top]}"})
 
 
 def apply_states(win, addr):
@@ -1282,6 +1537,150 @@ def open_windows(workspace=None):
                  or (c.get("workspace") or {}).get("name") == workspace)]
 
 
+# ── Firefox's closing series, finished for it ────────────────────────────────
+#
+# Closing a browser's windows one by one is not the same as quitting it: only
+# the last window is "the session" at quit, the others are "recently closed".
+# Firefox knows this and marks every window closed in a series ending in a quit
+# with `_shouldRestore`, meaning to move those back into the session when it
+# writes the file (SessionSaver._saveState, "closing windows one after the other
+# until shutdown"). It then walks `_closedWindows` from the OLDEST entry and
+# stops at the first one without the flag — but the list is newest-first, so any
+# older closed window (a sign-in pop-up from the morning) blocks the whole
+# series. Measured on the host: the 20-tab window was flagged, and a Google
+# pop-up closed three hours earlier kept it in "recently closed". On a fresh
+# profile the list is empty and the series works, which is why the VM passed.
+#
+# So W finishes what Firefox recorded: after the windows it asked to close are
+# gone and the process has exited cleanly, the entries flagged `_shouldRestore`
+# and closed since the request went out — those exact windows and no other —
+# are moved into `windows`, the same shape `undoCloseWindow` uses. Nothing is
+# invented; a file that fails to parse, a process that did not exit cleanly, or
+# a class whose windows were not all closed leaves the file untouched.
+
+SESSION_QUIT_WAIT = 15.0   # a clean Firefox shutdown writes its file within this
+FIREFOX_LOCK = ".parentlock"
+
+
+def mozlz4_read(path):
+    """The `mozLz40\0` container: an 8-byte magic, u32 size, one LZ4 block."""
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    if raw[:8] != b"mozLz40\0":
+        raise ValueError("not a mozlz4 file")
+    src, dst, i = raw[12:], bytearray(), 0
+    while i < len(src):
+        tok = src[i]; i += 1
+        lit = tok >> 4
+        if lit == 15:
+            while True:
+                b = src[i]; i += 1; lit += b
+                if b != 255:
+                    break
+        dst += src[i:i + lit]; i += lit
+        if i >= len(src):
+            break
+        off = src[i] | (src[i + 1] << 8); i += 2
+        n = (tok & 15) + 4
+        if (tok & 15) == 15:
+            while True:
+                b = src[i]; i += 1; n += b
+                if b != 255:
+                    break
+        start = len(dst) - off
+        for k in range(n):
+            dst.append(dst[start + k])
+    return json.loads(bytes(dst))
+
+
+def mozlz4_write(path, obj):
+    """One literal-only LZ4 sequence holding the whole document: valid to every
+    decoder (only the LAST sequence may lack a match, so there is exactly one),
+    no matcher to get wrong. Firefox recompresses the file on its next write."""
+    data = json.dumps(obj, separators=(",", ":"), ensure_ascii=False).encode()
+    n, out = len(data), bytearray()
+    if n < 15:
+        out.append(n << 4)
+    else:
+        out.append(0xF0); n -= 15
+        while n >= 255:
+            out.append(255); n -= 255
+        out.append(n)
+    out += data
+    tmp = path + ".w-tmp"
+    with open(tmp, "wb") as fh:
+        fh.write(b"mozLz40\0" + struct.pack("<I", len(data)) + bytes(out))
+    os.replace(tmp, path)
+
+
+def resurrect_closed_windows(state, since_ms):
+    """Move the closed windows Firefox flagged for restore, and that were closed
+    since `since_ms`, back into the session. Returns how many. Pure."""
+    closed = state.get("_closedWindows") or []
+    series = [w for w in closed if w.get("_shouldRestore") and (w.get("closedAt") or 0) >= since_ms]
+    if not series:
+        return 0
+    for w in series:
+        w.pop("_shouldRestore", None)
+        w.pop("closedAt", None)
+    state["windows"] = series + (state.get("windows") or [])
+    state["_closedWindows"] = [w for w in closed if w not in series]
+    return len(series)
+
+
+def firefox_profile(pid):
+    """The profile directory of a running Firefox: the one it holds the lock in."""
+    try:
+        for fd in os.listdir(f"/proc/{pid}/fd"):
+            target = os.readlink(f"/proc/{pid}/fd/{fd}")
+            if os.path.basename(target) == FIREFOX_LOCK:
+                return os.path.dirname(target)
+    except OSError:
+        pass
+    return None
+
+
+def own_session_quits(clients, closing):
+    """{pid: profile} of own-session programs whose EVERY window is being closed.
+
+    A partial close (a workspace layout) leaves the program running, and its
+    session file is not ours to touch then.
+    """
+    apps = app_map()
+    by_pid = {}
+    for c in clients:
+        cls = c.get("initialClass") or c.get("class") or ""
+        if "own-session" in app_flags(apps, cls) and c.get("pid"):
+            by_pid.setdefault(c["pid"], []).append(c.get("address"))
+    quits = {}
+    for pid, addrs in by_pid.items():
+        if all(a in closing for a in addrs):
+            profile = firefox_profile(pid)
+            if profile:
+                quits[pid] = profile
+    return quits
+
+
+def finish_own_session(pid, profile, since):
+    """Once Firefox has exited and written its file, apply resurrect_closed_windows."""
+    path = os.path.join(profile, "sessionstore.jsonlz4")
+    deadline = time.time() + SESSION_QUIT_WAIT
+    while time.time() < deadline:
+        if not os.path.exists(f"/proc/{pid}") and os.path.exists(path) and os.path.getmtime(path) >= since:
+            break
+        time.sleep(0.25)
+    else:
+        warn(f"{os.path.basename(profile)}: no clean session file after quit; leaving it alone")
+        return
+    try:
+        state = mozlz4_read(path)
+        n = resurrect_closed_windows(state, int(since * 1000))
+        if n:
+            mozlz4_write(path, state)
+    except (OSError, ValueError, TypeError, KeyError) as e:
+        warn(f"{os.path.basename(profile)}: session file left untouched ({e})")
+
+
 def close_windows(workspace=None, timeout=CLOSE_TIMEOUT):
     """Ask every window to close and wait until it has. True if they all did.
 
@@ -1292,12 +1691,21 @@ def close_windows(workspace=None, timeout=CLOSE_TIMEOUT):
     addrs = open_windows(workspace)
     if not addrs:
         return True
+    try:
+        quits = own_session_quits(hypr_json("clients"), set(addrs))
+    except (RuntimeError, OSError, ValueError):
+        quits = {}
+    since = time.time()
     for addr in addrs:
         dispatch("hl.dsp.window.close", {"window": f"address:{addr}"})
 
     deadline = time.time() + timeout
     while open_windows(workspace) and time.time() < deadline:
         time.sleep(0.5)
+
+    if not open_windows(workspace):
+        for pid, profile in quits.items():
+            finish_own_session(pid, profile, since)
 
     if open_windows(workspace):
         # The notification lives here rather than in the callers because what the
@@ -1712,7 +2120,9 @@ def do_restore(snap, dry_run=False, target_ws=None):
 
         for ws in snap.get("workspaces") or []:
             name = ws["name"]
-            tree = prune_tree(ws.get("tree"), set(addr_of)) if replayable else None
+            alias, groups = live_groups(ws.get("groups"), set(addr_of))
+            tree = (prune_tree(alias_tree(ws.get("tree"), alias), set(addr_of))
+                    if replayable else None)
             if tree is not None:
                 head = addr_of.get(first_leaf(tree))
                 if head:
@@ -1722,13 +2132,26 @@ def do_restore(snap, dry_run=False, target_ws=None):
                 # No replayable tree (non-dwindle layout, or an arrangement that
                 # is not a tree of straight cuts): saved spatial order is all
                 # there is left to honour, and it still beats arrival order.
+                # A group's tail members stay parked for the assembly below.
+                tails = {m for g in groups for m in g["members"][1:]}
                 for wid in ws.get("order") or []:
-                    if wid in addr_of:
+                    if wid in addr_of and wid not in tails:
                         move_to(addr_of[wid], name)
             for wid in ws.get("floating") or []:
                 if wid in addr_of:
                     move_to(addr_of[wid], name)
                     place_floating(by_id[wid], addr_of[wid], origins)
+            # Groups last, once every tile is where it belongs: assembling one
+            # moves nothing but its own members.
+            if groups and not replayable:
+                warn(f"workspace {name}: groups need the dwindle layout to be "
+                     "reassembled; their windows are dealt as tiles")
+                for g in groups:
+                    for m in g["members"][1:]:
+                        move_to(addr_of[m], name)
+            elif replayable:
+                for g in groups:
+                    assemble_group(g["members"], name, addr_of, by_id)
 
         for wid, addr in addr_of.items():
             apply_states(by_id[wid], addr)

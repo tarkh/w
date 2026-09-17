@@ -65,14 +65,14 @@ render_user() {
   # a bare failing command here would abort the subshell and skip the SECOND
   # mode too, silently defeating the fallback the two calls exist for.
   (
-    for ((i = 0; i < 30; i++)); do
-      if pgrep -x openrgb >/dev/null 2>&1; then
-        sleep 1
+    for ((i = 0; i < 40; i++)); do
+      devices="$(openrgb --nodetect --list-devices)"
+      if [[ -n "$devices" ]]; then
         openrgb --client --nodetect --mode direct --color "$hex" || true
         openrgb --client --nodetect --mode static --color "$hex" || true
         break
       fi
-      sleep 0.1
+      sleep 0.5
     done
   ) >/dev/null 2>&1 & disown
 
