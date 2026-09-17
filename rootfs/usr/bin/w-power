@@ -279,7 +279,19 @@ render_hypridle() { # <ac|bat>
 general {
   # Single hyprlock instance; lock the session on idle and before sleep. The
   # scope keeps it out of hypridle's cgroup so a hypridle restart cannot kill it.
-  lock_cmd = pidof hyprlock || systemd-run --user --scope --quiet --collect hyprlock || hyprlock
+  # DPMS-on before hyprlock ensures a valid screenshot when the display was
+  # already blanked.
+  lock_cmd = hyprctl dispatch 'hl.dsp.dpms({ action = "on" })' && sleep 0.1 && pidof hyprlock || systemd-run --user --scope --quiet --collect hyprlock || hyprlock
+  # Lock before sleep. hypridle itself holds a logind delay inhibitor from
+  # startup and, in mode 3, releases it only once the compositor reports the
+  # session locked (hyprland-lock-notify) -- and hyprlock takes that lock only
+  # AFTER its screenshot is captured (immediate_render=false, hyprlock.conf), so
+  # the blurred frame is in hand before the session cgroup is frozen. Pinned to
+  # 3 rather than left to the auto heuristic (which greps these two lines for
+  # "hyprlock"/"lock-session"). Do NOT wrap this in systemd-inhibit: logind
+  # refuses new delay inhibitors once the sleep is already in flight, and the
+  # refused wrapper never runs its command -- no lock at all (2026-09-17).
+  inhibit_sleep = 3
   before_sleep_cmd = loginctl lock-session
   # Turn DPMS back on after waking (avoids a dead screen until a keypress), then
   # force the night light to re-assert whatever it should show right now — a

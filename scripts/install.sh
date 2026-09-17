@@ -154,16 +154,22 @@ v_edge_repo() {
 # step is hidden. Each row: tag = bundle dir, desc = localized key "p_<name>" when
 # present, else the bundle's meta.conf DESC. A bundle with INSTALLER=off (e.g.
 # ai-extra, userspace-only) is excluded from both — it stays a normal citizen
-# everywhere else (w-pack list/install/status, Hub, AI tools).
+# everywhere else (w-pack list/install/status, Hub, AI tools). A bundle with
+# AUDIENCE=maintainer is excluded for a different reason and from EVERY catalogue,
+# not just this one: it is not product software, it is the tooling for developing W
+# (see bundle_hidden() in w-pack). Filtered here too rather than deferred to w-pack,
+# because the installer reads the staged tree directly and w-pack is not on the ISO.
 packs_available() { [[ -n "$(packs_list)" ]]; }
 
 packs_list() {
-  local conf name desc installer
+  local conf name desc installer audience
   for conf in "$SRC"/scripts/packs/*/meta.conf; do
     [[ -f "$conf" ]] || continue
     name="$(basename "$(dirname "$conf")")"
     installer="$( set +u; source "$conf" 2>/dev/null; printf '%s' "${INSTALLER:-on}" )"
     [[ "$installer" == "off" ]] && continue
+    audience="$( set +u; source "$conf" 2>/dev/null; printf '%s' "${AUDIENCE:-user}" )"
+    [[ "$audience" == "maintainer" ]] && continue
     desc="$( set +u; source "$conf" 2>/dev/null; printf '%s' "${DESC:-}" )"
     [[ -n "${MSG[p_$name]:-}" ]] && desc="$(t "p_$name")"
     printf '%s\t%s\n' "$name" "${desc:-$name}"

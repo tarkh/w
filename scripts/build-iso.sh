@@ -27,6 +27,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
+# Elevation for the two root steps below. Defaults to sudo (CI's NOPASSWD grant,
+# see ci/w-release-gate.sudoers); override with W_SUDO=run0 for an interactive
+# polkit/fprintd prompt instead of a TTY password.
+SUDO="${W_SUDO:-sudo}"
+
 # ── Build options ─────────────────────────────────────────────────────────────
 # BROADCOM_WL — Broadcom STA (`wl`) Wi-Fi in the LIVE session. `off` | `on`.
 #
@@ -215,7 +220,7 @@ install -Dm644 "$PROJECT_DIR/rootfs/etc/w/themes/w/logo/W-logo-256x256.png" \
 # trying to reason about which stage's cache is safe to keep. $WORK is root-owned
 # (mkarchiso itself runs under sudo below and pacstraps into it) — clean it as
 # root too, a plain `rm -rf` from this non-root script would just hit EACCES.
-sudo rm -rf "$WORK"
+$SUDO rm -rf "$WORK"
 mkdir -p "$WORK" "$OUT"
 
 # An opt-in package list is built from a COPY of the profile, never by editing
@@ -247,5 +252,5 @@ PY
 fi
 
 info "Building W Linux ISO..."
-sudo mkarchiso -v -w "$WORK" -o "$OUT" "$BUILD_PROFILE"
+$SUDO mkarchiso -v -w "$WORK" -o "$OUT" "$BUILD_PROFILE"
 info "ISO ready in $OUT"

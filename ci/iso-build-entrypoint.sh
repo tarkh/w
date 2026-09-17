@@ -38,44 +38,16 @@ pacman -Sy --noconfirm --needed archlinux-keyring
 pacman-key --populate
 pacman -Su --noconfirm
 
-# archiso + base-devel are the build itself. The rest is what scripts/check.sh
-# looks for: a missing tool does not fail a suite, it SKIPs it or — worse —
-# changes its verdict, so an incomplete list here produces a run that reports
-# on less than it claims. Every entry below was added because its absence
-# showed up as a false result on the first live run:
-#
-#   python-numpy      the memory suite's vector tests assert that hybrid search
-#                     RRF-ranks a vector-only hit; without numpy that path
-#                     degrades to FTS5 and two bats cases fail for the
-#                     environment's reason rather than the code's.
-#   quickshell        qmllint resolves W's QML against the real Quickshell
-#                     types. Without them a `Connections { target: root }` is
-#                     reported as "cannot assign Hub to QObject" — not a defect,
-#                     just a base class it could not follow.
-#   jq                w-bar IS jq: every block the bar composes is read and
-#                     written through it. Absent, the bar suite's 23 cases fail
-#                     on the container rather than on the code — which is how
-#                     this list learned it was incomplete.
-#   openssh           ssh-keygen, which the release-signing suite runs against
-#                     real one-shot keys. Absent, all 17 cases SKIP and the
-#                     edge channel's signature boundary rides untested on a
-#                     green run — the same hole, in its quiet form.
-#   python-cryptography
-#                     the telegram bundle's tdata seeder and its dev-side
-#                     reader do AES-IGE through it; the tdata round-trip suite
-#                     SKIPs without it and --strict rightly refuses the skip.
-#   imagemagick       the plymouth suite tints the inherited boot mark through
-#                     `magick` and reads pixels back to prove the alpha survived;
-#                     without it two cases SKIP, and --strict turned the first
-#                     nightly after v0.13.0 red before the build even started.
-#   librsvg           the mark is an SVG, and ImageMagick's SVG coder is an
-#                     optional dependency — with imagemagick alone the same two
-#                     cases fail on `no decode delegate for SVG`. The target
-#                     lists it for the same reason (packages/pacman.txt).
+# archiso + base-devel are the build itself. Everything scripts/check.sh needs is
+# in ci/check-packages.txt, read below — it lives in its own file because a second
+# consumer appeared (devtools/usr/local/bin/w-dev-box bakes the same set into a
+# cached local image), and two hand-kept copies of a list like this drift the first
+# time a suite grows a dependency. The stale copy would then report a green run
+# over suites it never executed, which is exactly what --strict exists to prevent.
+# The rationale for each entry lives there too.
 info "Installing build and check dependencies..."
-pacman -S --noconfirm --needed \
-  archiso base-devel git rsync sudo jq openssh imagemagick librsvg \
-  shellcheck ruff bats python python-numpy python-cryptography qt6-declarative quickshell
+mapfile -t CHECK_PKGS < <(sed -e 's/#.*//' -e 's/[[:space:]]//g' "$REPO/ci/check-packages.txt" | grep -v '^$')
+pacman -S --noconfirm --needed archiso base-devel "${CHECK_PKGS[@]}"
 
 # The paths suite asserts no shipped /usr/bin path collides with a file owned by
 # an Arch package — which needs the files database. Without it that probe SKIPs,

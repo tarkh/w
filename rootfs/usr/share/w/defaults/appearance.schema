@@ -4,16 +4,24 @@
 #
 # Read by /usr/lib/w/w-conf-lib.sh during the load pass; see w-conf.md.
 #
-# Both keys are `user`: they tint only the logged-in user's own session (their
-# rendered Hyprland config), so there is no root domain to protect — same
-# reasoning as nightlight.schema. No vendor .conf ships for this subsystem: the
-# unset default ("follow the active theme") is a plain fallback in the reader
-# code, exactly like w-power's per-user idle keys.
+# All keys are `user`: they tint only the logged-in user's own session (their
+# rendered Hyprland config / RGB hardware), so there is no root domain to
+# protect — same reasoning as nightlight.schema. No vendor .conf ships for this
+# subsystem: the unset default ("follow the active theme") is a plain fallback
+# in the reader code, exactly like w-power's per-user idle keys.
 #
 # Format: <KEY>\t<scope>       scope: system | user | both
 
 # "" (unset) = follow the active theme's effects.conf/motion.conf. "off" =
-# forced off regardless of theme. Bar position is NOT here — it already has a
+# forced off regardless of theme.
+# RGB (unset) = theme switching recolors RGB devices via the w-style `rgb` axis
+# (OpenRGB); "off" = devices are left untouched.
+# RGB_LEVEL (unset) = "medium" — which of the theme's three RGB pigments
+# (soft/medium/crisp, theme.conf's W_RGB_*) the `rgb` axis pushes to the
+# hardware. Read regardless of RGB's on/off state (harmless when off).
+# Bar position is NOT here — it already has a
 # dedicated override slot in config/bar.json (see w-appearance).
 BLUR	user
 MOTION	user
+RGB	user
+RGB_LEVEL	user

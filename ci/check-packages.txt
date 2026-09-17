@@ -1,0 +1,80 @@
+# ci/check-packages.txt — the Arch packages scripts/check.sh needs to run whole.
+#
+# Extracted from ci/iso-build-entrypoint.sh so it has exactly one reader-visible
+# home and two consumers that cannot drift apart: the nightly edge-iso canary
+# (which installs it into a fresh container on every run, because freshness IS the
+# point of a canary) and devtools/usr/local/bin/w-dev-box (which bakes it into a
+# cached local image once, because a per-edit loop cannot afford a pacman pass).
+# A list kept twice would have gone stale in one of the two the first time a suite
+# grew a dependency, and the stale copy would report a green run over suites it
+# never executed — which is the precise failure --strict exists to make loud.
+#
+# One name per line; '#' comments and blank lines ignored.
+#
+# Every entry is here because its ABSENCE showed up as a false result, not because
+# it seemed related. A missing tool does not fail a suite — it SKIPs it, or quietly
+# changes its verdict.
+#
+#   python-numpy       the memory suite's vector tests assert that hybrid search
+#                      RRF-ranks a vector-only hit; without numpy that path
+#                      degrades to FTS5 and two bats cases fail for the
+#                      environment's reason rather than the code's.
+#   quickshell         qmllint resolves W's QML against the real Quickshell types.
+#                      Without them `Connections { target: root }` is reported as
+#                      "cannot assign Hub to QObject" — not a defect, just a base
+#                      class it could not follow.
+#   jq                 w-bar IS jq: every block the bar composes is read and
+#                      written through it. Absent, the bar suite's 23 cases fail
+#                      on the container rather than on the code.
+#   openssh            ssh-keygen, which the release-signing suite runs against
+#                      real one-shot keys. Absent, all 17 cases SKIP and the edge
+#                      channel's signature boundary rides untested on a green run.
+#   python-cryptography the telegram bundle's tdata seeder and its dev-side reader
+#                      do AES-IGE through it; the tdata round-trip suite SKIPs
+#                      without it and --strict rightly refuses the skip.
+#   imagemagick        the plymouth suite tints the inherited boot mark through
+#                      `magick` and reads pixels back to prove the alpha survived;
+#                      without it two cases SKIP, and --strict turned the first
+#                      nightly after v0.13.0 red before the build even started.
+#   librsvg            the mark is an SVG, and ImageMagick's SVG coder is an
+#                      optional dependency — with imagemagick alone the same two
+#                      cases fail on "no decode delegate for SVG".
+#   diffutils          `diff` and `cmp`. NOT in the `base` group (which carries
+#                      coreutils/file/findutils/gawk/grep/sed and stops there) —
+#                      it rides in with base-devel, so for as long as this list
+#                      lived inside the ISO-build entrypoint it was never missing
+#                      and never noticed. Splitting the list out exposed the
+#                      dependency and broke three suites at once on the first
+#                      cached run: palette.bats diffs two rendered themes,
+#                      paths.sh `cmp`s RECOVERY.md against its on-box copy, and
+#                      w-docs-refgen diffs generated reference pages against the
+#                      committed ones. All three FAILED rather than skipped,
+#                      which is the right behaviour and how this was found.
+#
+# NOT here: archiso and base-devel. Those are the ISO BUILD, not the checks, and
+# they stay in ci/iso-build-entrypoint.sh where the build lives.
+#
+# ⚠️ That exclusion is the sharp edge of this file. The canary installs archiso
+# and base-devel alongside this list and therefore gets their transitive closure
+# for free; the cached image does not. Anything a suite reaches for that happens
+# to be a dependency of those two is invisible here until a run fails — diffutils
+# was exactly that. When a suite grows a tool, add it BY NAME, and do not assume a
+# green canary proves the cached image is complete: they no longer install the
+# same closure, and that asymmetry is permanent.
+
+git
+rsync
+sudo
+diffutils
+jq
+openssh
+imagemagick
+librsvg
+shellcheck
+ruff
+bats
+python
+python-numpy
+python-cryptography
+qt6-declarative
+quickshell

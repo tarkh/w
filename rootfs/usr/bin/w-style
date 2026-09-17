@@ -176,7 +176,7 @@ cmd_status() {
   echo ""
   echo "  Terminal:"
   echo "    bg/fg            $W_TERM_BG / $W_TERM_FG"
-  echo "    accent (magenta) $W_TERM_ANSI_MAGENTA"
+  echo "    ansi magenta     $W_TERM_ANSI_MAGENTA"
 }
 
 # ── Usage (subsystem list generated from the axis registry) ───────────────────

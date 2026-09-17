@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
 # w-appearance — W Linux appearance overrides (Hub -> Appearance -> Settings)
 #
-# Three small per-user overrides that beat the active theme without editing it:
-# bar position, Hyprland blur, Hyprland animations. All user-scope, no polkit —
-# there is no daemon and no --user fan-out, unlike w-nightlight/w-power: the Hub
-# always calls this as the logged-in user themselves, for their own session.
+# Small per-user overrides that beat the active theme without editing it: bar
+# position, Hyprland blur, Hyprland animations, RGB lighting (on/off + which of
+# the theme's three pigments). All user-scope, no polkit — there is no daemon
+# and no --user fan-out, unlike w-nightlight/w-power: the Hub always calls this
+# as the logged-in user themselves, for their own session.
 #
-# BLUR/MOTION live in the `appearance` subsystem (layered W config; see
-# /usr/share/w/defaults/appearance.schema) — unset = "follow the active theme".
-# Both setters re-render through w-style (`apply effects`/`apply motion`), which
-# reloads Hyprland live. Crucially, the w-style modules (100-effects/100-motion)
-# read this override on EVERY render, so the choice survives a later theme
-# switch too — with no change to hyprland.lua itself, which is a static skel
-# file copied once at account creation and would never reach existing users.
+# BLUR/MOTION/RGB/RGB_LEVEL live in the `appearance` subsystem (layered W
+# config; see /usr/share/w/defaults/appearance.schema) — BLUR/MOTION unset =
+# "follow the active theme", RGB unset = "follow the theme" (its RGB pigment
+# colors the devices), RGB_LEVEL unset = "medium". The blur/motion setters
+# re-render through w-style (`apply effects`/`apply motion`), which reloads
+# Hyprland live; the rgb/rgb-level setters re-render the `600-rgb` axis only
+# (OpenRGB CLI), which never needs Hyprland. Crucially, the w-style modules
+# (100-effects/100-motion/600-rgb) read this override on EVERY render, so the
+# choice survives a later theme switch too — with no change to hyprland.lua
+# itself, which is a static skel file copied once at account creation and would
+# never reach existing users.
 #
 # BAR_POSITION's GUI moved to the Appearance -> Bar tab in 2026-09 (so every bar
 # control has one door, alongside the per-monitor composition `w-bar` writes); the
@@ -36,6 +41,11 @@ die() { err "$*"; exit 1; }
 
 # shellcheck source=../lib/w/w-conf-lib.sh
 source /usr/lib/w/w-conf-lib.sh
+# w-style's theme-resolution SDK: `w_userscope_theme_dir`/`load_conf`, so the RGB
+# level's hex preview (status --porcelain) can read the active theme's own
+# pigments instead of duplicating theme-lookup logic here.
+# shellcheck source=../lib/w/w-style/lib/core.sh
+source /usr/lib/w/w-style/lib/core.sh
 
 get()    { wconf_get "$SUBSYS" "$1" ""; }
 set_kv() { wconf_set "$SUBSYS" "$1" "$2" user; }
@@ -54,15 +64,17 @@ Usage: w-appearance <command> [value]
 Info: Per-user overrides that beat the active theme (W Hub -> Appearance -> Settings).
 
 Commands:
-  status [--porcelain]              Show the three overrides and their effective values
+  status [--porcelain]              Show the overrides and their effective values
   bar-position <theme|top|bottom>   Pin the status bar's edge, or hand it back to the theme
                                     (GUI: Appearance -> Bar, with the rest of the bar)
   blur <theme|off>                  Force Hyprland blur off, or hand it back to the theme
   motion <theme|off>                Force Hyprland animations off, or hand it back to the theme
+  rgb <on|off>                      Recolor RGB devices with the theme colour, or leave them untouched
+  rgb-level <soft|medium|crisp>     Which of the theme's RGB pigments colors the hardware
   help                              Show this help
 
-Config: ~/.config/w/appearance.conf (BLUR/MOTION) + config/bar.json (position)
-GUI: W Hub -> Appearance -> Settings (blur, animations)
+Config: ~/.config/w/appearance.conf (BLUR/MOTION/RGB/RGB_LEVEL) + config/bar.json (position)
+GUI: W Hub -> Appearance -> Settings (blur, animations, RGB lighting + level)
      W Hub -> Appearance -> Bar      (bar position; the bar's composition is `w-bar`)
 
 Exit codes:
@@ -113,21 +125,65 @@ cmd_motion() {
   w-style apply motion
 }
 
+# RGB has no "from theme" slot to expose: unset already means "follow the theme"
+# (color the devices), so the two-valued switch is on = unset, off = forced off.
+# "off" leaves the devices exactly as they are — it does not black them out.
+cmd_rgb() {
+  case "${1:-}" in
+    on)  unset_kv RGB ;;
+    off) set_kv RGB off ;;
+    *) err "rgb must be on or off"; exit 2 ;;
+  esac
+  w-style apply rgb
+}
+
+# Which of the theme's three RGB pigments (theme.conf's W_RGB_SOFT/MEDIUM/CRISP)
+# the `rgb` axis pushes to the hardware. Independent of RGB on/off — harmless to
+# set while off, same as picking a bar position while the bar is hidden.
+cmd_rgb_level() {
+  case "${1:-}" in
+    medium) unset_kv RGB_LEVEL ;;
+    soft|crisp) set_kv RGB_LEVEL "$1" ;;
+    *) err "rgb-level must be soft, medium or crisp"; exit 2 ;;
+  esac
+  w-style apply rgb
+}
+
+# The three RGB swatches as hex, straight from the active theme — the Hub paints
+# its level-picker from these rather than hardcoding a palette that would drift
+# from whatever theme is actually active. Falls back to the pre-RGB-pigment
+# default (w-style's own fallback) so a theme predating this feature still shows
+# three (identical) swatches instead of blanks.
+rgb_hexes() {
+  load_conf "$(w_userscope_theme_dir)"
+  local fallback="${W_PRIMARY:-}"
+  echo "RGB_SOFT_HEX=${W_RGB_SOFT:-$fallback}"
+  echo "RGB_MEDIUM_HEX=${W_RGB_MEDIUM:-$fallback}"
+  echo "RGB_CRISP_HEX=${W_RGB_CRISP:-$fallback}"
+}
+
 cmd_status() {
-  local blur motion barpos
+  local blur motion rgb rgb_level barpos
   blur="$(get BLUR)";     [[ "$blur"   == off ]] || blur=theme
   motion="$(get MOTION)"; [[ "$motion" == off ]] || motion=theme
+  rgb="$(get RGB)";       [[ "$rgb"    == off ]] || rgb=on
+  rgb_level="$(get RGB_LEVEL)"; [[ "$rgb_level" == soft || "$rgb_level" == crisp ]] || rgb_level=medium
   barpos="$(bar_position_now)"
   if [[ "${1:-}" == --porcelain ]]; then
     echo "BAR_POSITION=$barpos"
     echo "BLUR=$blur"
     echo "MOTION=$motion"
+    echo "RGB=$rgb"
+    echo "RGB_LEVEL=$rgb_level"
+    rgb_hexes
     return 0
   fi
   echo "Appearance overrides"
   echo "  Bar position : $barpos"
   echo "  Blur         : $blur"
   echo "  Animations   : $motion"
+  echo "  RGB lighting : $rgb"
+  echo "  RGB level    : $rgb_level"
 }
 
 case "${1:-}" in
@@ -135,6 +191,8 @@ case "${1:-}" in
   bar-position)   cmd_bar_position "${2:-}" ;;
   blur)           cmd_blur "${2:-}" ;;
   motion)         cmd_motion "${2:-}" ;;
+  rgb)            cmd_rgb "${2:-}" ;;
+  rgb-level)      cmd_rgb_level "${2:-}" ;;
   help|--help|-h) usage ;;
   *)              err "unknown command: $1"; usage >&2; exit 2 ;;
 esac

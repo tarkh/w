@@ -7,7 +7,7 @@ description: >-
   won't start, or when a theme applied only partially.
 sources:
   - path: .claude/library/dev-workflow.md
-    sha256: c7b25636e6e15bf0cf81153f0d6594d77b291214602faf5e9215267df4390ee3
+    sha256: f776cd8170e494ddb44eae2d7e7e61d71cdcaae13763a541e9887cfef4bc4478
   - path: .claude/library/w-logs.md
     sha256: f1898e041ab918820d3cfe1faa6e40b079f4c7834b52ba791f0251219e214e60
   - path: .claude/library/package-sensors.md

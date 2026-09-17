@@ -47,3 +47,8 @@ backups/
 # in an earlier revision, an SSH private key (both found by the pre-publication
 # history scan, 2026-08-26). Credentials belong in a password manager, never here.
 authorized_keys
+
+# Claude
+.claude/settings.local.json
+ark.sh
+mise.toml

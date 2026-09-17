@@ -5,7 +5,7 @@ order: 8
 summary: Профили питания, цепочка простоя блокировка/гашение экрана/сон, действия крышки и кнопки питания, лимит заряда батареи.
 sources:
   - path: .claude/library/w-power.md
-    sha256: 038c7df8ac878dabf993b1798fd6251f9d490658ffcae039a3644d61c9571c4a
+    sha256: d56c98271d2ab9abb9ea80de17e27be551895dce7c52ab76df830482b004f797
   - path: .claude/library/w-kbdlight.md
     sha256: c119c45ae51cfa7e33b66c1754a362ddd33d7c2851b7bae80654f877bbabb068
 anchors:

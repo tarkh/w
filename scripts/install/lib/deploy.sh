@@ -171,15 +171,30 @@ w_render_user_theme() {
   # DBUS_SESSION_BUS_ADDRESS and push gsettings at the wrong bus. Point both at
   # the target user when they have a runtime dir, drop them when they don't (no
   # session → the live channels are meant to skip, and they test these vars).
+  # Hyprland fragments (colors/animations/effects/geometry.lua) only reach the
+  # running compositor through `hyprctl reload`, which needs the instance
+  # signature. `|| true`: the glob fails when no session is up, and a failing
+  # command substitution under pipefail would abort the whole apply.
+  his=""
+  [[ -d "$runtime" ]] && { his="$(ls -dt "$runtime"/hypr/* 2>/dev/null | head -1)" || true; }
+
+  # Three cases, and the middle one used to be wrong. The signature is UNSET
+  # unless this user has a Hyprland session of their own — including when they
+  # have a runtime dir but no compositor in it. That branch previously rebuilt the
+  # array from scratch and so dropped the `-u`, leaving the CALLER's signature to
+  # be inherited: an apply run from a live session handed its own compositor's
+  # signature to somebody else's `w-style apply user`, whose hyprctl reload then
+  # addressed the wrong instance. Invisible until check.sh first ran on a machine
+  # that had a session at all — deploy.bats has always asserted `HIS: <unset>`
+  # here, and on a session-less host the assertion passed for the wrong reason.
+  # `-u` comes first in every branch: env takes options before assignments.
   local -a sessenv=(-u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS -u HYPRLAND_INSTANCE_SIGNATURE)
-  if [[ -d "$runtime" ]]; then
-    sessenv=(XDG_RUNTIME_DIR="$runtime" DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus")
-    # Hyprland fragments (colors/animations/effects/geometry.lua) only reach the
-    # running compositor through `hyprctl reload`, which needs the instance
-    # signature. `|| true`: the glob fails when no session is up, and a failing
-    # command substitution under pipefail would abort the whole apply.
-    his="$(ls -dt "$runtime"/hypr/* 2>/dev/null | head -1)" || true
-    [[ -n "${his:-}" ]] && sessenv+=(HYPRLAND_INSTANCE_SIGNATURE="$(basename "$his")")
+  if [[ -d "$runtime" && -n "$his" ]]; then
+    sessenv=(XDG_RUNTIME_DIR="$runtime" DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
+             HYPRLAND_INSTANCE_SIGNATURE="$(basename "$his")")
+  elif [[ -d "$runtime" ]]; then
+    sessenv=(-u HYPRLAND_INSTANCE_SIGNATURE \
+             XDG_RUNTIME_DIR="$runtime" DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus")
   fi
 
   # Non-fatal: a broken render must not abort an update mid-way (set -e), and the

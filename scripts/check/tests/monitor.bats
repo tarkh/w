@@ -24,6 +24,8 @@
 # have to hold on a TTY and in the pre-session hook, so their inputs are seams.
 # W_DRM_ROOT stands in for the kernel's connector list and a PATH stub for a live
 # hyprctl; the fragment paths are plain variables once the script is sourced.
+# The default is NO compositor (setup() calls hyprctl_offline); hypr_stub opts a
+# test into a live one.
 
 load helpers
 
@@ -36,6 +38,14 @@ setup() {
   export XDG_STATE_HOME="$BATS_TEST_TMPDIR/state"
   export W_DRM_ROOT="$BATS_TEST_TMPDIR/drm"
   mkdir -p "$XDG_CONFIG_HOME/hypr" "$W_DRM_ROOT"
+  # No live compositor unless a test asks for one. This suite's design already
+  # said that — W_DRM_ROOT fakes the connector list and hypr_stub fakes a live
+  # hyprctl — but "no live session" was achieved by simply not calling hypr_stub,
+  # which only means what it says where Hyprland is not installed. On a machine
+  # running W the real /usr/bin/hyprctl answered instead, and four tests here
+  # failed on the developer's own monitors. hypr_stub prepends after this, so a
+  # test that wants a live compositor still wins. See helpers.bash.
+  hyprctl_offline
   source "$REPO/rootfs/usr/bin/w-monitor"
   # The script sets -euo pipefail on source. Drop -u (the fragment readers probe
   # unset array slots) and pipefail, but LEAVE -e ON: bats reports a failed

@@ -91,6 +91,9 @@ wiremix
 ghostty
 foot
 
+# USB
+usbutils
+
 # Fonts
 inter-font
 ttf-jetbrains-mono-nerd

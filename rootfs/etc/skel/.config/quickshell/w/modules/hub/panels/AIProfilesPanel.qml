@@ -312,6 +312,10 @@ Item {
                         bin: c[1], state: c[2],
                         authModes: c[3] ? c[3].split(/\s+/).filter(s => s) : [],
                         needsModel: c[4] === "yes", caps: c[5],
+                        // 8th field, added for OpenCode: a host can have an OPEN
+                        // authModes (goose-like — any provider) and STILL own a
+                        // native login (Zen), a combination no earlier host had.
+                        authNative: c[7] || "",
                     };
                 }
                 root.hosts = m;
@@ -319,7 +323,7 @@ Item {
             }
         }
     }
-    function hostInfo(h) { return root.hosts[h] || { bin: h, state: "", authModes: [], needsModel: true, caps: "" }; }
+    function hostInfo(h) { return root.hosts[h] || { bin: h, state: "", authModes: [], needsModel: true, caps: "", authNative: "" }; }
 
     readonly property var hostOptions: {
         const out = [];
@@ -339,10 +343,18 @@ Item {
     ]
     // What the expanded profile's PROVIDER dropdown offers: the host's closed list
     // when it declares one (claude -> subscription|anthropic, local -> ollama),
-    // otherwise the whole catalog.
+    // otherwise the whole catalog. A host with an OPEN list that ALSO owns a
+    // native login (OpenCode: any models.dev provider, plus its own Zen
+    // subscription) is the one case the plain catalog constant predates — it
+    // has no `subscription` entry — so that value is prepended from authNative
+    // when present, instead of teaching the catalog constant every host's name.
     readonly property var providerOptions: {
-        const modes = root.hostInfo(root.fields.HOST).authModes;
-        if (!modes || modes.length === 0) return root.providerCatalog;
+        const info = root.hostInfo(root.fields.HOST);
+        const modes = info.authModes;
+        if (!modes || modes.length === 0) {
+            if (!info.authNative) return root.providerCatalog;
+            return [{ id: info.authNative, label: Strings.t("hub.aiAuthSubscription") }, ...root.providerCatalog];
+        }
         return modes.map(m => ({ id: m, label: m === "subscription" ? Strings.t("hub.aiAuthSubscription") : m }));
     }
     readonly property var modeOptions: [

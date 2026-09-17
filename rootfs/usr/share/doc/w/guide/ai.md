@@ -5,9 +5,9 @@ order: 9
 summary: Opening the assistant, profiles for different setups, hosts and providers, where API keys are kept, how much it may do on its own, and the optional advanced stack.
 sources:
   - path: .claude/library/w-ai.md
-    sha256: 16ea299f6ccf9f714bce95837cab935afc592a87ebe99781d4343ddc9c6d5b4c
+    sha256: cfbe9cf9552a3f8cddf70d08e326af624ff88f132659e583fb399680344160c5
   - path: .claude/library/ai-integration.md
-    sha256: df27fdac4d8a30840fd886306b8e0a39fc9e96276727d75a215b84df4cd20e30
+    sha256: 2233d9e2e7b604bc57ef1b706a6e0e8155981ffbec95d64e5e258109c4eb1196
 ---
 
 W ships an AI assistant that runs in a terminal and can drive the machine
@@ -56,10 +56,13 @@ does not need your password: it lands in your own account.
 If a session refuses to start, `w-ai ready` in a terminal answers why in one
 word.
 
-The third-party CLIs W can drive are Claude Code and Codex. W hands them its
-tools and its identity only when it launches them itself — start `claude` or
-`codex` by hand in a project of your own and you get the plain tool, with
-nothing of W attached.
+The third-party CLIs W can drive are Claude Code, Codex and OpenCode. W hands
+them its tools and its identity only when it launches them itself — start
+`claude`, `codex` or `opencode` by hand in a project of your own and you get
+the plain tool, with nothing of W attached. OpenCode is the one with its own
+subscription (Zen) *and* a direct line to dozens of other providers at once —
+pick *subscription* for Zen, one of the providers W already manages a key for,
+or set up anything else straight in OpenCode itself (`opencode auth login`).
 
 Some packs bring tools of their own for the assistant — the **graphics** pack,
 for instance, lets it draw in Inkscape and edit inside GIMP. These arrive the

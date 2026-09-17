@@ -1,0 +1,65 @@
+# w-dev bundle — packages (official repos, no AUR).
+# One per line; '#' comments and blank lines ignored. Installed by w-pack via yay
+# (repo + AUR in one pass) as the build user; pacman fallback if yay is absent.
+#
+# The list is derived, not chosen: it is what `scripts/check.sh` reaches for and a
+# stock W does not have. Everything else the suites need is already a base-system
+# citizen — python3, qmllint (qt6-declarative, a hard dependency of quickshell),
+# jq, rsync, git, ssh-keygen, imagemagick + librsvg, python-cryptography. Keeping
+# this file to the actual gap is what makes it auditable.
+
+# ── Static analysis: the three suites that SKIP on a stock W ──────────────────
+# A skipped suite is the failure mode this bundle exists for. check.sh degrades
+# gracefully by design (a missing linter warns instead of failing), which is right
+# for a bare machine and dangerous on the machine where W is written: the run goes
+# green over work it never inspected. Measured on this repo before the bundle
+# existed: 505 bats cases in 28 files, plus every shell and Python file, all
+# unchecked behind three yellow lines.
+shellcheck          # suite `bash` — every shell entrypoint and sourced fragment.
+                    # Also what makes bash-language-server useful in an editor:
+                    # without it the LSP has no diagnostics to report at all.
+ruff                # suite `python` — lint + format. Taken from the repo rather
+                    # than `uv tool install` on purpose: a system tool of a bundle
+                    # belongs in the pacman channel so w-update upgrades it (same
+                    # call as python-mcp/python-numpy in ai-extra).
+bats                # suite `unit` — the bats-core runner. No bats-assert or
+                    # bats-support: the suites load a local `helpers` file and
+                    # nothing else, so the helper libraries would be unused weight.
+
+# ── Release tooling ───────────────────────────────────────────────────────────
+github-cli          # `gh` — scripts/publish.sh uses it in 17 places (release
+                    # creation, asset upload, canary status). Strictly maintainer
+                    # tooling: a user cannot publish W, which is precisely why it
+                    # sits in this bundle and not in `dev`.
+
+# ── Development VM (vm/start.sh, vm/e2e.sh) ───────────────────────────────────
+# The dev-VM extras on top of DEPS="virt". Matches the e2e-reference minimum in
+# ci/e2e-entrypoint.sh exactly, poimenno (declared by name, not left to
+# transitive luck — pack-w-dev's own lesson). Four of these five already arrive
+# transitively through virt's `qemu-desktop` (edk2-ovmf, virtiofsd, both
+# virtio-display modules) — listing them again is redundant but deliberate: if
+# virt's dep tree ever changes, this bundle's own line keeps the VM working.
+# `swtpm` is the one genuinely additive package — virt does not carry it (light
+# and product, decision 2026-09-16).
+qemu-hw-display-virtio-vga   # redundant w/ qemu-desktop (virt) — declared for
+                            # the e2e-reference match; see vm/arch-iso.conf
+qemu-hw-display-virtio-gpu   # redundant w/ qemu-desktop (virt) — same as above
+edk2-ovmf                    # redundant w/ qemu-desktop (virt) — UEFI firmware,
+                            # vm/arch-iso.conf names /usr/share/ovmf/x64
+virtiofsd                    # redundant w/ qemu-desktop (virt) — repo share at
+                            # /w-src, start.sh expects it at /usr/lib/virtiofsd
+swtpm                        # the ONLY additive package: emulated TPM 2.0,
+                            # required for --encrypted (Limine + TPM2 autounlock
+                            # e2e coverage). Not in `virt` by design.
+
+# ── ISO build (scripts/build-iso.sh) ──────────────────────────────────────────
+# w-repo bootstrap builds three AUR packages before mkarchiso runs (yay, then
+# limine-mkinitcpio-hook + limine-snapper-sync for the encrypted/Limine path) —
+# these are their real host-side buildtime deps, pulled in by makepkg via
+# `sudo pacman -S` if missing. mkarchiso itself only ever writes under
+# archiso/work/ (gitignored, disposable) — that phase touches no package.
+archiso               # mkarchiso itself.
+go                    # buildtime dep of AUR `yay` (~226 MiB).
+jdk-openjdk           # buildtime dep of AUR `limine-mkinitcpio-hook`
+gradle                # (~763 MiB with jdk-openjdk; java-environment-common/
+                      # java-runtime-common ride along as jdk-openjdk's deps).

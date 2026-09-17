@@ -230,6 +230,10 @@
     "en": "Graphics and design: GIMP, Inkscape, Krita, G'MIC filters, AI assistant bridges",
     "ru": "Графика и дизайн: GIMP, Inkscape, Krita, фильтры G'MIC, мосты для AI-ассистента"
   },
+  "p_virt": {
+    "en": "Desktop virtualization: libvirt + QEMU/KVM, virt-manager, GNOME Boxes",
+    "ru": "Десктопная виртуализация: libvirt + QEMU/KVM, virt-manager, GNOME Boxes"
+  },
   "_section:4": "Validation / passwords",
   "pass_confirm": {
     "en": "Confirm password:",

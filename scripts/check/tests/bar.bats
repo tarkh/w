@@ -236,7 +236,11 @@ hyprctl_stub() { # <json>
 
 @test "no compositor and no state file: no outputs, and status still exits clean" {
   rm -f "$W_DISPLAYS_JSON"
-  run env PATH="/usr/bin:/bin" W_BAR_JSON="$W_BAR_JSON" W_DISPLAYS_JSON="$W_DISPLAYS_JSON" "$W_BAR" status
+  # hyprctl_offline, not a bare PATH: see helpers.bash. Stripping PATH to
+  # /usr/bin:/bin hides a stub, but on a machine that runs W it uncovers the REAL
+  # hyprctl, which answers with the developer's own monitors.
+  hyprctl_offline
+  run env PATH="$PATH" W_BAR_JSON="$W_BAR_JSON" W_DISPLAYS_JSON="$W_DISPLAYS_JSON" "$W_BAR" status
   [ "$status" -eq 0 ]
   [[ "$output" == *"No outputs known here"* ]]
 }

@@ -55,7 +55,7 @@ Info: Launch and manage the W AI assistant — hosts, keys, memory, ask.
 
 Launch (default when no command):
   w-ai                  Start the assistant with the configured host
-  w-ai --host <name>    Override host for this run (goose|local|claude|codex)
+  w-ai --host <name>    Override host for this run (goose|local|claude|codex|opencode)
 
 Commands:
   ask <text…>           Start a session seeded with a question, then stay
@@ -68,7 +68,7 @@ Commands:
                         point before it opens.
   status                Show host/provider/model, key presence, w-mcp self-test
   config                Edit the per-user override (~/.config/w/ai.conf)
-  host list [--porcelain]   List hosts (goose|local|claude|codex) and their state
+  host list [--porcelain]   List hosts (goose|local|claude|codex|opencode) and state
   host status [<n>]     Show one host's contract (hosts/<n>/host.conf)
   host install <n>      Install a host's CLI with the vendor's own installer
   host login [<n>]      Sign in to a host that owns its auth (Claude Code, Codex)
@@ -253,6 +253,34 @@ with open(out, "w", encoding="utf-8") as fh:
     json.dump(cfg, fh, indent=2)
 EOF
   then echo "$out"; else err "could not merge mcp.d drop-ins — launching with w-mcp only"; echo "$base"; fi
+}
+
+# OpenCode has no per-run config-FILE flag, but OPENCODE_CONFIG_CONTENT — an env
+# var holding inline JSON — sits above its global opencode.json in OpenCode's
+# own precedence chain (below a project's own config), so nothing is ever
+# written to ~/.config/opencode. One blob covers all three layers other hosts
+# need separate flags for: actions (mcp), approval (permission.mcp — the same
+# per-server "explicitly trust" idea as Codex's default_tools_approval_mode /
+# Claude's --allowedTools), and identity (instructions — a PATH, not inlined
+# text: OpenCode reads AGENTS.md itself, so this ADDS W's identity on top of
+# whatever a project already contributes, rather than replacing anything).
+opencode_config_content() {
+  local agents_md; agents_md="$(ai_file AGENTS.md)" || agents_md=""
+  W_MCP_ROWS="$(mcp_dropins)" W_AGENTS_MD="$agents_md" python3 - <<'EOF'
+import json, os
+cfg = {"mcp": {"w-mcp": {"type": "local", "command": ["w-mcp"], "enabled": True}},
+       "permission": {"mcp": {"w-mcp_*": "allow"}}}
+for row in os.environ.get("W_MCP_ROWS", "").splitlines():
+    if not row:
+        continue
+    name, cmd, args, _state = row.split("\x1f")
+    cfg["mcp"][name] = {"type": "local", "command": [cmd] + args.split(), "enabled": True}
+    cfg["permission"]["mcp"][f"{name}_*"] = "allow"
+agents_md = os.environ.get("W_AGENTS_MD", "")
+if agents_md:
+    cfg["instructions"] = [agents_md]
+print(json.dumps(cfg))
+EOF
 }
 
 # Goose and Codex take the same list as launch flags — see launch_host.
@@ -1017,6 +1045,40 @@ launch_host() {
       [[ -n "$seed" ]] && exec codex "${args[@]}" "$seed"
       exec codex "${args[@]}"
       ;;
+    opencode)
+      need_bin opencode "opencode is not installed — run: w-ai host install opencode"
+      # Only for a provider W's own catalog actually declares (the 5 shared
+      # ones, or subscription/ollama's empty entries): anything else is a
+      # provider OpenCode itself knows about that W's catalog does not
+      # (AUTH_MODES is open here, unlike claude/codex — see host.conf), and
+      # the user is expected to have set it up with `opencode auth login -p
+      # <provider>` directly. Calling export_provider_key for THAT would just
+      # print "no PROVIDER_ENV_<p> mapping" on every single launch — accurate,
+      # but noise for a deliberate, working configuration.
+      if provider_declared "$provider"; then export_provider_key "$provider"; fi
+      # Same principle as claude/codex: W's layers ride this launch only,
+      # nothing written into ~/.config/opencode, so a bare `opencode` started
+      # elsewhere stays plain. OPENCODE_CONFIG_CONTENT (opencode_config_content,
+      # above) covers actions + approval + identity in one inline-JSON env var —
+      # OpenCode's own precedence puts it above the user's global opencode.json
+      # and below a project's, so their own MCP servers/instructions still load.
+      export OPENCODE_CONFIG_CONTENT
+      OPENCODE_CONFIG_CONTENT="$(opencode_config_content)"
+      # NEEDS_MODEL=no: OpenCode chooses interactively. A MODEL in the profile
+      # is a pin, honoured only for the profile's own host (HOST_CONFIGURED).
+      local -a args=()
+      [[ -n "${MODEL:-}" && "$host" == "${HOST_CONFIGURED:-$host}" ]] && args+=(--model "$MODEL")
+      echo "w-ai: host=opencode provider=$provider model=${MODEL:-host default}"
+      # Confirmed on the VM (2026-09-16): unlike claude/codex, a bare positional
+      # argument to plain `opencode` is a PROJECT PATH ("start opencode tui
+      # [project]"), not a seed prompt — `opencode "<question>"` fails with
+      # "Failed to change directory to ~/<question>". The seed+continue
+      # equivalent is `opencode run <message> --interactive` (mirrors goose's
+      # `run -t … --interactive`); confirmed live end-to-end against a w-mcp
+      # tool call on a free built-in model, no login needed.
+      [[ -n "$seed" ]] && exec opencode run "$seed" --interactive "${args[@]}"
+      exec opencode "${args[@]}"
+      ;;
     *)
       err "unknown host '$host' — see: w-ai host list"; exit 2 ;;
   esac
@@ -1316,9 +1378,16 @@ cmd_host() {
           state="installed"
         fi
         if $porcelain; then
-          printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$h" "$bin" "$state" \
+          # 8th field (AUTH_NATIVE) is new: a host whose AUTH_MODES is open
+          # (empty, column 4) AND that also owns a native login (this field
+          # non-empty) — OpenCode's shape, not seen before it — needs the Hub
+          # to know its subscription value even though it isn't in the closed
+          # list this column would otherwise carry. Appended at the end so no
+          # existing column index shifts.
+          printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$h" "$bin" "$state" \
             "$(host_field "$h" AUTH_MODES)" "$(host_field "$h" NEEDS_MODEL)" \
-            "$(host_field "$h" CAPABILITIES)" "$([[ "$h" == "$HOST" ]] && echo active || echo '-')"
+            "$(host_field "$h" CAPABILITIES)" "$([[ "$h" == "$HOST" ]] && echo active || echo '-')" \
+            "$(host_field "$h" AUTH_NATIVE)"
         else
           printf '%-8s %-8s %-14s %s%s\n' "$h" "$bin" "$state" \
             "$(host_field "$h" CAPABILITIES)" \

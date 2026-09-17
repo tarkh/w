@@ -9,11 +9,21 @@
 # AI knowledge, setup):
 #
 #   /usr/share/w/packs/<bundle>/
-#     meta.conf                      # NAME/DESC/SCOPE/DEPS/WEIGHT/INSTALLER (+ i18n key)
-#                                     # INSTALLER=on|off (default on): off hides the
-#                                     # bundle from the TUI installer checklist ONLY —
-#                                     # it still installs/lists/statuses normally via
-#                                     # w-pack/Hub/AI tools (userspace-only bundles).
+#     meta.conf                      # NAME/DESC/SCOPE/DEPS/WEIGHT/INSTALLER/AUDIENCE
+#                                     # (+ i18n key). Two orthogonal visibility facts:
+#                                     # INSTALLER=on|off (default on) — off hides the
+#                                     # bundle from the TUI installer checklist ONLY;
+#                                     # it still lists/installs/statuses everywhere
+#                                     # else (userspace-only bundles like ai-extra).
+#                                     # AUDIENCE=user|maintainer (default user) —
+#                                     # `maintainer` says the bundle is not a product
+#                                     # at all: it equips a machine to DEVELOP W. Every
+#                                     # catalogue surface drops it (the TUI checklist,
+#                                     # the Hub and the AI tools all read a list that
+#                                     # never mentions it); it stays installable by
+#                                     # name from the CLI, which is the whole point.
+#                                     # Hidden UNTIL installed, not hidden outright —
+#                                     # see bundle_hidden().
 #     pkgs.txt                       # packages (repo + AUR), one per line, # comments
 #     setup.sh                       # post-install tuning (idempotent), like an apply module
 #     manifest                       # config ownership (TSV: <path>\t<class>)
@@ -98,7 +108,7 @@ HYPR_RULES_DIR="${W_PACKS_HYPR_RULES_DIR:-/usr/share/w/hypr/rules.d}"  # Hyprlan
 # Command-line options, defaulted here rather than at the dispatch block below so
 # the functions that read them are also correct when this file is SOURCED (the
 # unit tests drive remove directly, never through the parser).
-ARG_USER=""; PORCELAIN=0; WITH_PACKAGES=0
+ARG_USER=""; PORCELAIN=0; WITH_PACKAGES=0; SHOW_ALL=0
 
 err()  { echo -e "\033[1;31mw-pack:\033[0m $*" >&2; }
 info() { echo -e "\033[1;35m==>\033[0m $*"; }
@@ -162,6 +172,8 @@ Options:
                        user, or SUDO_USER / the primary uid-1000 user)
   --porcelain          Machine-readable \`list\`, one bundle per line:
                        <name> TAB <machine:yes|no> TAB <user:yes|no|n/a> TAB <desc>
+  --all                With \`list\`: also show bundles the catalogue does not
+                       offer (AUDIENCE=maintainer — tooling for developing W)
   --packages           With \`remove\`: also uninstall the bundle's packages, minus
                        any another installed bundle still lists. Without it the
                        exact \`pacman -Rns\` line is only printed
@@ -171,6 +183,11 @@ Notes:
   unsetup do not — they write only your own home.
   Bundles are self-contained under $PACKS_DIR; machine state is recorded in
   $STATE, your own layer in ~/$USER_STATE_REL.
+  A bundle may declare AUDIENCE=maintainer: it is not a product but the tooling
+  for developing W itself, so no catalogue offers it — the installer checklist,
+  the Hub and the AI tools never name it, and \`w-pack list --all\` or an install
+  by name are the only ways to it. Once installed it is listed like any other:
+  a machine must always be able to say what is on it.
   A bundle someone else installed is NOT set up for you automatically — that
   would spend your disk and network on a choice you never made. \`w-pack list\`
   says so plainly, and \`w-pack setup <bundle>\` is the one command that fixes it.
@@ -193,6 +210,7 @@ Exit codes:
 
 Examples:
   w-pack list
+  w-pack list --all                  # including bundles not offered in catalogues
   sudo w-pack install containers
   w-pack setup ai-extra              # catch my own account up, no sudo
   sudo w-pack refresh
@@ -280,6 +298,20 @@ meta_field() {
   local name="$1" field="$2" conf="$PACKS_DIR/$1/meta.conf"
   [[ -f "$conf" ]] || return 0
   ( set +u; source "$conf" 2>/dev/null; printf '%s' "${!field:-}" )
+}
+
+# Catalogue visibility, and the one asymmetry in it. A bundle declaring
+# AUDIENCE=maintainer is not a product — it equips a machine to develop W itself —
+# so no catalogue offers it: not the installer checklist, not the Hub, not the AI
+# tools, not a plain `list`. But all of them go back to naming it the moment it is
+# actually installed, because "do not offer" is a fair thing for a catalogue to do
+# and "do not admit what is on the machine" is not: a pack no surface ever mentions
+# again is precisely how software gets forgotten on a box, which is the problem this
+# whole layer exists to solve. `list --all` shows the catalogue as it really is.
+bundle_hidden() {                                       # <name>
+  [[ "$(meta_field "$1" AUDIENCE)" == maintainer ]] || return 1
+  is_installed "$1" && return 1
+  return 0
 }
 
 # ── State (packs.json) ───────────────────────────────────────────────────────
@@ -1032,6 +1064,7 @@ cmd_list() {
   [[ $PORCELAIN -eq 1 ]] || echo "Available bundles:"
   while read -r name; do
     [[ -z "$name" ]] && continue
+    if [[ $SHOW_ALL -eq 0 ]] && bundle_hidden "$name"; then continue; fi
     any=1
     bundle_state "$name"
     if [[ $PORCELAIN -eq 1 ]]; then
@@ -1115,6 +1148,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --user) ARG_USER="${2:-}"; [[ -n "$ARG_USER" ]] || { err "--user needs a name"; exit 2; }; shift 2 ;;
     --porcelain) PORCELAIN=1; shift ;;
+    --all) SHOW_ALL=1; shift ;;
     --packages) WITH_PACKAGES=1; shift ;;
     *) POS+=("$1"); shift ;;
   esac

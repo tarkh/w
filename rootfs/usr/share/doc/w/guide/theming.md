@@ -5,7 +5,7 @@ order: 2
 summary: Switching themes, creating a theme from a wallpaper, wallpaper sets, and the Appearance panel.
 sources:
   - path: .claude/library/w-theme.md
-    sha256: 8129831ee50d35c6ee17608fa1962b5437bb115341ed2b6eb846f04fb2963587
+    sha256: 846128d6fe4b73cfc9b4e833d75e0390f2023e89d1a2e07a8e9b6dae05e28e08
   - path: .claude/library/w-wallpaper.md
     sha256: 7cdb354e1eb86ed817b8bb5356db0a35b05a7fa05020e2c126217c83b65b7b68
 ---

@@ -11,7 +11,7 @@ description: >-
   that is not lit.
 sources:
   - path: .claude/library/w-power.md
-    sha256: 038c7df8ac878dabf993b1798fd6251f9d490658ffcae039a3644d61c9571c4a
+    sha256: d56c98271d2ab9abb9ea80de17e27be551895dce7c52ab76df830482b004f797
   - path: .claude/library/w-kbdlight.md
     sha256: c119c45ae51cfa7e33b66c1754a362ddd33d7c2851b7bae80654f877bbabb068
   - path: .claude/library/quickshell-powermenu.md
@@ -19,7 +19,7 @@ sources:
   - path: .claude/library/quickshell-bar.md
     sha256: 535ef9874fedc06b73a9f2224283306e498bbdcde4d892a292f5b7b4c9263e6c
   - path: .claude/library/package-hyprlock.md
-    sha256: 2e16c523a5698d0b8e2aa87ddfdb93ca87fb357d884ee48cbecbb427c0a2c9f7
+    sha256: 263500b4423d4929bac38e2068e28bc32b9a3e5dd42600d0798973dfbb9acdb8
 tools:
   - w_power_status
   - w_power_profile

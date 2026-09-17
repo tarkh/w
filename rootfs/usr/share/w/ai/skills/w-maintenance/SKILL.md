@@ -14,7 +14,7 @@ sources:
   - path: .claude/library/w-reset.md
     sha256: e882e72c78a9be4989c82dd53e44de66080282ed44a0f24c86d122990d6827e1
   - path: .claude/library/update-system.md
-    sha256: c5e94bc4938b9ec6e8e741434003313f62704028df5e3b1aa369252851556503
+    sha256: f4a0a896503399e742c093a17f45c27b8b6b46975602fff27ecf1335ed2e628e
   - path: .claude/library/w-rollback.md
     sha256: 9c9d1deab14153a4d60dab390f7ef42c86dba88bb59cf5ada4d7e8a213b715a5
 tools:

@@ -162,8 +162,8 @@ mod_gpu() {
   fi
 
   if [[ "$has_amd" == "1" ]]; then
-    info "AMD GPU detected — installing vulkan-radeon + VA-API/VDPAU..."
-    w_pac -S --needed --noconfirm vulkan-radeon libva-mesa-driver mesa-vdpau
+    info "AMD GPU detected — installing vulkan-radeon + AMDGPU TOP"
+    w_pac -S --needed --noconfirm vulkan-radeon libva-mesa-driver amdgpu_top
   fi
 
   if [[ "$has_nvidia" == "1" ]]; then

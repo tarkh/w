@@ -26,7 +26,7 @@
 # exist in EVERY theme.
 
 # Component prefixes that mark a Tier 3 token (after the leading W_).
-_THEME_TIER3_PREFIXES='TERM|HYPR|GRUB|PLYMOUTH|LOCK|QS|QT|GTK|ICON|SHELL|YAZI|DIR_HUE'
+_THEME_TIER3_PREFIXES='TERM|HYPR|GRUB|PLYMOUTH|LOCK|QS|QT|GTK|ICON|SHELL|YAZI|DIR_HUE|RGB'
 # Tokens whose value is deliberately not a colour.
 _THEME_META_TOKENS='W_APPEARANCE|W_QT_STYLE|W_ICON_THEME|W_ICON_FOLDER'
 

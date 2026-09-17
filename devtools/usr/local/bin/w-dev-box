@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+# w-dev-box — W Linux DEV-ONLY container front-end (the development machine)
+#
+# The heavy half of developing W — the reference check run, the ISO build, the
+# end-to-end install — needs root, loop devices, archiso and QEMU. None of that
+# belongs on a working machine, and ci/iso-build-container.sh + ci/e2e-container.sh
+# already keep it off one: they put an Arch userland around the work and throw it
+# away afterwards. This is the same two commands with one thing added, and it is
+# the thing that decides whether they get used at all.
+#
+# ── Why this exists on top of ci/ ────────────────────────────────────────────
+# Both CI wrappers start from a bare `archlinux:latest` and, every single run,
+# re-sync the databases, run a full -Su and install ~17 packages. For the nightly
+# canary that is not overhead, it is the ENTIRE POINT: the run is supposed to fail
+# the morning upstream Arch breaks W, and a cached image would hide exactly that.
+# For "prove the tree is green before I commit" it is minutes of network per
+# invocation, and a check that costs minutes is a check that gets skipped.
+#
+# So: the same list (ci/check-packages.txt, one file, two readers), baked once into
+# a local image. `check` then costs a container start. The freshness that the cache
+# trades away is bought back explicitly with --refresh, and the canary — which is
+# where freshness actually matters — never touches this file.
+#
+#   w-dev-box check [args…]     scripts/check.sh --online --strict in the image
+#   w-dev-box shell             an interactive shell in it, repo at /w
+#   w-dev-box iso [args…]       ci/iso-build-container.sh (uncached, on purpose)
+#   w-dev-box e2e [args…]       ci/e2e-container.sh (uncached, on purpose)
+#   w-dev-box build|--refresh   (re)build the cached image
+#   w-dev-box status            image age and what is on the host
+#
+# `iso` and `e2e` deliberately delegate to the CI wrappers as they are, rather than
+# reusing the cached image. Both need a privileged, rootful container and their own
+# package sets, and both are rare and slow enough that a cold start is noise — but
+# more importantly, the ISO that ships must be built by the same path CI builds it
+# by. A local fast path for that is a difference nobody would remember creating.
+#
+# DEV-ONLY: lives in the devtools/ overlay and ships to no real system.
+# Deliberately carries no `Info:` line (the w-info catalog lists W's tools; this is
+# not one of them). See pack-w-dev.md and dev-workflow.md.
+
+set -euo pipefail
+
+RED='\033[1;31m'; GREEN='\033[1;32m'; YELLOW='\033[1;33m'; MAGENTA='\033[1;35m'; NC='\033[0m'
+info() { echo -e "${MAGENTA}==>${NC} $*"; }
+die()  { echo -e "${RED}ERROR:${NC} $*" >&2; exit 2; }
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+[[ -f "$REPO/scripts/check.sh" ]] || die "not a W checkout: $REPO"
+
+IMAGE="${W_DEV_BOX_IMAGE:-w-dev-box:latest}"
+BASE="${W_CI_IMAGE:-archlinux:latest}"
+ENGINE="${W_CI_ENGINE:-}"
+if [[ -z "$ENGINE" ]]; then
+  for e in podman docker; do command -v "$e" &>/dev/null && { ENGINE="$e"; break; } done
+fi
+[[ -n "$ENGINE" ]] || die "neither podman nor docker found (set W_CI_ENGINE)"
+
+# Rootful, for the same reason ci/iso-build-container.sh is: a rootless container
+# maps the caller to container root through a user namespace, and files written
+# into the bind-mounted repo come back owned by a shifted uid. check.sh only reads,
+# but it reads through git, which refuses a tree whose owner it does not recognise.
+SUDO=()
+[[ $EUID -eq 0 ]] || SUDO=(sudo)
+engine() { "${SUDO[@]}" "$ENGINE" "$@"; }
+
+image_exists() { engine image exists "$IMAGE" 2>/dev/null || engine image inspect "$IMAGE" &>/dev/null; }
+
+build_image() {
+  info "engine: $ENGINE · base: $BASE · image: $IMAGE"
+  info "Baking ci/check-packages.txt into a local image (once)..."
+  # Built from a heredoc rather than a tracked Containerfile: there is nothing in
+  # it that is not derived from ci/check-packages.txt, and a second file would be a
+  # second place to forget. `pacman -Fy` is part of the image because the `paths`
+  # suite's collision probe reads the files database — the same step w-dev's
+  # setup.sh performs on the host, for the same reason.
+  engine build -t "$IMAGE" -f - "$REPO" <<EOF
+FROM $BASE
+RUN pacman-key --init && \\
+    pacman -Sy --noconfirm --needed archlinux-keyring && \\
+    pacman-key --populate && \\
+    pacman -Su --noconfirm
+COPY ci/check-packages.txt /tmp/check-packages.txt
+RUN pacman -S --noconfirm --needed \$(sed -e 's/#.*//' -e 's/[[:space:]]//g' /tmp/check-packages.txt | grep -v '^\$') && \\
+    pacman -Fy && \\
+    pacman -Scc --noconfirm
+RUN git config --global --add safe.directory /w
+COPY ci/dev-box-entrypoint.sh /usr/local/bin/w-box-entry
+RUN chmod 0755 /usr/local/bin/w-box-entry
+WORKDIR /w
+EOF
+  info "Image ready. Refresh it with: w-dev-box --refresh"
+}
+
+need_image() { image_exists || build_image; }
+
+# The cache's one real hazard, learned the hard way twice. ci/check-packages.txt
+# gained `diffutils` and the image built before that kept reporting — on a
+# different package set than the file describes; then the entrypoint learned to
+# drop privileges, and an image without it would have kept running the suites as
+# root. A stale image does not fail honestly, it answers a question nobody asked,
+# so this refuses rather than warns.
+#
+# Both of the image's inputs are checked. Listing them by name rather than
+# hashing the build context is deliberate: the context is the whole repository,
+# so any edit would invalidate the cache and the refusal would become noise
+# nobody reads.
+IMAGE_INPUTS=(ci/check-packages.txt ci/dev-box-entrypoint.sh)
+
+assert_image_fresh() {
+  local built built_epoch f mtime
+  built="$(engine image inspect "$IMAGE" --format '{{.Created}}' 2>/dev/null)" || return 0
+  built_epoch="$(date -d "$built" +%s 2>/dev/null)" || return 0
+  for f in "${IMAGE_INPUTS[@]}"; do
+    mtime="$(stat -c %Y "$REPO/$f" 2>/dev/null)" || continue
+    if (( mtime > built_epoch )); then
+      echo -e "${RED}ERROR:${NC} $f changed after this image was built." >&2
+      echo "  The image would report on something other than what the repository now says," >&2
+      echo "  which is how a missing tool or a wrong privilege level turns into a verdict" >&2
+      echo "  that looks like the canary's and is not." >&2
+      echo "    w-dev-box --refresh" >&2
+      exit 2
+    fi
+  done
+}
+
+# The checks run UNPRIVILEGED, and that is not a precaution — it is a fact the
+# suites assert. wconf.bats' "a non-root caller may not act for someone else" is
+# the only test in its neighbourhood that deliberately does NOT set the W_EUID=0
+# seam: it reads the real euid of the process and expects to be refused. Run the
+# suite as root and it fails, because root genuinely may act for someone else.
+# ci/iso-build-entrypoint.sh has always known this (`runuser -u builder`); the
+# first cached run here did not, and that is exactly the "difference nobody would
+# remember creating" this file warns about for iso/e2e.
+#
+# The uid comes from the OWNER OF THE CHECKOUT rather than from `id -u`, because
+# by the time this runs the caller may be root already (run0, sudo, CI) and their
+# own uid says nothing. The checkout's owner is the person whose files these are,
+# which is also what makes git stop complaining about a tree it does not
+# recognise. A checkout owned by root falls back to a plain unprivileged account:
+# what matters to the suites is "not root", not which uid.
+run_in_image() {
+  local uid gid
+  uid="$(stat -c %u "$REPO")"; gid="$(stat -c %g "$REPO")"
+  if [[ "$uid" == 0 ]]; then uid=1000; gid=1000; fi
+  # -t only with a real terminal: under run0/CI stdout is a pipe, and podman then
+  # warns "The input device is not a TTY" on every single run — a line that looks
+  # like a problem, is not, and trains you to skim this tool's output.
+  local tty=()
+  [[ -t 1 ]] && tty=(-t)
+  engine run --rm -i "${tty[@]}" -v "$REPO:/w" -w /w \
+    -e "W_BOX_UID=$uid" -e "W_BOX_GID=$gid" \
+    "$IMAGE" bash /usr/local/bin/w-box-entry "$@"
+}
+
+cmd="${1:-check}"; [[ $# -gt 0 ]] && shift || true
+case "$cmd" in
+  build|--refresh|refresh)
+    image_exists && engine rmi -f "$IMAGE" >/dev/null 2>&1 || true
+    build_image ;;
+
+  check)
+    need_image
+    assert_image_fresh
+    # --online --strict is the reference verdict, the same one ci/ produces: strict
+    # turns "this tool is absent" into a failure, so the image cannot silently
+    # shrink underneath the run. Extra args are appended, so a single suite is
+    # `w-dev-box check --qml`.
+    info "scripts/check.sh --online --strict $*"
+    run_in_image bash scripts/check.sh --online --strict "$@" ;;
+
+  shell)
+    need_image
+    assert_image_fresh
+    run_in_image bash ;;
+
+  iso)   info "delegating to ci/iso-build-container.sh (uncached — same path CI builds by)"
+         exec bash "$REPO/ci/iso-build-container.sh" "$@" ;;
+  e2e)   info "delegating to ci/e2e-container.sh (uncached — same path CI tests by)"
+         exec bash "$REPO/ci/e2e-container.sh" "$@" ;;
+
+  status)
+    info "engine: $ENGINE · image: $IMAGE"
+    if image_exists; then
+      engine image inspect "$IMAGE" --format '  built: {{.Created}}' 2>/dev/null \
+        || echo "  built: (unknown)"
+      if ( assert_image_fresh ) 2>/dev/null; then
+        echo "  inputs: in sync with the image (${IMAGE_INPUTS[*]})"
+      else
+        echo -e "  ${YELLOW}inputs: newer than the image — run w-dev-box --refresh${NC}"
+      fi
+      echo "  A cached image ages. Rebuild before trusting it about upstream Arch:"
+      echo "    w-dev-box --refresh"
+    else
+      echo -e "  ${YELLOW}not built${NC} — the first check will build it (w-dev-box build)"
+    fi
+    echo
+    echo "  On the host, for the fast loop (bundle w-dev):"
+    for t in shellcheck ruff bats gh; do
+      if command -v "$t" &>/dev/null; then
+        echo -e "    ${GREEN}ok${NC}   $t"
+      else
+        echo -e "    ${YELLOW}--${NC}   $t  (sudo w-pack install w-dev)"
+      fi
+    done
+    [[ -e /dev/kvm ]] && echo -e "    ${GREEN}ok${NC}   /dev/kvm (e2e can run here)" \
+                      || echo -e "    ${YELLOW}--${NC}   /dev/kvm — e2e would fall back to emulation" ;;
+
+  -h|--help|help) sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command: $cmd (check|shell|iso|e2e|build|--refresh|status|help)" ;;
+esac

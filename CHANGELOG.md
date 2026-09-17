@@ -8,6 +8,65 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.16.0
+
+- **Lock screen reworked (hyprlock + hypridle).** Two defects, both present in
+  every release so far:
+  - the blurred workspace was replaced by a flat colour — at random on a manual
+    lock, almost always on wake from suspend. The cause is a race in hyprlock
+    0.9.6 that W's `immediate_render = true` opened; it is now off, so the
+    screenshot is captured before the session is locked (about 30 ms later, not
+    noticeable). When a fallback colour is ever needed it is the theme's surface
+    tint, not pure black.
+  - the machine could **suspend unlocked**: hypridle released its sleep inhibitor
+    before hyprlock had a frame. `inhibit_sleep = 3` is now pinned, and the lock
+    command switches the display on first, so a blanked screen still yields a
+    valid screenshot.
+  The background is also darker and blurrier (three blur passes, brightness
+  0.65) so the clock and the password field read cleanly over bright windows.
+
+  `hypridle.conf` and the lock colour file are rendered by W and arrive with
+  `w-sync`. **`hyprlock.conf` is yours** and an update never overwrites it, so
+  after the update run, as your user:
+
+  ```
+  w-reset hyprlock
+  ```
+
+  It backs up your current `~/.config/hypr/hyprlock.conf` first. If you have
+  customised that file and want to keep it, make the two changes by hand
+  instead: in `general` set `immediate_render = false`; in `background` set
+  `color = $w_lock_bg_fallback`, `blur_passes = 3`, `brightness = 0.65`,
+  `contrast = 0.85`, `vibrancy = 0.2`, `noise = 0.015`. Takes effect at the
+  next lock.
+- **RGB lighting follows the theme.** Keyboards, mice, mainboards and other
+  OpenRGB-supported devices are recoloured on every theme switch and login,
+  using three pigments calibrated for LEDs rather than for a screen. Hub →
+  Appearance → Settings gains an **RGB** on/off toggle and a saturation row
+  (soft / medium / crisp); the same from the terminal: `w-appearance rgb on|off`,
+  `w-appearance rgb-level soft|medium|crisp`. On by default at *medium*; set
+  `rgb off` to leave your devices alone. The update installs `openrgb` and
+  `i2c-tools`; verify detection with `openrgb --list-devices`.
+- **New pack: `virt`.** Desktop virtualization — libvirt + QEMU/KVM, virt-manager
+  for full control and GNOME Boxes for one-click VMs. Install with
+  `w-pack install virt`; it defines the default network and storage pool, so
+  `virt-install` and virt-manager work on first launch.
+- **OpenCode is a W AI host.** `w-ai host install opencode`, then pick it in
+  Hub → AI or run `w-ai --host opencode`. It gets W's tools, approvals and
+  identity like Claude Code and Codex; besides its own Zen subscription it
+  accepts any models.dev provider (`opencode auth login -p <provider>`).
+- **AMD GPUs: the GPU step no longer fails.** It asked pacman for `mesa-vdpau`,
+  which Arch no longer ships, so the transaction — and with it a fresh install
+  on AMD hardware — stopped there. Removed; `amdgpu_top` (a GPU monitor) is
+  installed instead.
+- `usbutils` (`lsusb`) is now part of the base system.
+- `w-style status` labels ANSI slot 5 "ansi magenta" instead of "accent
+  (magenta)" — the accent is the `primary` row above it.
+- For people building W itself: `w-pack list --all` shows maintainer-only
+  bundles (new `w-dev`); `scripts/apply.sh` refuses to reconfigure bare metal
+  from an unmanaged checkout unless `W_APPLY_ON_HOST=1`; `W_SUDO=run0` lets
+  `build-iso.sh` elevate through polkit instead of a sudo password.
+
 ## v0.15.0
 
 - **New pack: `graphics`.** GIMP 3.2, Inkscape 1.4, Krita 6, and G'MIC filters,

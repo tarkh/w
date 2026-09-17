@@ -481,6 +481,13 @@ def build_pigments(
     vivid_c = max(0.120, min(0.260, src_chroma * 0.95))
     wheel_c = max(0.050, min(0.150, accent_c * 0.90))
     danger_scale = min(1.0, max(0.55, src_chroma / 0.20))
+    # RGB (soft/medium/crisp): chroma requests for the hardware-lighting pigments
+    # below. Floors are deliberately high — an LED has no legibility floor to
+    # respect (unlike ACCENT/VIVID above), so "soft" still needs to read as a
+    # colour rather than a pastel wash. `crisp` asks for far more chroma than
+    # sRGB has at any lightness — oklch_to_hex clamps it to the gamut edge, i.e.
+    # the single most saturated colour that hue can produce.
+    rgb_c = (max(0.090, min(0.160, src_chroma * 0.75)), max(0.160, min(0.230, src_chroma * 1.20)), 0.500)
     if mono:
         # A black-and-white wallpaper gets a black-and-white interface: forcing a
         # tint on it would be inventing a colour the picture does not have. What
@@ -488,6 +495,7 @@ def build_pigments(
         # axis has to alarm, and the ANSI wheel has to keep red/green/blue apart
         # for tool output. Legibility comes from the lightness ramp either way.
         accent_c, vivid_c = 0.012, 0.030
+        rgb_c = (0.025, 0.060, 0.100)
 
     # CANVAS is the end of the ramp — the root background behind everything. It
     # is the one "absolute" that has to flip with the appearance, whereas BLACK
@@ -546,6 +554,23 @@ def build_pigments(
     # Magenta is the theme's own hue — the brand tie the `w` theme makes by hand.
     pig["HUE_MAGENTA"] = oklch_to_hex(t["hue_l"]["normal"], max(wheel_c, vivid_c * 0.6), hue)
     pig["HUE_MAGENTA_BRIGHT"] = oklch_to_hex(t["hue_l"]["bright"], max(wheel_c, vivid_c * 0.6), hue)
+
+    # RGB lighting (Hub -> Appearance -> Settings -> RGB level): a THIRD
+    # calibration, deliberately separate from ACCENT/VIVID above. Those two are
+    # tuned for a screen — legible as a fill or ink against a surface, and their
+    # lightness rides the appearance's dark/light targets. An RGB device has
+    # neither a surface to sit on nor a light/dark mode: it just needs to look
+    # like the theme's colour, as vividly as the hue can go. So all three ignore
+    # `t` (appearance/contrast) entirely and sit at one fixed lightness that reads
+    # as a strong colour across the hue wheel — a dark theme and its light twin
+    # (same wallpaper, same hue) light the keyboard identically. 0.62 sits near
+    # where sRGB's gamut peaks for most hues (higher lightness narrows the gamut
+    # and caps how saturated ANY chroma request can land, which is what made an
+    # earlier 0.70 read as washed out on `soft` even at its chroma ceiling).
+    led_l = 0.62
+    pig["RGB_SOFT"] = oklch_to_hex(led_l, rgb_c[0], hue)
+    pig["RGB_MEDIUM"] = oklch_to_hex(led_l, rgb_c[1], hue)
+    pig["RGB_CRISP"] = oklch_to_hex(led_l, rgb_c[2], hue)
 
     # Foregrounds that sit ON a chromatic fill cannot be a fixed pigment: a pale
     # yellow accent needs dark text, a deep indigo one needs light text, and the

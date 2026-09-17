@@ -7,7 +7,7 @@ description: >-
   already-installed bundle is covered by that bundle's own skill (skills/<bundle>).
 sources:
   - path: .claude/library/packs.md
-    sha256: 2ac246a6c2d1d8ee77fc3381df5f509b65c06f6dc5db4dec6ce5d3c6c11ca459
+    sha256: bc58d60b33e9ce6e86d39a36bf4d86bf65e835289c2e618d7e59085481c50772
 tools:
   - w_pack_list
   - w_pack_status
@@ -60,6 +60,27 @@ w-pack unsetup <bundle>      # undo only MY account's layer (no sudo)
   this skill, the Hub) it is a normal bundle. Used for bundles that only make sense
   from an already-running system (e.g. `ai-extra`, an advanced local-AI stack) —
   never suggest installing one of these during the OS install flow itself.
+
+## Bundles that no catalogue lists
+
+A bundle can also declare `AUDIENCE="maintainer"` in its `meta.conf`. That is a
+different statement from `INSTALLER=off`: it says the bundle is **not product
+software at all** — it equips a machine to develop W itself. Such a bundle is
+absent from *every* catalogue: the installer checklist, the Hub, and the list
+`w_pack_list` returns to you.
+
+Two consequences that matter when you answer a user:
+
+- **`w-pack list` is not the whole tree.** `w-pack list --all` is. If a user asks
+  about a bundle by a name you cannot find, that is the first thing to check —
+  do not tell them the bundle does not exist.
+- **It reappears once installed.** The hiding stops at installation, deliberately:
+  a catalogue may decline to *offer* something, but a machine must always be able
+  to say what is *on* it. So anything `w-pack list` does show is genuinely there.
+
+Do not suggest installing a maintainer bundle to someone who is using W. It is
+build and release tooling for the distribution, useful only to someone working on
+W itself, and it is hidden precisely so it is not offered.
 
 ## Removing a bundle
 

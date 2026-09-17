@@ -65,6 +65,49 @@ unset _f _mod_files
 [[ $EUID -eq 0 ]] || die "Must be run as root."
 [[ -d "$SRC" ]]   || die "Project source not found: $SRC"
 
+# ── Host guard ────────────────────────────────────────────────────────────────
+# This script rewrites a live system as root, and its header says where it expects
+# to be doing that: inside the installed VM. Since W is developed ON W, that
+# assumption stopped being self-enforcing — the same command typed one terminal
+# over reconfigures the workstation instead of the guest, and the modules that hurt
+# most (--limine, --grub, --plymouth) are exactly the ones whose damage only shows
+# at the next boot.
+#
+# The guard is on WHERE THE TREE IS, not on what hardware this is, because that is
+# the distinction that actually matters. Two locations are legitimate and are never
+# questioned:
+#   /mnt/w-src      the development VM's virtiofs share (the whole point of the VM)
+#   /var/lib/w/src  the delivery checkout — what w-sync pulls, what w-firstboot and
+#                   the Hub's actuation run. This is the road a user's machine
+#                   takes, and a real machine taking it is the design, not a slip.
+# Anything else means a working tree is being applied straight onto whatever this
+# is. In a VM that is ordinary development, so a guest waves it through; on bare
+# metal it is a deliberate act and has to be spelled as one.
+#
+# Deliberately not a prompt: this runs unattended (firstboot, w-sync, e2e) and a
+# question nobody is there to answer is worse than either answer.
+if [[ -z "${W_APPLY_ON_HOST:-}" ]] \
+   && [[ "$SRC" != "/mnt/w-src" && "$SRC" != "/var/lib/w/src" ]] \
+   && ! systemd-detect-virt --vm --quiet; then
+  die "refusing to apply a working tree to this machine.
+
+  Source:  $SRC
+  This is bare metal and not a managed checkout (/var/lib/w/src), so this would
+  reconfigure THIS system from an unreleased tree.
+
+  The reviewed road is to push and let the machine pull it:
+      git push origin main && sudo w-sync update
+
+  To do it anyway — worth it for hardware you cannot reach from a VM — take a
+  root snapshot first, because apply alone leaves nothing to go back to
+  (w-sync pre-snapshots @home only; root snapshots come from snap-pac, which
+  fires on pacman transactions, so a config-only module makes none):
+      sudo snapper -c root create --description 'pre-apply $*'
+      sudo W_APPLY_ON_HOST=1 bash $0 $*
+
+  Boot-path modules (--limine, --grub, --plymouth) are VM-first, always."
+fi
+
 # ── Snapper ───────────────────────────────────────────────────────────────────
 # `snapper create-config` always carves its .snapshots as a btrfs SUBVOLUME. W does
 # not use it: the snapshots live in the top-level @snapshots/@home_snapshots, which

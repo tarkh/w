@@ -376,6 +376,34 @@
     "en": "Animations",
     "ru": "Анимации"
   },
+  "appear.rgb": {
+    "en": "RGB lighting",
+    "ru": "RGB-подсветка"
+  },
+  "appear.rgb.yes": {
+    "en": "Yes",
+    "ru": "Да"
+  },
+  "appear.rgb.no": {
+    "en": "No",
+    "ru": "Нет"
+  },
+  "appear.rgb.level": {
+    "en": "RGB saturation",
+    "ru": "Насыщенность RGB"
+  },
+  "appear.rgb.soft": {
+    "en": "Soft",
+    "ru": "Мягкий"
+  },
+  "appear.rgb.medium": {
+    "en": "Medium",
+    "ru": "Средний"
+  },
+  "appear.rgb.crisp": {
+    "en": "Crisp",
+    "ru": "Резкий"
+  },
   "appear.section.system": {
     "en": "System themes",
     "ru": "Системные темы"

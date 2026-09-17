@@ -64,6 +64,7 @@ render_user() {
 \$w_lock_text = $(hypr_rgba "$W_LOCK_TEXT")
 \$w_lock_text_dim = $(hypr_rgba "$W_LOCK_TEXT_DIM")
 \$w_lock_bg = $(hypr_rgba "$W_LOCK_BG")
+\$w_lock_bg_fallback = $(hypr_rgba "$W_SURFACE_VARIANT")
 \$w_lock_font_family = $W_FONT_UI
 \$w_lock_rounding = $(scl "$W_GEO_RADIUS")
 

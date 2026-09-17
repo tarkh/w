@@ -1,0 +1,43 @@
+# virt bundle — packages (official `extra` repo, no AUR).
+# One per line; '#' comments and blank lines ignored. Installed by w-pack via yay
+# (repo + AUR in one pass) as the build user; pacman fallback if yay is absent.
+#
+# The list is the user's desktop VM stack — libvirt, the desktop QEMU meta, two
+# GUIs, and the one dependency libvirt leaves optional. It is deliberately NOT
+# the dev-VM list: swtpm and the explicit virtio-display / firmware modules are
+# the `w-dev` bundle's to add on top (DEPS="virt"), because a desktop user and
+# the machine developing W have different needs (decision 2026-09-16). qemu-desktop
+# pulls edk2-ovmf + virtiofsd + the virtio-display modules transitively anyway;
+# not listing them here is the point — they are not what this product promises.
+
+# ── Manager: libvirt (API, daemons, polkit, sysusers) ────────────────────────
+# The management layer. Ships 50-libvirt.rules (group `libvirt` → passwordless
+# org.libvirt.unix.manage), socket-activated libvirtd.service/.socket, and the
+# default NAT network (qemu/networks/default.xml). Does NOT hard-depend on QEMU
+# or dnsmasq — both are optdeps, listed below.
+libvirt
+
+# ── Hypervisor: QEMU/KVM desktop meta ────────────────────────────────────────
+# The desktop QEMU meta: pulls qemu-base → qemu-system-x86 (the KVM emulator) +
+# qemu-img, virtiofsd, edk2-ovmf (UEFI firmware), and the virtio-display backends
+# (virtio-vga/gpu, GL variants, SPICE). This is what virt-manager and Boxes drive.
+# qemu-base alone is the headless minimum; qemu-desktop is the product choice.
+qemu-desktop
+
+# ── Power-user GUI ───────────────────────────────────────────────────────────
+# virt-manager (GTK3): the full VM management UI — create/edit VMs, consoles,
+# networks, pools, snapshots. Pulls virt-install, libvirt-glib, spice-gtk.
+virt-manager
+
+# ── Express VM creation ──────────────────────────────────────────────────────
+# GNOME Boxes (GTK3): one-click VM creation from ISO/express-install, simpler
+# than virt-manager. Pulls qemu-desktop, libvirt-glib. Group `gnome-extra` but a
+# perfectly ordinary extra package — no group install needed.
+gnome-boxes
+
+# ── Default network DNS/DHCP ─────────────────────────────────────────────────
+# dnsmasq is an OPTIONAL dependency of libvirt, but the default NAT network
+# (virbr0) needs it for guest DHCP+DNS. Without it the network fails to start
+# and VMs get no address. Bridge-scoped (binds to 192.168.122.1, not :53) → no
+# conflict with systemd-resolved's stub on 127.0.0.53 (pack-virt.md).
+dnsmasq

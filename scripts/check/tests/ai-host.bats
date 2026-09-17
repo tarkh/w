@@ -40,10 +40,11 @@ setup() {
 
 # ── The contract loads at all ────────────────────────────────────────────────
 @test "host_field: reads every shipped host's manifest" {
-  [[ "$(host_field goose BIN)"   == goose  ]]
-  [[ "$(host_field local BIN)"   == goose  ]]
-  [[ "$(host_field claude BIN)"  == claude ]]
-  [[ "$(host_field codex BIN)"   == codex  ]]
+  [[ "$(host_field goose BIN)"    == goose    ]]
+  [[ "$(host_field local BIN)"    == goose    ]]
+  [[ "$(host_field claude BIN)"   == claude   ]]
+  [[ "$(host_field codex BIN)"    == codex    ]]
+  [[ "$(host_field opencode BIN)" == opencode ]]
 }
 
 @test "host_field: a missing host yields empty, not an error" {
@@ -58,16 +59,18 @@ setup() {
 }
 
 @test "host manifests: only goose-backed hosts require a MODEL" {
-  [[ "$(host_field goose  NEEDS_MODEL)" == yes ]]
-  [[ "$(host_field local  NEEDS_MODEL)" == yes ]]
-  [[ "$(host_field claude NEEDS_MODEL)" == no  ]]
-  [[ "$(host_field codex  NEEDS_MODEL)" == no  ]]
+  [[ "$(host_field goose    NEEDS_MODEL)" == yes ]]
+  [[ "$(host_field local    NEEDS_MODEL)" == yes ]]
+  [[ "$(host_field claude   NEEDS_MODEL)" == no  ]]
+  [[ "$(host_field codex    NEEDS_MODEL)" == no  ]]
+  [[ "$(host_field opencode NEEDS_MODEL)" == no  ]]
 }
 
 @test "host manifests: recipes stay a goose capability" {
-  [[ "$(host_field goose  CAPABILITIES)" == *recipes* ]]
-  [[ "$(host_field local  CAPABILITIES)" == *recipes* ]]
-  [[ "$(host_field claude CAPABILITIES)" != *recipes* ]]
+  [[ "$(host_field goose    CAPABILITIES)" == *recipes* ]]
+  [[ "$(host_field local    CAPABILITIES)" == *recipes* ]]
+  [[ "$(host_field claude   CAPABILITIES)" != *recipes* ]]
+  [[ "$(host_field opencode CAPABILITIES)" != *recipes* ]]
 }
 
 # ── effective_provider: closed AUTH_MODES lists ──────────────────────────────
@@ -94,6 +97,19 @@ setup() {
 @test "effective_provider: codex defaults to its own subscription, honours openai" {
   [[ "$(effective_provider codex '')"       == subscription ]]
   [[ "$(effective_provider codex openai)"   == openai ]]
+}
+
+# OpenCode is the one host with BOTH an open AUTH_MODES (goose-like — any
+# models.dev provider) and a native login (claude/codex-like — its own Zen
+# subscription). Unlike claude/codex, there is no closed-list fallback: a
+# provider W's own catalog has never heard of (mistral, groq, …) passes
+# through unchanged instead of collapsing to "subscription" — the user is
+# expected to have set it up directly in OpenCode itself (see host.conf).
+@test "effective_provider: opencode (open list) passes any provider through, including its own subscription" {
+  [[ "$(effective_provider opencode subscription)" == subscription ]]
+  [[ "$(effective_provider opencode anthropic)"     == anthropic    ]]
+  [[ "$(effective_provider opencode mistral)"       == mistral      ]]
+  [[ -z "$(effective_provider opencode '')" ]]
 }
 
 # A profile copied from a goose one carries PROVIDER=openrouter. Falling back to
@@ -264,6 +280,13 @@ _model_for_launch() {   # mirrors the guard in launch_host's claude branch
   grep -qx 'MODEL=' "$f"
 }
 
+@test "profiles/opencode.conf: subscription host, no model pinned" {
+  local f="$REPO/rootfs/usr/share/w/ai/profiles/opencode.conf"
+  grep -qx 'HOST=opencode' "$f"
+  grep -qx 'PROVIDER=subscription' "$f"
+  grep -qx 'MODEL=' "$f"
+}
+
 # ── The Claude Code preset the launcher passes as flags ──────────────────────
 @test "claude preset: the plugin's skills resolve to W's shipped skills" {
   local link="$REPO/rootfs/usr/share/w/ai/hosts/claude/plugin/skills"
@@ -305,6 +328,39 @@ assert d['name'] == 'w', d
 @test "codex preset: the manual config.toml preset is gone — flags replaced it" {
   [ ! -e "$REPO/rootfs/usr/share/w/ai/hosts/codex/config.toml" ]
   [ -f "$REPO/rootfs/usr/share/w/ai/hosts/codex/README.md" ]
+}
+
+# ── The OpenCode preset the launcher passes as flags ─────────────────────────
+# OpenCode takes no config file for one run either, but unlike Codex it has a
+# real env-var config layer (OPENCODE_CONFIG_CONTENT): one inline-JSON blob
+# covers actions (mcp), approval (permission.mcp) and identity (instructions,
+# a PATH — OpenCode reads AGENTS.md itself, so this only adds to that, never
+# replaces it) instead of three separate `-c key=value` flags.
+@test "opencode preset: installed by the vendor's own installer, per user" {
+  [[ "$(host_field opencode INSTALL_CMD)" == *opencode.ai/install* ]]
+  [[ "$(host_field opencode INSTALL_SCOPE)" == user ]]
+  [[ "$(host_field opencode AUTH_NATIVE)" == subscription ]]
+}
+
+@test "opencode_config_content: registers w-mcp, allows it, and points at AGENTS.md" {
+  opencode_config_content | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+assert d['mcp']['w-mcp'] == {'type': 'local', 'command': ['w-mcp'], 'enabled': True}, d
+assert d['permission']['mcp']['w-mcp_*'] == 'allow', d
+assert d['instructions'] == ['$SYS_ROOT/AGENTS.md'], d
+"
+}
+
+@test "opencode_config_content: an active mcp.d drop-in gets its own entry and allow-wildcard" {
+  _mcp_fixture
+  opencode_config_content | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+assert d['mcp']['present'] == {'type': 'local', 'command': ['true', '--stdio', '-v'], 'enabled': True}, d
+assert d['permission']['mcp']['present_*'] == 'allow', d
+assert 'absent' not in d['mcp'], d
+"
 }
 
 @test "toml_string: AGENTS.md survives a TOML round trip byte for byte" {

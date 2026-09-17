@@ -1,0 +1,14 @@
+# virt bundle — config ownership (deploy.sh SDK + w-reset).
+# TSV: <path>\t<class>. Absolute path → config/root<path> (always managed);
+# home-relative → config/skel/<path>. class: user = seed-if-absent, managed =
+# overwrite (W owns it). A trailing '/' marks a directory tree.
+#
+# One managed system file: the session env drop-in. No home-relative seeds — the
+# per-user layer is group membership (setup-user.sh), not a config file, so
+# there is nothing for a second account to seed. No wstyle/ axis: virt-manager
+# and Boxes are plain GTK3 apps that follow w-gtk through the existing axes
+# (pack-virt.md).
+
+# Session env: default virsh/virt-manager URI → the system daemon (qemu:///system),
+# not the per-user session. Sourced by env-hyprland at graphical-session-pre.
+/etc/w/env.d/virt.sh	managed

@@ -4,7 +4,7 @@ Info: Запуск и настройка AI-ассистента W — хост�
 
 Запуск (по умолчанию, если команды нет):
   w-ai                  Запустить ассистента с настроенным хостом
-  w-ai --host <имя>     Заменить хост на этот запуск (goose|local|claude|codex)
+  w-ai --host <имя>     Заменить хост на запуск (goose|local|claude|codex|opencode)
 
 Команды:
   ask <текст…>          Начать сессию с заданным вопросом и остаться в
@@ -17,7 +17,7 @@ Info: Запуск и настройка AI-ассистента W — хост�
                         «Спросить W» в Quickshell перед открытием.
   status                Хост/провайдер/модель, наличие ключа, самопроверка w-mcp
   config                Править персональное переопределение (~/.config/w/ai.conf)
-  host list [--porcelain]   Список хостов (goose|local|claude|codex) и их состояние
+  host list [--porcelain]   Хосты (goose|local|claude|codex|opencode) и их состояние
   host status [<н>]     Показать контракт одного хоста (hosts/<н>/host.conf)
   host install <н>      Установить CLI хоста родным установщиком вендора
   host login [<н>]      Войти в хост со своей авторизацией (Claude Code, Codex)

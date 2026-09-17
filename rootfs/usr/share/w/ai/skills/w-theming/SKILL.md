@@ -4,19 +4,20 @@ description: >-
   How theming works on W Linux: the theme model (one source of truth), switching
   themes with w-theme (per-user vs system scope, seamless crossfade), re-rendering
   individual axes with w-style, resolution-aware wallpapers with w-wallpaper, and
-  per-user overrides (bar position, blur, animations) with w-appearance that beat
-  the active theme without editing it. Load this for anything about colors,
-  dark/light, fonts, geometry, effects, wallpapers, adding/switching themes, or
-  turning off blur/animations/moving the bar for just one user.
+  per-user overrides (bar position, blur, animations, RGB backlight + saturation)
+  with w-appearance that beat the active theme without editing it. Load this for
+  anything about colors, dark/light, fonts, geometry, effects, wallpapers,
+  adding/switching themes, or turning off blur/animations/moving the bar / recoloring
+  RGB devices for just one user.
 sources:
   - path: .claude/library/w-theme.md
-    sha256: 8129831ee50d35c6ee17608fa1962b5437bb115341ed2b6eb846f04fb2963587
+    sha256: 846128d6fe4b73cfc9b4e833d75e0390f2023e89d1a2e07a8e9b6dae05e28e08
   - path: .claude/library/w-style.md
-    sha256: 7350147300f509e5f4d1f89b8ee03506f48061a96b72011dc63135275ef2717d
+    sha256: e64419af33ab98c8afb42dbacf9e0a0bcb324f3f70a439fae33328ec4392fba5
   - path: .claude/library/w-wallpaper.md
     sha256: 7cdb354e1eb86ed817b8bb5356db0a35b05a7fa05020e2c126217c83b65b7b68
   - path: .claude/library/w-appearance.md
-    sha256: ed3e2ae1e0ad035ec8100dc379d0fae7fe99a0a4751cb29060f856d77fa3a62c
+    sha256: 635f4abe38c80529de495e85ff44b201642ab2e6d42b61ddfcb09010afbe5dab
 tools:
   - w_theme_status
   - w_theme_set
@@ -78,7 +79,9 @@ pigments and the **only** place a hex literal may appear; semantic roles (`W_SUR
 reference the roles. Pigment names denote a role, not a hue, and stay correct in a light
 theme: `SURFACE_0…3` is the background ramp (0 = canvas, 3 = most raised), `ACCENT` /
 `VIVID` the two accents (each ±`_CONTAINER`/`_SOFT`/`_INK`), `TEXT_*` the foreground
-tones, `DANGER_*` the critical axis, `HUE_*` the ANSI wheel. To reskin a theme
+tones, `DANGER_*` the critical axis, `HUE_*` the ANSI wheel, `RGB_*` (`SOFT`/
+`MEDIUM`/`CRISP`) a physical-LED calibration separate from the screen accents.
+To reskin a theme
 wholesale, edit tier 1 and re-render; to fix one detail, edit its role or component
 token.
 
@@ -207,15 +210,26 @@ verbatim, colour included.
 
 ## `w-appearance` — per-user overrides that beat the theme
 
-Three small overrides that win over the active theme for the logged-in user only,
-without editing the theme itself — no root, no GUI equivalent needed beyond W Hub →
+Small overrides that win over the active theme for the logged-in user only, without
+editing the theme itself — no root, no GUI equivalent needed beyond W Hub →
 Appearance → Settings tab:
 
 - `w-appearance bar-position <theme|top|bottom>` — pin the bar's edge, or hand it back
   to the theme's `geometry.conf`.
 - `w-appearance blur <theme|off>` — force Hyprland blur off.
 - `w-appearance motion <theme|off>` — force Hyprland animations off (global toggle).
-- `w-appearance status [--porcelain]` — show the three overrides.
+- `w-appearance rgb <on|off>` — recolor all RGB devices via the OpenRGB axis
+  (600-rgb) on every login/theme render. `off` leaves devices untouched (last
+  color stays — it is "don't recolor", not "lights out"); `on` = default;
+  `unset` in wconf = follow the theme.
+- `w-appearance rgb-level <soft|medium|crisp>` — which of the theme's three
+  dedicated RGB pigments (`W_RGB_SOFT`/`_MEDIUM`/`_CRISP`, `medium` = default)
+  colors the hardware. These are **not** `W_PRIMARY`/the screen accent: they are
+  calibrated separately for a light-emitting device (fixed lightness, no
+  dark/light split, `crisp` deliberately over-requests chroma so it lands on
+  the most saturated colour that hue can produce). Independent of `rgb` on/off.
+- `w-appearance status [--porcelain]` — show the overrides (porcelain also
+  reports the three RGB pigments' hex).
 
 The GUI for `bar-position` lives in Hub → Appearance → **Bar** (not the Settings tab),
 together with the bar's per-monitor composition — which is a different axis and a

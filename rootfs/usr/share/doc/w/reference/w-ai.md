@@ -16,7 +16,7 @@ Info: Launch and manage the W AI assistant — hosts, keys, memory, ask.
 
 Launch (default when no command):
   w-ai                  Start the assistant with the configured host
-  w-ai --host <name>    Override host for this run (goose|local|claude|codex)
+  w-ai --host <name>    Override host for this run (goose|local|claude|codex|opencode)
 
 Commands:
   ask <text…>           Start a session seeded with a question, then stay
@@ -29,7 +29,7 @@ Commands:
                         point before it opens.
   status                Show host/provider/model, key presence, w-mcp self-test
   config                Edit the per-user override (~/.config/w/ai.conf)
-  host list [--porcelain]   List hosts (goose|local|claude|codex) and their state
+  host list [--porcelain]   List hosts (goose|local|claude|codex|opencode) and state
   host status [<n>]     Show one host's contract (hosts/<n>/host.conf)
   host install <n>      Install a host's CLI with the vendor's own installer
   host login [<n>]      Sign in to a host that owns its auth (Claude Code, Codex)

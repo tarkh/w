@@ -5,7 +5,7 @@ order: 10
 summary: What a pack is, the bundles W offers, installing one for the machine and setting it up for your account, and how to undo it.
 sources:
   - path: .claude/library/packs.md
-    sha256: 2ac246a6c2d1d8ee77fc3381df5f509b65c06f6dc5db4dec6ce5d3c6c11ca459
+    sha256: bc58d60b33e9ce6e86d39a36bf4d86bf65e835289c2e618d7e59085481c50772
 ---
 
 W installs in two layers. The **base** is everything a working desktop needs and
@@ -48,6 +48,12 @@ it into the desktop — so a pack arrives configured, not merely downloaded.
   export vector documents through an Inkscape server, and run edits inside a
   running GIMP and look at the result — with whatever model your profile uses,
   local or cloud. Generative painting in Krita is planned for a companion pack.
+- **virt** — desktop virtualization: libvirt and QEMU/KVM underneath, with
+  virt-manager for full control and GNOME Boxes for creating a VM in one click
+  from an ISO. A default network is ready to go the moment the pack is set up,
+  and your account gets passwordless access to it — no extra steps before your
+  first VM. A hardware TPM for guests that need one (Windows 11, an encrypted
+  disk) is not included; add it yourself if you need it.
 - **ai-extra** — the advanced stack for [the AI assistant](ai.md#advanced): local
   models, semantic memory, better web search.
 

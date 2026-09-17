@@ -79,6 +79,23 @@ chk_manifests() {
       rc=1
     fi
 
+    # AUDIENCE=maintainer and INSTALLER=on are a contradiction, and a silent one:
+    # the installer filters maintainer bundles out on its own, so the `on` would
+    # never be read and the meta.conf would keep claiming an offer nobody makes.
+    # A bundle that is not product software is not an install-time choice either.
+    local b_aud b_inst
+    b_aud="$(set +u; source "$bdir/meta.conf" 2>/dev/null; printf '%s' "${AUDIENCE:-user}")"
+    b_inst="$(set +u; source "$bdir/meta.conf" 2>/dev/null; printf '%s' "${INSTALLER:-on}")"
+    case "$b_aud" in
+      user|maintainer) ;;
+      *) echo "  packs/$bname/meta.conf: AUDIENCE='$b_aud' (expected user|maintainer)"; rc=1 ;;
+    esac
+    if [[ "$b_aud" == maintainer && "$b_inst" != off ]]; then
+      echo "  packs/$bname/meta.conf: AUDIENCE=maintainer needs INSTALLER=off"
+      echo "    (no catalogue offers a maintainer bundle — the TUI would ignore the 'on')"
+      rc=1
+    fi
+
     # A setup half with no teardown half is the asymmetry packs.md phase 7 closed:
     # `setup.sh` is imperative, so nothing in the tree records that it enabled a
     # service or installed a package outside pkgs.txt (ai-extra's GPU-matched

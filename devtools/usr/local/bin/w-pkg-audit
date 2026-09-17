@@ -1,0 +1,263 @@
+#!/usr/bin/env bash
+# w-pkg-audit — W Linux DEV-ONLY package drift audit (the development machine)
+#
+# Answers one question: what is installed on this machine that the W repository
+# does not declare? It exists because W is now developed on W, and the failure it
+# guards against is entirely human — a linter here, a library there, each one
+# installed mid-task to unblock something and then never thought about again. Six
+# months later nothing on the machine says why any of it is there, and the box
+# that was meant to be a reference W install has quietly become a workstation
+# nobody can reproduce.
+#
+# ── What counts as "declared" ────────────────────────────────────────────────
+# W names packages in two different shapes, and an audit that reads only the first
+# is worse than none: on the machine it was written for it reported 36 rows, of
+# which 30 were W's own doing. Both shapes are read.
+#
+#   1. LISTS — packages/{base,pacman,aur}.txt, archiso/profile/packages.x86_64,
+#      scripts/packs/*/pkgs.txt. One name per line, '#' comments, inline trailing
+#      comments after the name.
+#   2. CODE — `w_pac -S …` in scripts/install/modules/*.sh and `pacman -S …` /
+#      `yay -S …` in a bundle's setup scripts. Modules install by name in shell
+#      (greetd, firewalld, the GPU stack, sudo-rs…), and those names are every bit
+#      as much a declaration as a line in a text file. Continuation lines are
+#      followed; flags, redirections and shell operators are dropped.
+#   3. PREBUILD_AUR_PKGS in scripts/build-iso.sh — the AUR packages compiled into
+#      the ISO's local repo (yay itself, the Limine hooks). A bash array, not a
+#      list file, and the only place those three names appear.
+#
+# Whatever is left is then checked against each candidate's `Provides`/`Replaces`
+# before being reported, because upstream renames are otherwise indistinguishable
+# from drift: W asks for libappindicator-gtk3, Arch merged it into libappindicator,
+# pacman resolves it silently and the audit would blame the machine for it.
+#
+# A name built at runtime (`w_pac -S "$pkg"`) cannot be read out of the source at
+# all — the GPU driver family, ai-extra's CPU/ROCm/CUDA Ollama build, a LibreOffice
+# langpack chosen by locale. Those are listed in RUNTIME_CHOSEN below, by name and
+# with the reason, because an audit that cannot explain its own exceptions is just
+# a list of things to ignore.
+#
+# Compared against `pacman -Qqe` — EXPLICITLY installed packages only. Dependencies
+# are out of scope on purpose: they are not decisions, they are consequences, and
+# they would bury the handful of rows that are actually someone's choice.
+#
+# A non-empty result is not a verdict. It is a list of decisions that were never
+# written down, and each row wants one of three answers: declare it (add it to a
+# pkgs.txt — that is what the pack layer is for), remove it, or say out loud why
+# it is a local exception.
+#
+# DEV-ONLY: lives in the devtools/ overlay and ships to no real system — a user's
+# machine has no repository to audit against. Deliberately carries no `Info:` line
+# (the w-info catalog lists W's tools; this is not one of them).
+#
+# Usage: w-pkg-audit [--porcelain] [--verbose] [--repo <path>]
+
+set -euo pipefail
+
+RED='\033[1;31m'; GREEN='\033[1;32m'; YELLOW='\033[1;33m'; MAGENTA='\033[1;35m'; NC='\033[0m'
+info() { echo -e "${MAGENTA}==>${NC} $*"; }
+die()  { echo -e "${RED}ERROR:${NC} $*" >&2; exit 2; }
+
+PORCELAIN=0
+VERBOSE=0
+REPO=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --porcelain) PORCELAIN=1; shift ;;
+    --verbose)   VERBOSE=1;   shift ;;
+    --repo) REPO="${2:-}"; [[ -n "$REPO" ]] || die "--repo needs a path"; shift 2 ;;
+    -h|--help) sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) die "unknown argument: $1 (use --porcelain, --verbose, --repo <path>, --help)" ;;
+  esac
+done
+
+# Default to the checkout this script lives in — devtools/usr/local/bin/<me>.
+[[ -n "$REPO" ]] || REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+[[ -f "$REPO/packages/base.txt" ]] || die "not a W checkout: $REPO"
+command -v pacman >/dev/null || die "pacman not found — this audit only means anything on Arch/W"
+
+TMP_EXPLICIT="$(mktemp)"; TMP_BASEGRP="$(mktemp)"
+trap 'rm -f "$TMP_EXPLICIT" "$TMP_BASEGRP"' EXIT
+pacman -Qqe > "$TMP_EXPLICIT"
+pacman -Qqg base > "$TMP_BASEGRP" 2>/dev/null || : > "$TMP_BASEGRP"
+
+RESULT="$(python3 - "$REPO" "$TMP_EXPLICIT" "$TMP_BASEGRP" <<'PY'
+import glob, os, re, sys
+
+repo, explicit_file, basegrp_file = sys.argv[1], sys.argv[2], sys.argv[3]
+
+# Names W builds at runtime and therefore cannot spell in its own source. Each one
+# is an exception with a reason, not an entry on a mute ignore-list.
+RUNTIME_CHOSEN = {
+    "nvidia-open-dkms": "mod_gpu: NVIDIA family, picked from the detected card",
+    "nvidia-dkms": "mod_gpu: NVIDIA family, picked from the detected card",
+    "nvidia-utils": "mod_gpu: NVIDIA userspace, follows the driver choice",
+    "libva-nvidia-driver": "mod_gpu: NVIDIA VA-API, follows the driver choice",
+    "ollama": "ai-extra setup.sh: CPU build, chosen by detected accelerator",
+    "ollama-rocm": "ai-extra setup.sh: ROCm build, chosen by detected accelerator",
+    "ollama-cuda": "ai-extra setup.sh: CUDA build, chosen by detected accelerator",
+}
+# Locale-driven families: w-langpack picks the package from the system locale, so
+# the exact name exists only at runtime (hunspell-en_us here, hunspell-pt_br there).
+RUNTIME_PATTERNS = [
+    (re.compile(r"^hunspell-"), "w-langpack: spellcheck dictionary for the system locale"),
+    (re.compile(r"^man-pages-"), "w-langpack: translated man pages for the system locale"),
+    (re.compile(r"^firefox-i18n-"), "w-langpack: Firefox langpack for the system locale"),
+    (re.compile(r"^libreoffice-fresh-[a-z]"), "office setup.sh: LibreOffice langpack for the locale"),
+]
+# Arch's own base group and the kernels: pacstrap marks them explicit itself, and
+# base.txt has no business restating a group it always installs.
+KERNELS = {"linux", "linux-zen", "linux-lts", "linux-firmware",
+           "linux-headers", "linux-zen-headers", "linux-lts-headers"}
+
+def read_lines(path):
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        return fh.read().splitlines()
+
+# ── Shape 1: the package lists ───────────────────────────────────────────────
+list_files = [f"{repo}/packages/base.txt",
+              f"{repo}/packages/pacman.txt",
+              f"{repo}/packages/aur.txt",
+              f"{repo}/archiso/profile/packages.x86_64"]
+list_files += sorted(glob.glob(f"{repo}/scripts/packs/*/pkgs.txt"))
+
+from_lists = {}
+for f in list_files:
+    if not os.path.isfile(f):
+        continue
+    for line in read_lines(f):
+        line = line.split("#", 1)[0].strip()
+        if line:
+            from_lists.setdefault(line.split()[0], os.path.relpath(f, repo))
+
+# ── Shape 2: package names spelled in shell ──────────────────────────────────
+# `w_pac -S …`, `pacman -S …`, `yay -S …`, following backslash continuations.
+# Anything that is not a bare package name is dropped: flags, $variables, quoted
+# strings, redirections, `||`/`&&` tails and inline comments.
+INSTALL_RE = re.compile(r"\b(?:w_pac|pacman|yay)\s+-S\b")
+TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
+
+code_files = sorted(glob.glob(f"{repo}/scripts/install/modules/*.sh"))
+code_files += sorted(glob.glob(f"{repo}/scripts/packs/*/setup*.sh"))
+
+from_code = {}
+for f in code_files:
+    if not os.path.isfile(f):
+        continue
+    lines = read_lines(f)
+    i = 0
+    while i < len(lines):
+        if not INSTALL_RE.search(lines[i]):
+            i += 1
+            continue
+        chunk = lines[i]
+        while chunk.rstrip().endswith("\\") and i + 1 < len(lines):
+            i += 1
+            chunk = chunk.rstrip()[:-1] + " " + lines[i]
+        chunk = chunk.split("#", 1)[0]
+        chunk = INSTALL_RE.split(chunk, maxsplit=1)[-1]
+        # Stop at the first shell operator — what follows is error handling.
+        chunk = re.split(r"\|\||&&|\||;|>|2>", chunk)[0]
+        for tok in chunk.split():
+            if tok.startswith("-") or "$" in tok or not TOKEN_RE.match(tok):
+                continue
+            from_code.setdefault(tok, os.path.relpath(f, repo))
+        i += 1
+
+# ── Shape 3: build-iso.sh's prebuilt AUR array ───────────────────────────────
+iso_sh = f"{repo}/scripts/build-iso.sh"
+if os.path.isfile(iso_sh):
+    m = re.search(r"^PREBUILD_AUR_PKGS=\(([^)]*)\)", "\n".join(read_lines(iso_sh)), re.M)
+    if m:
+        for tok in m.group(1).split():
+            if TOKEN_RE.match(tok):
+                from_code.setdefault(tok, "scripts/build-iso.sh")
+
+declared = dict(from_lists)
+for k, v in from_code.items():
+    declared.setdefault(k, v)
+
+explicit = [p for p in read_lines(explicit_file) if p.strip()]
+base_group = {p.strip() for p in read_lines(basegrp_file) if p.strip()}
+
+def runtime_reason(name):
+    if name in RUNTIME_CHOSEN:
+        return RUNTIME_CHOSEN[name]
+    for rx, why in RUNTIME_PATTERNS:
+        if rx.match(name):
+            return why
+    return None
+
+candidates = [p for p in sorted(set(explicit))
+              if p not in declared
+              and p not in base_group
+              and p not in KERNELS
+              and runtime_reason(p) is None]
+
+# An upstream rename reads as drift unless the candidate's own Provides/Replaces
+# are consulted. Only the residue is queried, so this stays a handful of calls.
+renamed = {}
+if candidates:
+    import subprocess
+    out = subprocess.run(["pacman", "-Qi", *candidates],
+                         capture_output=True, text=True).stdout
+    cur = None
+    for line in out.splitlines():
+        if line.startswith("Name "):
+            cur = line.split(": ", 1)[1].strip()
+        elif cur and (line.startswith("Provides ") or line.startswith("Replaces ")):
+            for alt in line.split(": ", 1)[1].split():
+                alt = alt.split("=")[0]
+                if alt in declared:
+                    renamed[cur] = (alt, declared[alt])
+
+extra = [p for p in candidates if p not in renamed]
+
+print("COUNTS\t%d\t%d\t%d\t%d" % (len(from_lists), len(from_code), len(explicit), len(extra)))
+for p in extra:
+    print("EXTRA\t%s" % p)
+for p, (alt, where) in sorted(renamed.items()):
+    print("RENAMED\t%s\t%s\t%s" % (p, alt, where))
+for p in sorted(set(explicit)):
+    why = runtime_reason(p)
+    if why:
+        print("RUNTIME\t%s\t%s" % (p, why))
+PY
+)"
+
+mapfile -t EXTRA < <(printf '%s\n' "$RESULT" | awk -F'\t' '$1=="EXTRA"{print $2}')
+
+if [[ $PORCELAIN -eq 1 ]]; then
+  printf '%s\n' "${EXTRA[@]:-}" | grep -v '^$' || true
+  exit 0
+fi
+
+read -r _ N_LISTS N_CODE N_EXPLICIT _ < <(printf '%s\n' "$RESULT" | awk -F'\t' '$1=="COUNTS"')
+info "declared: $N_LISTS in lists + $N_CODE in module/bundle code · explicitly installed here: $N_EXPLICIT"
+
+if [[ $VERBOSE -eq 1 ]]; then
+  printf '%s\n' "$RESULT" | awk -F'\t' '$1=="RUNTIME"{printf "  exempt  %-24s %s\n", $2, $3}'
+fi
+# Renames are printed always, not only under --verbose: a declaration that survives
+# purely because pacman honours a Replaces is a stale declaration, and the next
+# rename may not be so forgiving.
+printf '%s\n' "$RESULT" | awk -F'\t' \
+  '$1=="RENAMED"{printf "  \033[1;33mstale\033[0m   %-24s declared as %s (%s) — upstream renamed it\n", $2, $3, $4}'
+
+if [[ ${#EXTRA[@]} -eq 0 ]]; then
+  echo -e "${GREEN} ok${NC} nothing installed here that the repository does not declare"
+  exit 0
+fi
+
+echo -e "${YELLOW}drift${NC} ${#EXTRA[@]} package(s) installed here but declared nowhere:"
+echo
+for p in "${EXTRA[@]}"; do
+  printf '  %-28s %s\n' "$p" \
+    "$(pacman -Qi "$p" 2>/dev/null | awk -F': ' '/^Install Date/{print $2; exit}')"
+done
+echo
+echo "  Each row is a decision nobody wrote down. Three honest endings:"
+echo "    declare  — add it to a pkgs.txt (packages/*.txt, scripts/packs/<b>/pkgs.txt)"
+echo "    remove   — sudo pacman -Rns <name>"
+echo "    explain  — if it is genuinely local, say so where the next person will look"
+exit 1

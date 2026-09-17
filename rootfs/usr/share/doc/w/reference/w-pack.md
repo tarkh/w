@@ -38,6 +38,8 @@ Options:
                        user, or SUDO_USER / the primary uid-1000 user)
   --porcelain          Machine-readable `list`, one bundle per line:
                        <name> TAB <machine:yes|no> TAB <user:yes|no|n/a> TAB <desc>
+  --all                With `list`: also show bundles the catalogue does not
+                       offer (AUDIENCE=maintainer — tooling for developing W)
   --packages           With `remove`: also uninstall the bundle's packages, minus
                        any another installed bundle still lists. Without it the
                        exact `pacman -Rns` line is only printed
@@ -47,6 +49,11 @@ Notes:
   unsetup do not — they write only your own home.
   Bundles are self-contained under $PACKS_DIR; machine state is recorded in
   $STATE, your own layer in ~/$USER_STATE_REL.
+  A bundle may declare AUDIENCE=maintainer: it is not a product but the tooling
+  for developing W itself, so no catalogue offers it — the installer checklist,
+  the Hub and the AI tools never name it, and `w-pack list --all` or an install
+  by name are the only ways to it. Once installed it is listed like any other:
+  a machine must always be able to say what is on it.
   A bundle someone else installed is NOT set up for you automatically — that
   would spend your disk and network on a choice you never made. `w-pack list`
   says so plainly, and `w-pack setup <bundle>` is the one command that fixes it.
@@ -69,6 +76,7 @@ Exit codes:
 
 Examples:
   w-pack list
+  w-pack list --all                  # including bundles not offered in catalogues
   sudo w-pack install containers
   w-pack setup ai-extra              # catch my own account up, no sudo
   sudo w-pack refresh

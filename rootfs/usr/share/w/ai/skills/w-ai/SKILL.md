@@ -9,7 +9,7 @@ description: >-
   configure yourself" requests.
 sources:
   - path: .claude/library/w-ai.md
-    sha256: 16ea299f6ccf9f714bce95837cab935afc592a87ebe99781d4343ddc9c6d5b4c
+    sha256: cfbe9cf9552a3f8cddf70d08e326af624ff88f132659e583fb399680344160c5
 ---
 
 # W AI (configuring the assistant)
@@ -29,10 +29,10 @@ a fleet machine, by `/etc/w/policy.d/ai.conf` — a site policy that pins a key 
 
 | Field | Values | Meaning |
 |---|---|---|
-| `HOST` | `goose` (default) \| `local` \| `claude` \| `codex` | which runtime launches. `local` is goose forced onto Ollama. `claude` is Claude Code, `codex` is the Codex CLI — both optional, installed on demand. |
-| `PROVIDER` | `openrouter` \| `anthropic` \| `openai` \| `google` \| `ollama` \| `subscription` | for goose: the LLM backend it talks to. For `claude`/`codex` it selects the **auth mode**: `subscription` means the CLI's own login and W passes no key at all; naming the API provider instead (`anthropic` for Claude Code, `openai` for Codex) makes W pass a key from the keyring, which switches the user to pay-per-token API billing. A value that doesn't apply to the host falls back to the host's first accepted one, so a profile copied from a goose one can't leave `claude` looking like it needs an OpenRouter key. |
-| `MODEL` | provider-specific id | e.g. `anthropic/claude-sonnet-5` on OpenRouter, `llama3.1` on Ollama. **Required** for goose/local — W never runs `goose configure`, so an empty value fails at launch regardless of provider (`w-ai ready` catches this first). **Optional** for `claude`/`codex`: those pick a model inside the session, so leave it empty unless the user wants to pin one. |
-| `MODE` | `auto` (default) \| `smart_approve` \| `approve` \| `chat` | how eagerly the host runs tools without asking. This is host-level UX, not the real security boundary — privileged actions always stop at a system password/fingerprint prompt regardless of `MODE`. W's own tools (`w-mcp` and the pack servers) are never held for host confirmation on any host: goose carries a pre-approved `permission.yaml`, codex/claude get server-level allow rules — so switching to a stricter mode prompts for the *host's* tools only. MCP servers the user registered by hand keep the host's normal confirmation flow. |
+| `HOST` | `goose` (default) \| `local` \| `claude` \| `codex` \| `opencode` | which runtime launches. `local` is goose forced onto Ollama. `claude`/`codex`/`opencode` are optional provider CLIs, installed on demand. |
+| `PROVIDER` | `openrouter` \| `anthropic` \| `openai` \| `google` \| `ollama` \| `subscription` \| (opencode only: anything else models.dev lists) | for goose: the LLM backend it talks to. For `claude`/`codex`/`opencode` it selects the **auth mode**: `subscription` means the CLI's own login (OpenCode calls its own subscription "Zen") and W passes no key at all; naming the API provider instead (`anthropic` for Claude Code, `openai` for Codex, any of the five shared ones for OpenCode) makes W pass a key from the keyring, which switches the user to pay-per-token API billing. For claude/codex a value outside the host's short list falls back to its first accepted one, so a profile copied from a goose one can't leave `claude` looking like it needs an OpenRouter key. OpenCode is the exception: it accepts ANY provider it knows about, even ones W has never heard of (mistral, groq, …) — those are entirely the user's own `opencode auth login -p <provider>`, outside W's keyring. |
+| `MODEL` | provider-specific id | e.g. `anthropic/claude-sonnet-5` on OpenRouter, `llama3.1` on Ollama. **Required** for goose/local — W never runs `goose configure`, so an empty value fails at launch regardless of provider (`w-ai ready` catches this first). **Optional** for `claude`/`codex`/`opencode`: those pick a model inside the session, so leave it empty unless the user wants to pin one. |
+| `MODE` | `auto` (default) \| `smart_approve` \| `approve` \| `chat` | how eagerly the host runs tools without asking. This is host-level UX, not the real security boundary — privileged actions always stop at a system password/fingerprint prompt regardless of `MODE`. W's own tools (`w-mcp` and the pack servers) are never held for host confirmation on any host: goose carries a pre-approved `permission.yaml`, codex/claude/opencode get server-level allow rules — so switching to a stricter mode prompts for the *host's* tools only. MCP servers the user registered by hand keep the host's normal confirmation flow. |
 | `OLLAMA_HOST` | host:port | only relevant for `PROVIDER=ollama` / `HOST=local`. |
 | `MCP_PROFILE` | empty (auto) \| `full` \| `minimal` | how much of this assistant's own tool surface is offered — irrelevant to end users, leave empty. |
 
@@ -66,20 +66,24 @@ own updater, so they are installed per-user on request.
   installed), `not-logged-in`, `signed-in`, `installed`; the active one is marked.
   This one command answers "why won't Claude Code start".
 - `w-ai host install <name>` — install that host's CLI with the vendor's own
-  installer (`claude`: Anthropic's, `codex`: OpenAI's — both per-user into
-  `~/.local/bin`, both self-updating; the AUR is deliberately not used).
+  installer (`claude`: Anthropic's, `codex`: OpenAI's, `opencode`: its own —
+  all per-user, all self-updating; the AUR is deliberately not used).
   Idempotent: it does nothing when the binary is already there.
 - `w-ai host login <name>` — run the CLI's own sign-in (`claude auth login`,
-  `codex login`), a browser flow. Needed once per account for a `subscription`
-  profile.
-- Both provider CLIs get W as **launch flags** from `w-ai` — nothing is written
-  into `~/.claude` or `~/.codex`, so a `claude`/`codex` started by hand in some
-  project is the plain tool. Claude Code gets W's skills natively (plugin dir);
-  Codex has no per-launch skill root, so under it W's knowledge arrives the goose
-  way — the skill catalog in `w-mcp`'s session-start instructions, one skill at
-  a time through `w_skill_read` — and its identity as inline developer
-  instructions. Every host sees the same catalog exactly once: natively where the
-  host loads skills itself, in the instructions everywhere else.
+  `codex login`, `opencode auth login` — the last one is an interactive picker
+  covering OpenCode's own Zen subscription and every other provider it knows),
+  a browser flow. Needed once per account for a `subscription` profile.
+- All three provider CLIs get W as **launch flags** from `w-ai` — nothing is
+  written into `~/.claude`, `~/.codex` or `~/.config/opencode`, so a
+  `claude`/`codex`/`opencode` started by hand in some project is the plain tool.
+  Claude Code gets W's skills natively (plugin dir); Codex and OpenCode have no
+  per-launch skill root, so under them W's knowledge arrives the goose way — the
+  skill catalog in `w-mcp`'s session-start instructions, one skill at a time
+  through `w_skill_read` — and identity as inline instructions (OpenCode also
+  reads `AGENTS.md` on its own from the project, so W's system identity is an
+  addition there, not a replacement). Every host sees the same catalog exactly
+  once: natively where the host loads skills itself, in the instructions
+  everywhere else.
 - `w-ai host status <name>` — what that host declares: its binary, which `PROVIDER`
   values it accepts, whether it needs a `MODEL`, what it is good for.
 
@@ -126,8 +130,11 @@ profiles panel directly:
   HOST/PROVIDER/MODE/MCP_PROFILE, text fields for MODEL/OLLAMA_HOST) — changes apply
   as soon as they're picked, no separate save step. The PROVIDER dropdown adapts to
   the chosen HOST: for Claude Code it offers *subscription* and *anthropic*, for
-  Codex *subscription* and *openai*, for the local path only *ollama*, and MODEL
-  is labelled optional where the CLI picks its own.
+  Codex *subscription* and *openai*, for the local path only *ollama*, for OpenCode
+  *subscription* (its Zen) plus every provider W shares across hosts (a provider
+  outside that list is set from a terminal instead — `w-ai profile field opencode
+  PROVIDER <name>` — and configured directly in OpenCode itself), and MODEL is
+  labelled optional where the CLI picks its own.
 - When the chosen host needs attention, a row appears right under HOST: **"not
   installed → Install"** or **"not signed in → Sign in"**, each opening a terminal
   that runs the matching `w-ai host` command. No password prompt — a provider CLI is
@@ -154,8 +161,8 @@ profiles panel directly:
    `MODEL <model>` / `MODE <mode>` for each value the user wants. **`MODEL` is not
    optional** for `goose`/`local` — leaving it empty makes the profile launch-broken
    (`w-ai ready` will refuse it) regardless of provider. Leave it empty for
-   `claude`/`codex`.
-3. For a subscription CLI (`HOST=claude` or `codex` with `PROVIDER=subscription`),
+   `claude`/`codex`/`opencode`.
+3. For a subscription CLI (`HOST=claude`/`codex`/`opencode` with `PROVIDER=subscription`),
    there is no key to set. Run `w-ai host list` and follow the state: `absent` →
    `w-ai host install <host>`, `not-logged-in` → `w-ai host login <host>`. **Do not
    store an API key for a subscriber** — with one present the CLI bills the API
@@ -165,7 +172,10 @@ profiles panel directly:
    is missing, **do not ask the user to paste it into the chat** (it would end up in
    logs/history) — tell them to run `w-ai key set <provider>` themselves (it prompts
    interactively), or point them at Hub → AI (expand the profile → the "API key" row
-   under the provider has a masked field) if they'd rather click through.
+   under the provider has a masked field) if they'd rather click through. Under
+   `opencode`, a provider that isn't one of the five W shares across hosts is not
+   W's to manage at all — send the user to `opencode auth login -p <provider>`
+   instead of `w-ai key set`.
 5. `w-ai profile use <name>` to activate it — or suggest doing it from Hub → AI
    if they're at the machine and prefer the GUI. The active profile decides
    everything: bare `w-ai`, `w-ai ask` and the desktop's Super+W palette all open

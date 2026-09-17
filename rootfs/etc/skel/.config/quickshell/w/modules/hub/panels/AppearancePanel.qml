@@ -92,15 +92,16 @@ Item {
     // button — `focusRegion` names which one currently owns the cursor, `focusIdx`
     // is the position within it ("tab"/"add" only ever use index 0/1). Coverage now
     // includes the Settings tab (AppearanceSettingsSection.qml, a Loader-child):
-    // "settings" is a flat 2-row region (blur/motion), owned here per
-    // quickshell-hub.md's Ф-Keyboard gotcha #8 — the section only reads
-    // `focusedField` back (see the Binding near settingsLoader below) and exposes
-    // activateField(). The Bar tab (BarSection.qml) is the same contract with one
-    // difference: its field list is DYNAMIC (outputs × bar blocks), so the section
-    // computes it and this panel reads it back — the index still lives only here.
+    // "settings" is a flat region (blur/motion/rgb, +rgb-level while RGB is on),
+    // owned here per quickshell-hub.md's Ф-Keyboard gotcha #8 — the section only
+    // reads `focusedField` back (see the Binding near settingsLoader below) and
+    // exposes activateField(). Its field list is DYNAMIC for the same reason the
+    // Bar tab's (BarSection.qml) is: the section computes it (rgb-level only
+    // exists while RGB is on) and this panel reads it back — the index still
+    // lives only here.
     property string focusRegion: "tab"   // "tab" | "system" | "user" | "add" | "bar" | "settings"
     property int focusIdx: 0
-    readonly property var settingsFields: ["blur", "motion"]
+    readonly property var settingsFields: settingsLoader.item ? settingsLoader.item.fields : ["blur", "motion", "rgb"]
     readonly property var barFields: barLoader.item ? barLoader.item.fields : []
 
     // Same true-edge-first reasoning as DisplaysPanel.scrollContentIntoView — the

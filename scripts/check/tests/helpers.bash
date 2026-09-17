@@ -19,3 +19,26 @@ export W_I18N_LIB
 # failing because the machine running it happens to be Russian.
 W_I18N_DIR="$BATS_TEST_DIRNAME/fixtures/absent-i18n"
 export W_I18N_DIR
+
+# A compositor that is installed but not running — which is what "no live session"
+# actually looks like on a machine where W is developed, and what several tests
+# meant all along without saying so. They used to get it for free by NOT putting a
+# `hyprctl` stub on PATH, which reads as "no compositor" only where Hyprland is
+# not installed: CI containers, and a development box that is not itself running
+# W. On this project's own machine /usr/bin/hyprctl is real, answers with real
+# monitors, and four monitor tests plus one bar test failed for the environment's
+# reason rather than the code's.
+#
+# Shadowing with a stub that fails makes the intent explicit and matches both
+# consumers' own definition of liveness: w-monitor's have_hypr() is
+# `command -v hyprctl && hyprctl version`, and w-bar takes an empty
+# `hyprctl monitors all -j` the same way it takes an absent binary. PATH is only
+# prepended to, so jq and the rest of the suite's tools stay reachable — stripping
+# PATH down to nothing would take those with it.
+hyprctl_offline() {
+  mkdir -p "$BATS_TEST_TMPDIR/nobin"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$BATS_TEST_TMPDIR/nobin/hyprctl"
+  chmod 755 "$BATS_TEST_TMPDIR/nobin/hyprctl"
+  PATH="$BATS_TEST_TMPDIR/nobin:$PATH"
+  export PATH
+}

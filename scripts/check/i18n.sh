@@ -76,6 +76,9 @@ chk_i18n() {
     name="$(basename "$(dirname "$meta")")"
     # `INSTALLER=off` bundles never reach the checklist, so they need no entry.
     [[ "$(set +u; source "$meta" 2>/dev/null; printf '%s' "${INSTALLER:-on}")" == off ]] && continue
+    # Neither do maintainer bundles: no catalogue of any kind names them, so a
+    # translated description would be a string with no reader.
+    [[ "$(set +u; source "$meta" 2>/dev/null; printf '%s' "${AUDIENCE:-user}")" == maintainer ]] && continue
     desc="$(set +u; source "$meta" 2>/dev/null; printf '%s' "${DESC:-}")"
     cat_en="$(python3 -c 'import json,sys; d=json.load(open("i18n/installer.json")); print(d.get("p_"+sys.argv[1],{}).get("en",""))' "$name")"
     if [[ -z "$cat_en" ]]; then
