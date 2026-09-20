@@ -8,7 +8,7 @@ description: >-
   servers are used.
 sources:
   - path: .claude/library/w-time.md
-    sha256: 049778103cd3fa4509ba4d5fd11713d6963627af1e56dcf1700c73d1c16125f0
+    sha256: 66c382f247a7d1e30f0d4f1b20aa924451a7444aa8f6e52a2cca664de3c3f1f7
 tools:
   - w_time_status
   - w_timezone_set

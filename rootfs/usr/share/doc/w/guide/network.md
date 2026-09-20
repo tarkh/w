@@ -5,9 +5,9 @@ order: 7
 summary: Connecting to Wi-Fi and ethernet, the machine's name, encrypted DNS, and switching the firewall zone for an untrusted network.
 sources:
   - path: .claude/library/security.md
-    sha256: 00644ba70977365d102fba6b571108558d7d8eec0f1ad422253b12e3e1533ddd
+    sha256: 3ab6ec5bf765fd6759ab071d57d8dbcefada49bd30c7c7546a3e93422f6bb63a
   - path: .claude/library/quickshell-bar.md
-    sha256: 535ef9874fedc06b73a9f2224283306e498bbdcde4d892a292f5b7b4c9263e6c
+    sha256: 76dc9b56a2cdf3a879e737a653ea5bc330722c1eb346e64f917765823a1abf5c
 ---
 
 **Hub → Network** holds the settings you change rarely and want to find without

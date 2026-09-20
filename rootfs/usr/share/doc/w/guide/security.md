@@ -5,7 +5,7 @@ order: 3
 summary: What W enables out of the box — hardening, sudo-rs, firewall, encrypted DNS, keyring, firmware updates, fingerprint and Secure Boot controls.
 sources:
   - path: .claude/library/security.md
-    sha256: 00644ba70977365d102fba6b571108558d7d8eec0f1ad422253b12e3e1533ddd
+    sha256: 3ab6ec5bf765fd6759ab071d57d8dbcefada49bd30c7c7546a3e93422f6bb63a
 ---
 
 W enables a set of protections on every installation and gives you switches
@@ -45,6 +45,14 @@ does not need it.
 If the machine has a fingerprint reader, `w-fingerprint` records your fingers
 and the login screen, the lock screen and privilege prompts will accept them.
 **Hub → Input → Fingerprint** does the same thing graphically.
+
+The same panel decides how the reader behaves under the lock screen. By
+default it stays lit for the whole lock and hyprlock verifies the finger
+itself. Some readers overheat under that and stop answering after a few
+minutes; for them choose **Sensor → On activity** (`w-fingerprint lock-sensor
+mode wake`): the sensor lights up for a short window after locking, waking the
+machine or any activity while locked, then sleeps. The window is adjustable
+(10–300 s); the change applies from the next lock.
 
 ## Secure Boot
 

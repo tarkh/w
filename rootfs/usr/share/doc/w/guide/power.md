@@ -5,9 +5,9 @@ order: 8
 summary: Power profiles, the idle cascade of lock, screen-off and suspend, lid and power-button actions, and the battery charge limit.
 sources:
   - path: .claude/library/w-power.md
-    sha256: d56c98271d2ab9abb9ea80de17e27be551895dce7c52ab76df830482b004f797
+    sha256: 6ebee081798bf911e01e3677de0d6eba65052d329682ae63eb095bd0fdc6b59b
   - path: .claude/library/w-kbdlight.md
-    sha256: c119c45ae51cfa7e33b66c1754a362ddd33d7c2851b7bae80654f877bbabb068
+    sha256: d17c2a2a0ecf20c3a464a254d778e0873def9ebb8833b4362e08eb9869dec506
 ---
 
 **Hub → Power** is one panel over everything that decides how much energy the

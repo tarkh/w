@@ -5,7 +5,7 @@ order: 2
 summary: Short answers to common questions.
 sources:
   - path: .claude/library/w-rollback.md
-    sha256: 9c9d1deab14153a4d60dab390f7ef42c86dba88bb59cf5ada4d7e8a213b715a5
+    sha256: 1099b89dead5e78070ffcd430de9775eb954a46b6bc7575d934966e991e31948
 ---
 
 I keep this curated by re-reviewing it at each W release. Where a question
@@ -85,6 +85,15 @@ Neither. Nothing in W depends on it, and it does nothing until you give it a
 model in **Hub → AI**. That can be a subscription you already have, an API key,
 or a model running locally on your own machine — see
 [the AI guide](guide/ai.md).
+
+**Where did `~/go` go? Why are `~/.cache/uv` and `~/.cache/go` not plain folders?**
+W keeps toolchain caches in XDG places and out of home snapshots. Go's module
+and build caches live in `~/.cache/go`, `GOPATH` is `~/.local/share/go`, and
+`go install` puts binaries in `~/.local/bin` (on PATH). Such cache folders are
+nested btrfs subvolumes, so a rollback of your home never drags gigabytes of
+recoverable downloads along. A `~/go` left from before is stale — delete it if
+you like. The values come from `/etc/profile.d/w-go.sh` and apply at the next
+login; your own shell profile can override them.
 
 **Is AUR safe?**
 It is third-party packaging, reviewed by you at the PKGBUILD prompt the same

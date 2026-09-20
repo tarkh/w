@@ -15,7 +15,27 @@ setup() {
   make_list 'User test has no fingers enrolled for reader.' 1
   make_enroll '' 0
   make_delete 0
+
+  # Layered-config seams (as wconf.bats): the vendor layer is the REAL shipped
+  # file, the user layer a scratch home — which is also where hyprlock-auth.conf
+  # renders, so HOME and WCONF_HOME point at the same place.
+  export W_CONF_LIB="$REPO/rootfs/usr/lib/w/w-conf-lib.sh"
+  export WCONF_ETC="$BATS_TEST_TMPDIR/etc-w"
+  export WCONF_VENDOR_DIR="$BATS_TEST_TMPDIR/defaults"
+  export WCONF_HOME="$BATS_TEST_TMPDIR/home"
+  export HOME="$WCONF_HOME"
+  mkdir -p "$WCONF_ETC" "$WCONF_VENDOR_DIR" "$WCONF_HOME/.config/w"
+  cp "$REPO/rootfs/usr/share/w/defaults/fingerprint".{conf,schema} "$WCONF_VENDOR_DIR/"
+  # w-authd's D-Bus surface and w-power's re-render, both recorded, never run.
+  export W_BUSCTL="$STUBS/busctl"
+  export BUSCTL_LOG="$BATS_TEST_TMPDIR/busctl.log"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "${BUSCTL_LOG:?}"\necho \x27s "state=idle locked=no mode=native attempts=0"\x27\n' > "$W_BUSCTL"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "${BATS_TEST_TMPDIR:?}/w-power.log"\n' > "$STUBS/w-power"
+  chmod +x "$W_BUSCTL" "$STUBS/w-power"
+  PATH="$STUBS:$PATH"
 }
+
+AUTH_CONF="$WCONF_HOME/.config/hypr/hyprlock-auth.conf"
 
 make_list() { # <output> <exit>
   local output="$1" rc="$2"
@@ -241,4 +261,73 @@ EOF
   run "$REPO/$BIN"
   [ "$status" -eq 2 ]
   [[ "$output" == *"Usage: w-fingerprint"* ]]
+}
+
+# ── lock-sensor ─────────────────────────────────────────────────────────────────
+
+@test "lock-sensor: the shipped default is native, and status says so in both voices" {
+  run "$REPO/$BIN" lock-sensor status --porcelain
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'lock.sensor=native\n'* ]]
+  [[ "$output" == *$'lock.window=30\n'* ]]
+  [[ "$output" == *$'lock.locked=no\n'* ]]
+  [[ "$output" == *"lock.live=state=idle"* ]]
+  run "$REPO/$BIN" lock-sensor status
+  [[ "$output" == *"Lock sensor: native (window 30s)"* ]]
+}
+
+@test "lock-sensor mode wake: user layer, hyprlock override, hypridle re-render" {
+  run "$REPO/$BIN" lock-sensor mode wake
+  [ "$status" -eq 0 ]
+  grep -q '^LOCK_SENSOR=wake' "$WCONF_HOME/.config/w/fingerprint.conf"
+  grep -q '^auth:fingerprint:enabled = false$' "$BATS_TEST_TMPDIR/home/.config/hypr/hyprlock-auth.conf"
+  grep -q '^_render-user$' "$BATS_TEST_TMPDIR/w-power.log"
+  [ ! -e "$BUSCTL_LOG" ]                       # nothing to disarm on the way IN
+  run "$REPO/$BIN" status --porcelain
+  [[ "$output" == *$'lock.sensor=wake\n'* ]]
+}
+
+@test "lock-sensor mode native: the override says nothing, and the daemon is disarmed" {
+  "$REPO/$BIN" lock-sensor mode wake >/dev/null
+  run "$REPO/$BIN" lock-sensor mode native
+  [ "$status" -eq 0 ]
+  ! grep -q 'fingerprint:enabled' "$BATS_TEST_TMPDIR/home/.config/hypr/hyprlock-auth.conf"
+  grep -q 'lock-sensor mode: native' "$BATS_TEST_TMPDIR/home/.config/hypr/hyprlock-auth.conf"
+  grep -q 'com.w.authd.LockSensor Disarm' "$BUSCTL_LOG"
+}
+
+@test "lock-sensor mode: anything but native|wake is a usage error that writes nothing" {
+  run "$REPO/$BIN" lock-sensor mode always
+  [ "$status" -eq 2 ]
+  [ ! -e "$WCONF_HOME/.config/w/fingerprint.conf" ]
+}
+
+@test "lock-sensor window: 10..300 lands in the user layer and drives _arm; the rest is refused" {
+  run "$REPO/$BIN" lock-sensor window 120
+  [ "$status" -eq 0 ]
+  grep -q '^LOCK_SENSOR_ARM=120' "$WCONF_HOME/.config/w/fingerprint.conf"
+  run "$REPO/$BIN" lock-sensor _arm
+  grep -q 'com.w.authd.LockSensor Arm u 120' "$BUSCTL_LOG"
+  for bad in 9 301 abc ""; do
+    run "$REPO/$BIN" lock-sensor window "$bad"
+    [ "$status" -eq 2 ]
+  done
+  grep -q '^LOCK_SENSOR_ARM=120' "$WCONF_HOME/.config/w/fingerprint.conf"
+}
+
+@test "lock-sensor: a policy-pinned mode is reported locked and refused" {
+  mkdir -p "$WCONF_ETC/policy.d"
+  printf 'LOCK_SENSOR=native\n' > "$WCONF_ETC/policy.d/fingerprint.conf"
+  run "$REPO/$BIN" status --porcelain
+  [[ "$output" == *$'\nlock.locked=yes'* ]]
+  run "$REPO/$BIN" lock-sensor mode wake
+  [ "$status" -eq 1 ]
+  [ ! -e "$BATS_TEST_TMPDIR/home/.config/hypr/hyprlock-auth.conf" ]
+}
+
+@test "lock-sensor: a missing or unknown subcommand is a usage error" {
+  run "$REPO/$BIN" lock-sensor
+  [ "$status" -eq 2 ]
+  run "$REPO/$BIN" lock-sensor arm
+  [ "$status" -eq 2 ]
 }

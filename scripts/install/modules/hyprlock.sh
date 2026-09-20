@@ -9,6 +9,17 @@
 # w-hotkeys default (hotkeys-catalog.lua); the hypridle autostart is its packaged
 # systemd user unit, global-enabled by mod_power (apply.sh --power).
 
+# hyprlock.conf is user-class (seed-if-absent), so a home seeded before the
+# lock-sensor override existed never gets its trailing `source` line from skel.
+# Append it once; a grep is the whole gate (one added line, no backup needed).
+# It must stay LAST in the file — a later `auth` line would shadow it.
+_ensure_auth_source() { # <home_dir> <user>
+  local conf="$1/.config/hypr/hyprlock.conf"
+  [[ -f "$conf" ]] && ! grep -qF 'hyprlock-auth.conf' "$conf" || return 0
+  printf '\n# W lock-sensor override, rendered by w-fingerprint\nsource = ~/.config/hypr/hyprlock-auth.conf\n' >> "$conf"
+  chown "$2:$2" "$conf"
+}
+
 mod_hyprlock() {
   info "Installing hyprlock + hypridle + fprintd..."
   # hyprlock  — GPU lock screen (screenshot+blur background, themed input)
@@ -48,9 +59,14 @@ mod_hyprlock() {
     # Seed it so a lock works before the first render, then leave it to w-style.
     seed_user_file "$SRC/rootfs/etc/skel/.config/hypr/hyprlock-colors.conf" \
       "$home_dir/.config/hypr/hyprlock-colors.conf" "$wuser" "$home_dir"
+    # hyprlock-auth.conf — the lock-sensor override w-fingerprint renders (native =
+    # comment only). Seeded so the `source` line below never points at nothing.
+    seed_user_file "$SRC/rootfs/etc/skel/.config/hypr/hyprlock-auth.conf" \
+      "$home_dir/.config/hypr/hyprlock-auth.conf" "$wuser" "$home_dir"
     # User-owned hyprlock.conf — seed-if-absent from the module manifest (single
     # source of truth, see lib/deploy.sh) so user edits survive re-apply.
     deploy_user_manifest hyprlock "$wuser"
+    _ensure_auth_source "$home_dir" "$wuser"
   done
 
   info "hyprlock installed. Colors render via --style; idle timers + hypridle autostart via --power."

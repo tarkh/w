@@ -5,7 +5,7 @@ order: 10
 summary: What a pack is, the bundles W offers, installing one for the machine and setting it up for your account, and how to undo it.
 sources:
   - path: .claude/library/packs.md
-    sha256: bc58d60b33e9ce6e86d39a36bf4d86bf65e835289c2e618d7e59085481c50772
+    sha256: e8eb036707ee490118c710f0c8dbb5fff425224454aca9746b6437a43bb51afc
 ---
 
 W installs in two layers. The **base** is everything a working desktop needs and

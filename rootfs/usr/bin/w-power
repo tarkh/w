@@ -71,6 +71,7 @@ HYPRIDLE="${TARGET_HOME:-$HOME}/.config/hypr/hypridle.conf"
 # inherits a POPULATED cache just looks the key up instead of re-parsing every
 # layer (render_hypridle reads a dozen keys per AC/battery flip).
 wconf_load "$SUBSYS"
+wconf_load fingerprint   # render_hypridle reads the lock-sensor mode (same cache, no second pass)
 sys_get() { wconf_get "$SUBSYS" "$1"; }
 # Both writers go through the shared library, exactly like w-dns/w-time/w-logs.
 # It writes atomically, appends when the key is absent (a conf seeded before the
@@ -244,9 +245,17 @@ eff_idle() { # <ac|bat> <lock|display|suspend|kbdlight>
 # process, so WAYLAND_DISPLAY and HYPRLAND_INSTANCE_SIGNATURE are right by
 # construction (a systemd --user service would take the manager's environment
 # instead — correct today, but one uwsm finalize race away from a lock screen
-# that cannot reach the compositor). The bare trailing fallback to plain hyprlock
-# is deliberate: if systemd-run is unavailable for any reason the screen must
-# still lock. Failing to lock is not an acceptable degradation.
+# that cannot reach the compositor). The trailing fallback to plain hyprlock is
+# deliberate: if systemd-run cannot launch the scope for any reason the screen
+# must still lock. Failing to lock is not an acceptable degradation.
+#
+# ⚠️ The fallback is gated on the exit status: `systemd-run --scope` execs the
+# command, so the shell sees hyprlock's OWN status once it has run. A bare
+# `|| hyprlock` re-locked the session right after every unlock whenever hyprlock
+# died on exit (139 = SIGSEGV; hyprlock 0.9.6 crashes at shutdown after fprintd
+# reports verify-disconnected, e.g. libfprint's overheat guard — upstream #1067).
+# Launcher failure is rc=1 → fall back; hyprlock ran and died (rc ≥ 128) → don't.
+# $? is escaped below because the heredoc is unquoted.
 #
 # NB: keep prose OUT of the heredoc below — it is unquoted, so a backtick there
 # becomes command substitution (checks.md, landmines rule 3).
@@ -280,8 +289,10 @@ general {
   # Single hyprlock instance; lock the session on idle and before sleep. The
   # scope keeps it out of hypridle's cgroup so a hypridle restart cannot kill it.
   # DPMS-on before hyprlock ensures a valid screenshot when the display was
-  # already blanked.
-  lock_cmd = hyprctl dispatch 'hl.dsp.dpms({ action = "on" })' && sleep 0.1 && pidof hyprlock || systemd-run --user --scope --quiet --collect hyprlock || hyprlock
+  # already blanked. The plain-hyprlock fallback runs only when the scope
+  # launcher itself failed (rc=1), never when hyprlock ran and died (rc >= 128):
+  # a crash on exit must not re-lock the session the user just unlocked.
+  lock_cmd = hyprctl dispatch 'hl.dsp.dpms({ action = "on" })' && sleep 0.1 && pidof hyprlock || systemd-run --user --scope --unit=w-lock --quiet --collect hyprlock || [ \$? -ge 128 ] || hyprlock
   # Lock before sleep. hypridle itself holds a logind delay inhibitor from
   # startup and, in mode 3, releases it only once the compositor reports the
   # session locked (hyprland-lock-notify) -- and hyprlock takes that lock only
@@ -352,6 +363,26 @@ listener {
   on-resume  = hyprctl dispatch 'hl.dsp.dpms({ action = "on" })'
 }
 EOF
+    # Lock-sensor activity tick (w-fingerprint lock-sensor mode wake): every
+    # "idle >= 5 s, then activity" while locked (re)arms w-authd's verifier for
+    # LOCK_SENSOR_ARM seconds. The window and the lock/sleep transitions are the
+    # daemon's; this listener only says "somebody is here". A 5 s tick is the
+    # finest activity signal ext-idle-notify has (`resumed` follows every timeout).
+    # on-timeout is a no-op but MUST exist: hypridle 0.1.8 skips on-resume for a
+    # rule whose on-timeout "was inhibited", and an empty one counts as that.
+    # Not tied to the idle-lock link — a manual lock ($mod+L) needs the tick too.
+    if [[ "$(wconf_get fingerprint LOCK_SENSOR native)" == wake ]]; then
+      cat <<EOF
+
+# Lock sensor (wake mode): any activity under the lock screen lights the reader
+# for $(wconf_get fingerprint LOCK_SENSOR_ARM 30) s (w-fingerprint lock-sensor window).
+listener {
+  timeout = 5
+  on-timeout = true
+  on-resume = pidof hyprlock >/dev/null && w-fingerprint lock-sensor _arm
+}
+EOF
+    fi
   } > "$HYPRIDLE"
   [[ $EUID -eq 0 && -n "$TARGET_USER" ]] && chown "$TARGET_USER:$TARGET_USER" "$HYPRIDLE"
   return 0
@@ -886,7 +917,7 @@ cmd_render_user() {
 cmd_render_skel() {
   need_root
   export WCONF_HOME=/etc/skel
-  wconf_reload "$SUBSYS"
+  wconf_reload "$SUBSYS"; wconf_reload fingerprint
   TARGET_USER=""
   HYPRIDLE=/etc/skel/.config/hypr/hypridle.conf
   render_hypridle "$(cur_src)"

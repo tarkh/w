@@ -1,0 +1,19 @@
+# W Linux — the standard home folders' login step (w-userdirs sync): create what is
+# missing and, when the system language changed since the last login, rename the
+# default-named folders to their names in the new language. Ordered before
+# xdg-user-dirs.service so a first login on a non-English system adopts folders a
+# program already made under English names instead of planting a second set —
+# the stock unit's run right after is then a no-op. Before the graphical session,
+# because a rename must land before any program has resolved a path. Globally
+# enabled by mod_userdirs. See w-userdirs.md.
+[Unit]
+Description=W standard home folders (follow the language)
+Documentation=man:xdg-user-dirs-update(1)
+Before=xdg-user-dirs.service graphical-session-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/w-userdirs sync
+
+[Install]
+WantedBy=graphical-session-pre.target

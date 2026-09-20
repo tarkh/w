@@ -114,6 +114,15 @@ Item {
     property string fpEnrolling: ""            // non-empty → the enrolment view is up
     property string fpStatusText: ""           // live line under the enrolling finger
     property string fpNotice: ""               // why the last attempt ended badly
+    // Lock-sensor rows (w-fingerprint lock-sensor): who verifies under hyprlock and
+    // for how long; `lockLocked` = fleet policy pins the mode (SelectRow.locked).
+    property string lockMode: "native"
+    property string lockWindow: "30"
+    property bool lockLocked: false
+    readonly property var lockModes: [
+        { id: "native", label: Strings.t("fp.lock.always") },
+        { id: "wake",   label: Strings.t("fp.lock.onActivity") }
+    ]
     function fpEnrolled(finger) { return root.fpState[finger] === "enrolled"; }
 
     // Display order is alphabetical and STABLE across a default change — `codes[0]`
@@ -290,6 +299,8 @@ Item {
             if (root.fpEnrolling !== "") return [{ kind: "fpCancel", key: "fp.cancel" }];
             for (let i = 0; i < root.fingers.length; i++)
                 arr.push({ kind: "finger", key: "fp." + root.fingers[i], idx: i, finger: root.fingers[i] });
+            arr.push({ kind: "select", key: "fp.lock.mode" });
+            if (root.lockMode === "wake") arr.push({ kind: "entry", key: "fp.lock.window" });
             return arr;
         }
         if (root.scope === "keyboard") {
@@ -340,6 +351,8 @@ Item {
         case "kbd.rate":    return rateRow;
         case "kbd.delay":   return delayRow;
         case "kbd.numlock": return numlockRow;
+        case "fp.lock.mode":   return lockModeRow;
+        case "fp.lock.window": return lockWindowRow;
         }
         return settingRepeater.itemAt(d.row);
     }
@@ -621,6 +634,9 @@ Item {
                     const k = line.slice(0, i), v = line.slice(i + 1);
                     if (k === "available") available = (v === "yes");
                     else if (k.startsWith("finger.")) map[k.slice(7)] = v;
+                    else if (k === "lock.sensor") root.lockMode = v;
+                    else if (k === "lock.window") root.lockWindow = v;
+                    else if (k === "lock.locked") root.lockLocked = (v === "yes");
                 }
                 root.fpState = map;
                 root.fpAvailable = available;
@@ -629,6 +645,14 @@ Item {
                 if (!available && root.scope === "fingerprint") root.setScope("mouse");
             }
         }
+    }
+
+    // Both keys are user-scope: the CLI runs directly, no polkit; the re-probe
+    // reconciles the rows with what it stored (a refused write shows the old value).
+    Process { id: lockProc; onExited: root.probeFingerprints() }
+    function setLockSensor(sub, v) {
+        lockProc.command = ["w-fingerprint", "lock-sensor", sub, String(v)];
+        lockProc.running = true;
     }
 
     // Turns the CLI's normalized stream into one live line. A `reason=` always follows
@@ -815,6 +839,7 @@ Item {
         property var input: field.input
 
         function beginEdit() { field.input.forceActiveFocus(); field.input.selectAll(); }
+        function focusEntry() { beginEdit(); }   // roving-nav entry point, same as the pointer delegate
 
         // Grows to fit a wrapped sublabel; 38 is the minimum so a hint-less row
         // still reads at the same scale as the retention row it mirrors.
@@ -1158,6 +1183,39 @@ Item {
                         focused: root.focusRegion === "content" && root.focusKey === "fp." + frow.modelData
                         onActivated: root.fingerAction(frow.modelData)
                     }
+                }
+
+                // ── Lock sensor ───────────────────────────────────────────────────
+                // Under hyprlock: the reader lit for the whole lock (native, hyprlock's
+                // own verifier) or only for a window after lock/wake/activity (w-authd
+                // verifies, `w-fingerprint lock-sensor`). The window row is meaningful
+                // in wake mode only, so it follows the selector's state.
+                HubSection { width: parent.width; text: Strings.t("fp.lock.section") }
+                SelectRow {
+                    id: lockModeRow
+                    width: parent.width
+                    focused: root.focusRegion === "content" && root.focusKey === "fp.lock.mode"
+                    icon: "system-lock-screen"; glyph: String.fromCodePoint(0xf033e)   // nf-md-lock
+                    label: Strings.t("fp.lock.mode")
+                    currentId: root.lockMode
+                    options: root.lockModes
+                    value: root.labelOf(root.lockModes, root.lockMode)
+                    locked: root.lockLocked
+                    lockedHint: Strings.t("hub.lockedByPolicy")
+                    onActivated: menuLayer.openMenu(lockModeRow, root.lockModes, root.lockMode,
+                                                    (id) => root.setLockSensor("mode", id))
+                }
+                EntryRow {
+                    id: lockWindowRow
+                    width: parent.width
+                    visible: root.lockMode === "wake"
+                    focused: root.focusRegion === "content" && root.focusKey === "fp.lock.window"
+                    label: Strings.t("fp.lock.window")
+                    hint: Strings.t("fp.lock.windowHint")
+                    suffix: "s"
+                    value: root.lockWindow
+                    onCommitted: (v) => root.setLockSensor("window", v)
+                    onExitField: root.forceActiveFocus()
                 }
 
                 // Why this list is worth anything: the reader only reaches the password

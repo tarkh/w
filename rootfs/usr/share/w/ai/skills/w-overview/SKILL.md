@@ -7,7 +7,7 @@ description: >-
   before answering questions about how W is organized or which command to use.
 sources:
   - path: .claude/library/essentials.md
-    sha256: 768d56b523b2573efaa55daa4bbf217713d432f8984af9b6b769d0d063430c33
+    sha256: 1cff5249eeb757baed2b1d5cfc1c06c19fc1d91712559d0d560776fbf9b42041
 ---
 
 # W Overview
@@ -105,7 +105,10 @@ commands — they encode W's conventions and keep the system consistent. Most su
   micro, yazi, btop) have no translations upstream at all and stay English. The `w-*`
   commands themselves: **help is translated** (so is `w-info` and the offline command
   reference), **runtime output is not** — an English error under a Russian help is
-  expected, not a half-finished translation. See **w-input**.
+  expected, not a half-finished translation. The standard home folders follow the
+  language too (`w-userdirs`: `~/Pictures` becomes `~/Изображения` at the next
+  login, contents untouched; per-user switch in Hub → System) — resolve them with
+  `xdg-user-dir PICTURES`, never by name. See **w-input**.
 - `w-kernel` — select the active kernel (`linux-zen` default, vanilla `linux`, or
   `linux-lts`) and toggle the sysctl/cmdline hardening profile. Switching never removes
   a kernel, so every installed one stays bootable. See the w-security skill.

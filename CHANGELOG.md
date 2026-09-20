@@ -8,6 +8,58 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.17.0
+
+- **Home folders now follow the system language.** If your interface is in
+  Russian, `~/Downloads` becomes `~/Загрузки`, `~/Pictures` → `~/Изображения`,
+  and so on for all six standard folders — including `~/Screenshots`, which
+  the screenshot tool (Super+Shift+S) now resolves dynamically instead of
+  hardcoding. The rename happens at the next login after the update and is
+  one-time: folders you moved are left alone. To opt out:
+
+  ```
+  w-conf userdirs LOCALIZE=no
+  ```
+
+  If you run a non-Russian locale this changes nothing for you.
+
+- **OpenRGB devices re-colour after suspend.** Keyboards, mice and other
+  OpenRGB-supported lighting used to go back to their hardware default after
+  waking the machine and never caught up until the next theme switch. A new
+  system-sleep hook (`w-rgb`) re-applies the theme's RGB palette on resume.
+
+- **`w-fingerprint` now controls the fingerprint scanner on the lock screen.**
+  Two modes: `native` (the default, unchanged behaviour — fprintd authenticates
+  through PAM) and `wake` (the scanner stays armed during `hyprlock`, so
+  touching it unlocks the screen without reaching the keyboard). Switch with:
+
+  ```
+  w-fingerprint lock-sensor wake
+  ```
+
+- **Toolchain state hygiene: Go builds no longer litter `~/go`.**
+  `GOPATH`, `GOMODCACHE`, `GOCACHE` and `GOBIN` are now routed into
+  `~/.local/` and `~/.cache/` — outside `@home` snapshots — at every login,
+  across TTY, SSH and the graphical session. The subvolume is carved
+  automatically; a pre-existing `~/go` is left untouched (safe to delete by
+  hand). Future tools (cargo, gradle, npm…) will follow the same pattern.
+
+- **`w-pack deploy_managed` now preserves file modes.** A managed file with
+  an executable bit (e.g. the graphics pack's `mcpinkscape` hook) kept it
+  in the bundle tree but arrived on the machine as `0644`. It now keeps the
+  mode the file has in the pack — matching how `apply_rootfs` and the
+  directory branch (`rsync -a`) have always worked.
+
+- **`w-sync` re-applies packs when the pack tooling itself changes.**
+  Previously only changes under `scripts/packs/` triggered `w-pack refresh`;
+  a fix to `w-pack` or its deploy SDK now does too.
+
+- **Hyprlock: fingerprint-aware auth config shipped.** A new
+  `~/.config/hypr/hyprlock-auth.conf` template enables `w-fingerprint
+  lock-sensor wake` to work out of the box on fresh installs. If you use
+  `w-reset hyprlock` (e.g. after the v0.16.0 lock-screen rework), the auth
+  fragment is included automatically.
+
 ## v0.16.1
 
 - **Session restore: tabbed windows and Firefox windows come back correctly.**

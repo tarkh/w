@@ -88,6 +88,10 @@ covers per-directory env vars, so **direnv is not installed and is not needed**.
 | node, go, rust, java, deno, bun, … | **`mise`** (`mise use -g node@lts`, or `mise use node@22` in a project) | nvm, `pacman -S nodejs` for project work |
 | the system itself | **pacman / `w-update`** | `mise` — it manages dev tools, not system packages or libraries |
 
+Go, whichever way it is installed, keeps its caches in `~/.cache/go` and its binaries in
+`~/.local/bin` — there is no `~/go` on W (base policy, `/etc/profile.d/w-go.sh`; the
+`w-software` skill has the details).
+
 The two cooperate rather than collide: `python.uv_venv_auto = "source"` in
 `~/.config/mise/config.toml` makes mise activate the `.venv` that **uv** already
 manages when a `uv.lock` is present. Idiomatic version files are off by default, so

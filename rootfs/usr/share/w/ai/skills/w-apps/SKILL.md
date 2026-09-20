@@ -9,9 +9,9 @@ description: >-
   questions.
 sources:
   - path: .claude/library/package-files.md
-    sha256: 23ec2b3ada32af03a9a370f5709b1392bbc77ec28cc210f28feee54a47c10d21
+    sha256: 4a7d8310cfc989001c09688193b3f82df60a7931965bdc19a7ec69b60ba208da
   - path: .claude/library/package-printing.md
-    sha256: 4984d05810c65c874a3d8fdbd8cf78b50d6e64adf4c314b3d5ad737f5f1827ac
+    sha256: c994a8ed2d35da6357a5251ab80d769c45f3fcd386905b1c2d4fdfe734b1257d
 ---
 
 # W Apps — files, media, editors, printing

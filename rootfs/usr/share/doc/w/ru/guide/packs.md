@@ -5,7 +5,7 @@ order: 10
 summary: Что такое пак, какие наборы предлагает W, установка одного для машины и настройка для вашего аккаунта, и как это отменить.
 sources:
   - path: .claude/library/packs.md
-    sha256: bc58d60b33e9ce6e86d39a36bf4d86bf65e835289c2e618d7e59085481c50772
+    sha256: e8eb036707ee490118c710f0c8dbb5fff425224454aca9746b6437a43bb51afc
 anchors:
   installing-and-setting-up-for-your-account: установка-и-настройка-для-вашего-аккаунта
 ---

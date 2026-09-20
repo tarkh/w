@@ -24,7 +24,17 @@
 
 set -euo pipefail
 
-SCREENSHOT_DIR="${XDG_PICTURES_DIR:-$HOME/Pictures}/Screenshots"
+# The user's PICTURES folder as xdg-user-dirs names it (~/Pictures on an English
+# system, ~/Изображения on a Russian one — and wherever the user moved it), never a
+# literal name. `xdg-user-dir` answers with the home itself when nothing is
+# configured yet (a session that received the subsystem and has not logged in
+# again) or the folder was deleted; a screenshot does not belong loose in the
+# home, so both cases — and a system without the package — fall back to ~/Pictures.
+pictures_dir() {
+  local d; d="$(xdg-user-dir PICTURES 2>/dev/null || true)"
+  if [[ -n "$d" && "$d" != "$HOME" ]]; then echo "$d"; else echo "$HOME/Pictures"; fi
+}
+SCREENSHOT_DIR="$(pictures_dir)/Screenshots"
 FILENAME_FMT="W-%Y-%m-%d_%H-%M-%S.png"   # strftime; shared by satty + --save
 
 err()  { echo "w-screenshot: $*" >&2; }
@@ -112,6 +122,8 @@ main() {
   local GRIM
   build_grim "$mode"
 
+  # satty saves there too, and does not create the folder itself.
+  mkdir -p "$SCREENSHOT_DIR"
   case "$action" in
     --annotate)
       "${GRIM[@]}" - | satty --filename - \
@@ -122,7 +134,6 @@ main() {
       note "$(w_t screenshot.copied)"
       ;;
     --save)
-      mkdir -p "$SCREENSHOT_DIR"
       local out; out="$SCREENSHOT_DIR/$(date +"$FILENAME_FMT")"
       "${GRIM[@]}" "$out"
       note "$(w_t screenshot.saved)" "$out"

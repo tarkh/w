@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# w-userdirs hook (graphics bundle) — keep mcpinkscape's document root inside the
+# user's Pictures folder when that folder is renamed to a new language.
+#
+# Run by `w-userdirs sync` as the user, once per renamed folder, with
+# W_USERDIR_NAME / W_USERDIR_OLD / W_USERDIR_NEW. mcpinkscape's config holds the
+# document root as a literal path (~/Pictures/mcpinkscape); the folder itself has
+# already moved along with Pictures, so only the string needs to follow. Any
+# other value (a root the user chose elsewhere) is left alone.
+set -euo pipefail
+[[ "${W_USERDIR_NAME:-}" == PICTURES ]] || exit 0
+conf="${XDG_CONFIG_HOME:-$HOME/.config}/mcpinkscape.conf"
+[[ -f "$conf" ]] || exit 0
+old_rel="~${W_USERDIR_OLD#"$HOME"}"          # the seeded form: ~/Pictures/...
+new_rel="~${W_USERDIR_NEW#"$HOME"}"
+python3 - "$conf" "$W_USERDIR_OLD" "$W_USERDIR_NEW" "$old_rel" "$new_rel" <<'PY'
+import json, sys
+conf, old, new, old_rel, new_rel = sys.argv[1:]
+data = json.load(open(conf))
+root = data.get("stdio", {}).get("document_root")
+for prefix, repl in ((old_rel, new_rel), (old, new)):
+    if root == prefix or (root or "").startswith(prefix + "/"):
+        data["stdio"]["document_root"] = repl + root[len(prefix):]
+        with open(conf, "w") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False); f.write("\n")
+        print(f"mcpinkscape: document_root -> {data['stdio']['document_root']}")
+        break
+PY

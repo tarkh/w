@@ -149,6 +149,10 @@ cmd_set() {
     mapfile -t pending < <(w-langpack plan "$loc" --porcelain 2>/dev/null) || true
     ((${#pending[@]})) && echo "w-locale: language packages pending: ${pending[*]} (install: sudo w-langpack apply)"
   fi
+  # The standard home folders follow at that same login (w-userdirs.service):
+  # a per-user step, so nothing to do here beyond saying so.
+  command -v w-userdirs >/dev/null 2>&1 \
+    && echo "w-locale: standard home folders are renamed at each user's next login (w-userdirs status)"
   echo "w-locale: LANG set to $loc (log back in to apply)"
 }
 

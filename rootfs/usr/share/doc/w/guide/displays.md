@@ -5,9 +5,9 @@ order: 5
 summary: Monitor layout, scaling and placement, the separate login-screen layout, the blue-light filter, and what to do about a black screen.
 sources:
   - path: .claude/library/w-monitor.md
-    sha256: 689863c164a64b4b75f2d1792311220a04fff6baac3699149ae1a4fcf16bbf6b
+    sha256: 79e44dc01381170142d38d80021c3c2f1ef3533031d6e7d96f1a79c377eb932f
   - path: .claude/library/w-nightlight.md
-    sha256: 188429cc8a36233d3fa8b55fc0bcd8a16e56a1463ac04b78782d7b8cd447bd03
+    sha256: 50cce4d1f5c5d33b58b73a91f5fe3f5c73a5ad035d63805753852ed5b4e7984d
 ---
 
 **Hub → Displays** holds two things that answer the same question — what the

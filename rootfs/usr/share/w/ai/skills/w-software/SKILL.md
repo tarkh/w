@@ -2,12 +2,16 @@
 name: w-software
 description: >-
   How to install and manage software on W Linux: native packages via pacman/yay
-  (repo + AUR), Python tools/venvs via uv, and where sandboxed third-party GUI apps
-  fit (the optional `flatpak` W-Pack). Load this when the user wants to install,
-  remove, or find an application, or set up a Python environment.
+  (repo + AUR), Python tools/venvs via uv, where sandboxed third-party GUI apps
+  fit (the optional `flatpak` W-Pack), and where toolchains keep their caches
+  (why there is no `~/go`). Load this when the user wants to install, remove, or
+  find an application, set up a Python environment, or asks about Go/toolchain
+  cache paths and home snapshots.
 sources:
   - path: .claude/library/package-python.md
-    sha256: 239b463324c3f42931b26b09ac082e0d525c2ff706857045c3bd7f37e33fac17
+    sha256: 0dfe554db6f96ca5b1d267e67c877b14cb3cfdc86988a265d234a378d2c8d790
+  - path: .claude/library/home-hygiene.md
+    sha256: a1c9efe70f9f4900dfda354b6e0c7f98b55f1d904ade492c88f9d492016a6d08
 tools:
   - w_pacman_install
   - w_pacman_remove
@@ -69,6 +73,29 @@ correctly refuses.
 - Inside an activated venv, plain `pip install` works as normal — the externally-managed
   guard only applies to the system environment.
 
-`~/.cache/uv` and `~/.cache/pip` are pre-created as nested btrfs subvolumes (`apply.sh
---uv`), so they don't bloat `@home` snapshots — nothing to do here, just don't be
-surprised they're not plain directories.
+`~/.cache/uv` and `~/.cache/pip` are pre-created as nested btrfs subvolumes, so they
+don't bloat `@home` snapshots — nothing to do here, just don't be surprised they're not
+plain directories. See the next section for the mechanism.
+
+## Where toolchains keep their state (caches, `~/go`)
+
+W steers per-user toolchain state to XDG locations and keeps the big, recoverable
+parts out of `@home` snapshots. Two pieces, both W-managed (don't edit them):
+
+- `/etc/profile.d/w-<tool>.sh` — login-shell env; reaches TTY/SSH shells and the
+  graphical session alike. Takes effect at the next login. A personal override goes
+  in the user's own shell profile — W's file keeps a value that is already set.
+- `/usr/share/w/defaults/home-subvols` — the list of home paths carved as nested
+  btrfs subvolumes (i.e. excluded from `@home` snapshots) for every account by
+  `apply.sh --homesubvol`. Only ever created while the path is absent — an existing
+  directory is left alone (and rides in snapshots).
+
+**Go** is the first case: there is deliberately **no `~/go`** on W. `GOMODCACHE` and
+`GOCACHE` live in `~/.cache/go/{mod,build}` (one subvolume), `GOPATH` is
+`~/.local/share/go` (nearly empty), and `go install` puts binaries in `~/.local/bin`,
+which is already on PATH. This matters even without the `dev` bundle: `w-update`
+rebuilds `yay` from the AUR as the user, and that build would otherwise create `~/go`.
+A `~/go` or `~/.cache/go-build` from before this change is simply stale — safe to
+delete, never touched by W. Go itself is not a base package: it arrives as a build
+dependency (`pacman -Qdtq` lists it as an orphan afterwards — harmless), or via
+`mise` in the `dev` bundle for per-project versions.

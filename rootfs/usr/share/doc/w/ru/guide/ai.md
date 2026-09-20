@@ -5,9 +5,9 @@ order: 9
 summary: Открытие ассистента, профили под разные задачи, хосты и провайдеры, где хранятся ключи API, сколько он может делать сам, и опциональный продвинутый стек.
 sources:
   - path: .claude/library/w-ai.md
-    sha256: cfbe9cf9552a3f8cddf70d08e326af624ff88f132659e583fb399680344160c5
+    sha256: 03a5fdbf137556293d33480cd23ea657356315aea50fe6b2a83a5271c7ef2359
   - path: .claude/library/ai-integration.md
-    sha256: 2233d9e2e7b604bc57ef1b706a6e0e8155981ffbec95d64e5e258109c4eb1196
+    sha256: f32aa75761dcd502adb75af9854472c0c4385f7794e9acc932f5c06d7775fa46
 anchors:
   profiles: профили
 ---

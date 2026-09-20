@@ -70,9 +70,11 @@ fixes, exports. Tools are typed and safe — no shell, no raw SVG replacement:
 
 - **Documents:** `create_document`, `open_document`, `save_document`,
   `list_documents`, `get_document_info`, `list_layers`, `create_layer`.
-  Documents live under **`~/Pictures/mcpinkscape/`** (the configured
-  `document_root`; paths outside it are refused — copy a user's file in, or
-  ask them to save there).
+  Documents live under **`<Pictures>/mcpinkscape/`** — `mcpinkscape` under the
+  user's Pictures folder, whose name follows the system language
+  (`xdg-user-dir PICTURES`: `~/Pictures`, `~/Изображения`, …). It is the
+  configured `document_root`; paths outside it are refused — copy a user's
+  file in, or ask them to save there.
 - **Draw:** `create_rectangle/ellipse/circle/line/polyline/polygon/path/text`,
   `set_text`; absolute units accepted (`mm`, `cm`, `in`, `pt`, `px`).
 - **Style/transform:** `set_fill`, `set_stroke`, `set_style`, `set_opacity`,
@@ -142,7 +144,7 @@ property names.)
 
 | Goal | Do this |
 |---|---|
-| "Make me a diagram / poster / icon" | mcpinkscape: `create_document` (page size in mm) → draw → `render_snapshot` → look → iterate → `export_document`; tell the user the path under `~/Pictures/mcpinkscape/` |
+| "Make me a diagram / poster / icon" | mcpinkscape: `create_document` (page size in mm) → draw → `render_snapshot` → look → iterate → `export_document`; tell the user the path under `$(xdg-user-dir PICTURES)/mcpinkscape/` |
 | Fix something in the SVG the user has open | `live_status` → `live_list_selection` / `live_set_style` etc. on the focused window; for structural edits ask them to save, then open the file with `open_document` (copy into the document root) |
 | Retouch / adjust a photo interactively | GIMP + bridge started → `get_gimp_info` → `execute_gimp_code` with GEGL ops (`layer.apply … `, `pdb.run_procedure("gimp-drawable-levels", …)`) → `get_gimp_viewport_screenshot` to verify |
 | Batch convert / resize / strip metadata | `magick` (base) first; GIMP batch only when a GIMP-specific op is needed |
@@ -184,8 +186,9 @@ property names.)
 - **The GIMP bridge is per running GIMP** and per session: after GIMP restarts,
   Start it again. Two GIMP instances cannot both own the bus name.
 - **mcpinkscape's `document_root` is a sandbox**: `open_document` refuses paths
-  outside `~/Pictures/mcpinkscape/`; copying is fine (`cp`), then work on the
-  copy and tell the user where it is.
+  outside `<Pictures>/mcpinkscape/`; copying is fine (`cp`), then work on the
+  copy and tell the user where it is. Never spell the Pictures folder by name —
+  resolve it (`xdg-user-dir PICTURES`); it is renamed when the language changes.
 - **`live_*` tools act on the focused window** — if the user has several
   Inkscape windows, say which one you are about to touch.
 - **Wayland tablets** (Krita/GIMP pen input) are handled by Hyprland/libinput;

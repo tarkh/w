@@ -1,0 +1,29 @@
+# /usr/share/w/defaults/home-subvols — per-account paths W keeps OUTSIDE @home
+# snapshots, carved as nested btrfs subvolumes by `apply.sh --homesubvol`.
+#
+# W's own list. Do NOT edit: every update overwrites this file wholesale.
+#
+# WHAT BELONGS HERE
+#
+# State a toolchain keeps per user that is large, ephemeral and fully
+# recoverable from the network — download caches, module caches, build caches.
+# A rollback of @home should not drag gigabytes of it along, and a restore
+# should not resurrect it. Config and project files never belong here: they
+# are exactly what @home snapshots exist to protect.
+#
+# HOW IT IS APPLIED
+#
+# One line = one path relative to the account's home, carved for every human
+# account (see w_home_users) — only while the path is still absent, because a
+# populated directory cannot be turned into a subvolume in place. Accounts
+# created later catch up on the next apply / w-sync. Off btrfs the path becomes
+# a plain directory. A trailing `# tool: why` is the convention.
+#
+# ADDING A TOOL
+#
+# One line here; if the tool needs steering to land there (Go's GOPATH does),
+# pair it with a login-shell env drop-in /etc/profile.d/w-<tool>.sh. No code.
+
+.cache/uv       # uv: download cache (package-python.md)
+.cache/pip      # pip: download cache
+.cache/go       # go: GOMODCACHE + GOCACHE, routed here by /etc/profile.d/w-go.sh

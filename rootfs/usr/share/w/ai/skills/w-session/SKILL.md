@@ -8,9 +8,9 @@ description: >-
   named layout — not for the systemd/uwsm session itself, which is w-desktop.
 sources:
   - path: .claude/library/w-session.md
-    sha256: 63975e239ed7ccb8df0f22733888eb062da19c326dc258bfb34cc3cfe70bff59
+    sha256: 15f706546ec8085bd3792028f2b6c8f0350c19ac64db7645885a75ddf9f55481
   - path: .claude/library/quickshell-layouts.md
-    sha256: 61e8015efd56cad555527ac27253d8261731379c703b7e25f9b8799fab142149
+    sha256: e8c118db10147181f14e6e86a18ceff5e0ee77b268aae391825aadedb1cbbb4e
 tools:
   - w_session_status
   - w_session_set

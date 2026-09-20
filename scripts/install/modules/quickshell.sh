@@ -102,6 +102,10 @@ mod_quickshell() {
       --exclude='core/effects.json' --exclude='core/geometry.json' \
       --exclude='core/motion.json' --exclude='core/font.json' \
       "$SRC/rootfs/etc/skel/.config/quickshell/" "$home_dir/.config/quickshell/"
+    # Own the parent first: `install -D` creates a missing parent with root's
+    # attributes and only chowns the file, which is how ~/.config/cliphist ended
+    # up root-owned on every account (the seed_user_file trap, for a managed file).
+    install -d -o "$wuser" -g "$wuser" "$home_dir/.config/cliphist"
     install -Dm644 -o "$wuser" -g "$wuser" \
       "$SRC/rootfs/etc/skel/.config/cliphist/config" "$home_dir/.config/cliphist/config"
     # kdeglobals, W.colors and the Kvantum theme are w-style's qt axis in full (it

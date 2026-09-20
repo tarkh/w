@@ -7,11 +7,11 @@ description: >-
   won't start, or when a theme applied only partially.
 sources:
   - path: .claude/library/dev-workflow.md
-    sha256: f776cd8170e494ddb44eae2d7e7e61d71cdcaae13763a541e9887cfef4bc4478
+    sha256: 6641ebff1902a4b8431665d6e8a3dcb2e85d5d72125c3f100e9e22d88a3347a2
   - path: .claude/library/w-logs.md
-    sha256: f1898e041ab918820d3cfe1faa6e40b079f4c7834b52ba791f0251219e214e60
+    sha256: 3926baf2793541840068b18a5eac8720448aab05772cfa358876d66e9b7a52b7
   - path: .claude/library/package-sensors.md
-    sha256: 014f39f988b63216e2d60e89d7ce317a5c849dadc1eaaa4e3f531386ca6d8ccf
+    sha256: 21e19e51d9a45e12b2be01affe62d6f852e39599953dbd6eb3b52b88b38be9cb
 tools:
   - w_system_status
   - w_machine_profile

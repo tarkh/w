@@ -1868,6 +1868,30 @@
     "en": "That was too fast — swipe more slowly",
     "ru": "Слишком быстро — проведите медленнее"
   },
+  "fp.lock.section": {
+    "en": "Lock screen",
+    "ru": "Экран блокировки"
+  },
+  "fp.lock.mode": {
+    "en": "Sensor",
+    "ru": "Сканер"
+  },
+  "fp.lock.always": {
+    "en": "Always on",
+    "ru": "Постоянно"
+  },
+  "fp.lock.onActivity": {
+    "en": "On activity",
+    "ru": "По активности"
+  },
+  "fp.lock.window": {
+    "en": "Stays on for",
+    "ru": "Горит после активности"
+  },
+  "fp.lock.windowHint": {
+    "en": "After locking, waking up or any activity while locked (10–300 s)",
+    "ru": "После блокировки, пробуждения или любой активности под блокировкой (10–300 с)"
+  },
   "hub.language": {
     "en": "System language",
     "ru": "Язык системы"
@@ -1879,6 +1903,22 @@
   "hub.localeHint": {
     "en": "Applies after you log back in",
     "ru": "Применится после перезахода в сессию"
+  },
+  "hub.userdirs": {
+    "en": "Folder names follow the language",
+    "ru": "Имена папок следуют за языком"
+  },
+  "hub.userdirs.yes": {
+    "en": "Yes",
+    "ru": "Да"
+  },
+  "hub.userdirs.no": {
+    "en": "No",
+    "ru": "Нет"
+  },
+  "hub.userdirsHint": {
+    "en": "When the system language changes, the standard folders in your home (Documents, Downloads, Pictures…) are renamed to their names in the new language at your next login. Their contents are untouched; folders you moved or renamed yourself are left alone.",
+    "ru": "При смене языка системы стандартные папки дома (Документы, Загрузки, Изображения…) при следующем входе переименуются на новый язык. Содержимое не меняется; папки, которые вы перенесли или переименовали сами, не трогаются."
   },
   "hub.change": {
     "en": "Change",

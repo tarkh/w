@@ -10,13 +10,13 @@ description: >-
   explains how to read the layers with w-conf).
 sources:
   - path: .claude/library/w-conf.md
-    sha256: 002069840e569db3a750c268458c12fc7ef2396539f4438e3f7068bb43ec729f
+    sha256: 083f77dead911616b7866ddc036c7b6b0c68ee52537fabea3bd076c72e24eb44
   - path: .claude/library/w-reset.md
-    sha256: e882e72c78a9be4989c82dd53e44de66080282ed44a0f24c86d122990d6827e1
+    sha256: dc6b89319dae0e5bc8a9ef4f13f842c7aa7aa17fd7a945477ef4c928769c8868
   - path: .claude/library/update-system.md
-    sha256: f4a0a896503399e742c093a17f45c27b8b6b46975602fff27ecf1335ed2e628e
+    sha256: aecf9b60cc91beadd027df5e05f20360422c646461c65e3349670cfa1a89d058
   - path: .claude/library/w-rollback.md
-    sha256: 9c9d1deab14153a4d60dab390f7ef42c86dba88bb59cf5ada4d7e8a213b715a5
+    sha256: 1099b89dead5e78070ffcd430de9775eb954a46b6bc7575d934966e991e31948
 tools:
   - w_snapshot_list
   - w_snapshot_rollback_plan
@@ -62,7 +62,7 @@ decisions. Two consequences worth knowing before you answer a config question:
   there revokes the policy on the next update.
 
 Every W subsystem with a KEY=value config is converted (power, dns, time, logs,
-terminal, crypt, ai, nightlight, kbdlight, mirrors, appearance). Two deliberately are not:
+terminal, crypt, ai, nightlight, kbdlight, mirrors, fingerprint, appearance). Two deliberately are not:
 the update channel (`update.conf`, read only by the updater itself) and the non-KV
 artifacts (the active-theme symlink, the greeter monitor files), which are replaced
 whole rather than merged per key.

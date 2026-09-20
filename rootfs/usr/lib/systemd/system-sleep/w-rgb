@@ -1,0 +1,41 @@
+#!/bin/bash
+# W Linux — RGB devices with no onboard memory (most mice; some keyboards)
+# lose their color across suspend/resume: the device is powered off during S3
+# and comes back showing its factory default palette, not the active theme's
+# pigment. The `600-rgb` w-style axis (see w-appearance.md) already pushes the
+# theme color to every OpenRGB device on login and on every theme switch — it
+# just never runs again after a resume, since nothing calls it there.
+#
+# Re-running it here is safe and cheap: render_user() in 600-rgb re-reads the
+# per-user override and the active theme on every call and is idempotent (a
+# device that kept its color, e.g. one with onboard memory, gets the exact
+# same color again). It also already retries device detection for ~20s to
+# absorb USB re-enumeration lag — and hands off to a backgrounded subshell
+# itself, so this hook returns immediately and never delays resume.
+#
+# Independent file, not folded into w-power's hook: RGB is a w-style/appearance
+# axis, not a power-domain concern (same reasoning as w-sensors being its own
+# file — see package-sensors.md).
+#
+# w-style has no root/--user mode (it checks EUID itself to pick the skel-only
+# render), so it must run as the logged-in user. Root has no reliable way to
+# guess who that is on a multi-session machine, so the active-session lookup
+# below is copied from w-update-refresh: walk every session, keep the ones
+# that are actually active on a graphical seat, dedupe by user.
+post() {
+  local s user type active seen=()
+  for s in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); do
+    mapfile -t p < <(loginctl show-session "$s" -p Name -p Type -p Active --value 2>/dev/null)
+    user="${p[0]:-}"; type="${p[1]:-}"; active="${p[2]:-}"
+    [[ "$active" == "yes" ]]                       || continue
+    [[ "$type" == "wayland" || "$type" == "x11" ]] || continue
+    [[ -n "$user" ]]                                || continue
+    [[ " ${seen[*]-} " == *" $user "* ]]           && continue
+    seen+=("$user")
+    runuser -u "$user" -- w-style apply rgb 2>/dev/null || true
+  done
+}
+
+case "$1" in
+  post) post ;;
+esac

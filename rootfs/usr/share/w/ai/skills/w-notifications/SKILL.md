@@ -8,9 +8,9 @@ description: >-
   miss", silencing a noisy app, or how long a popup stays on screen.
 sources:
   - path: .claude/library/w-notify.md
-    sha256: 6f1eba564188c4f3b28b3b2d4d48924c3015136f7f8f2ec895f0e72a8806fa7c
+    sha256: 871ba696a334881ecee156f79a0bec2338bbead68f9cd30e4920a85e4d156c48
   - path: .claude/library/quickshell-notifications.md
-    sha256: 6e5b84c107724c7c5d8737cc4801bb9f43a9bd275deaecb2bfb250aa35516a31
+    sha256: ce5b064f814484d9f1a45e5b570de19d7e3dd5f0afa9631f75a40e7a775de7da
 tools:
   - w_notifications_status
   - w_notifications_history

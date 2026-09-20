@@ -10,13 +10,13 @@ description: >-
   fingerprints, firmware, or LUKS/TPM2/Secure Boot questions.
 sources:
   - path: .claude/library/security.md
-    sha256: 00644ba70977365d102fba6b571108558d7d8eec0f1ad422253b12e3e1533ddd
+    sha256: 3ab6ec5bf765fd6759ab071d57d8dbcefada49bd30c7c7546a3e93422f6bb63a
   - path: .claude/library/w-fingerprint.md
-    sha256: b90c064967fe921e5caa2992fbf049f310fc1820cba8eec937e25306171a8f69
+    sha256: ef4418b8810541f823dfeea55d2f2518a81c40b6161ff3f05300aae63fe46d78
   - path: .claude/library/w-ssh.md
-    sha256: 34bbf5becbefc07d81b82f475b37fa1e32b8ed0e969f0d88ab07ec9e6208ab79
+    sha256: b1a094a3801dad4efdd25e9e56439883f0e2a3d71cde53a717ca77597bb8ca2b
   - path: .claude/library/package-limine.md
-    sha256: 5951a5fff90962e7eb7045b4c8967a84a94b228fab59c6e4548921b32297889a
+    sha256: 90f577760d873a5fe5e297a03ab55419c0289be95462e5ef6ccd20ca8a89be3d
 tools:
   - w_fwupd_refresh
 ---
@@ -103,6 +103,14 @@ is what the Hub uses too.
   verdict. Ctrl-C cancels cleanly and releases the reader.
 - `w-fingerprint delete <finger>` · `w-fingerprint fingers` (the ten accepted names:
   `left-thumb`, `left-index-finger`, … `right-little-finger`).
+- `w-fingerprint lock-sensor mode <native|wake>` — who verifies under the lock screen.
+  `native` (default): hyprlock itself, sensor lit for the whole lock. `wake`: W's auth
+  daemon verifies only for `lock-sensor window <10..300>` seconds after the lock, a
+  wake-up from sleep or any activity while locked, then the sensor sleeps — the mode for
+  readers that overheat under a continuous scan (see the `w-power` skill). Both are
+  user-scope keys of the `fingerprint` config (`~/.config/w/fingerprint.conf`); a
+  change applies from the next lock. `lock-sensor status` shows the mode, the window
+  and the daemon's live state. GUI: Hub → Input → Fingerprint → Lock screen.
 
 Three things worth knowing before you diagnose anything:
 

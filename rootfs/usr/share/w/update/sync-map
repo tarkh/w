@@ -148,6 +148,9 @@ rootfs/usr/share/w/src/w-windowblind.c	--windowblind
 #   crypt    — a changed PCR set needs a human `w-crypt reenroll-tpm` regardless;
 #   ai       — w-ai and w-mcp read the config on every invocation; nothing is
 #              rendered from it, so the file drop IS the activation.
+# The home-subvols registry is consumed by mod_homesubvol, which carves the listed
+# paths per account — a new line means nothing until that module runs.
+rootfs/usr/share/w/defaults/home-subvols	--homesubvol
 rootfs/usr/share/w/defaults/power.*	--power
 rootfs/usr/share/w/defaults/kbdlight.*	--kbdlight
 # The keyboard-backlight boot light lives INSIDE the initramfs: dropping the hook

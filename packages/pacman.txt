@@ -193,6 +193,12 @@ satty
 wl-clipboard
 libnotify
 
+# Standard home folders (apply.sh --userdirs) — ~/Documents, ~/Pictures, ... as
+# logical names (`xdg-user-dir PICTURES`), created in the user's language at
+# login. W's defaults file picks six of the nine; w-userdirs adds the rename on a
+# language change that upstream leaves to GNOME. See w-userdirs.md.
+xdg-user-dirs
+
 # Clipboard manager (rides apply.sh --quickshell) — cliphist stores clipboard
 # history (text + images, byte-for-byte) in a persistent db, fed by two
 # `wl-paste --watch cliphist store` daemons (autostarted in hyprland.lua). History

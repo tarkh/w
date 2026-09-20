@@ -482,6 +482,10 @@ deploy_configs_user() {                                 # <bundle> <user> <home>
 }
 
 # Force-deploy a file or directory (managed class): W owns it, overwrite in place.
+# The file keeps the mode it has in the bundle tree, the way the directory branch
+# (rsync -a) and apply_rootfs already do: a bundle may ship an executable — the
+# graphics bundle's w-userdirs hook — and a fixed 0644 here silently turned it
+# into a file nothing would ever run (found on the host after the first sync).
 deploy_managed() {
   local src="$1" dst="$2" owner="$3"
   if [[ "$dst" == */ ]]; then
@@ -490,7 +494,7 @@ deploy_managed() {
     rsync -a --chown="$owner:$owner" "${src%/}/" "$dst"
   else
     [[ -f "$src" ]] || { warn "source missing, skipping: $src"; return 0; }
-    install -Dm644 -o "$owner" -g "$owner" "$src" "$dst"
+    install -D -m "$(stat -c %a "$src")" -o "$owner" -g "$owner" "$src" "$dst"
   fi
 }
 

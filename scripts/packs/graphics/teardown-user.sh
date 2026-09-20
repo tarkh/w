@@ -48,7 +48,10 @@ if [[ -d "$PLUGIN_DIR" ]]; then
   rm -rf "$PLUGIN_DIR"
 fi
 
-[[ -d "$USER_HOME/Pictures/mcpinkscape" ]] \
-  && info "Kept (your documents): $USER_HOME/Pictures/mcpinkscape ($(du -sh "$USER_HOME/Pictures/mcpinkscape" 2>/dev/null | cut -f1))"
+# The document root is wherever the account's Pictures folder is (xdg-user-dirs
+# names it in the user's language), same resolution setup-user.sh used.
+MCPI_DOCS="$(as_user xdg-user-dir PICTURES 2>/dev/null || echo "$USER_HOME/Pictures")/mcpinkscape"
+[[ -d "$MCPI_DOCS" ]] \
+  && info "Kept (your documents): $MCPI_DOCS ($(du -sh "$MCPI_DOCS" 2>/dev/null | cut -f1))"
 info "graphics user teardown complete for $USER_NAME."
 exit 0

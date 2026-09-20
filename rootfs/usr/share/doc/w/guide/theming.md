@@ -5,9 +5,9 @@ order: 2
 summary: Switching themes, creating a theme from a wallpaper, wallpaper sets, and the Appearance panel.
 sources:
   - path: .claude/library/w-theme.md
-    sha256: 846128d6fe4b73cfc9b4e833d75e0390f2023e89d1a2e07a8e9b6dae05e28e08
+    sha256: b2a973c39eac5eebda173cfc43b710a91ab4cb68ae63a599c3ccf45e6e6eaa04
   - path: .claude/library/w-wallpaper.md
-    sha256: 7cdb354e1eb86ed817b8bb5356db0a35b05a7fa05020e2c126217c83b65b7b68
+    sha256: 2499a3c31263d765ac650f83ea6e84264c64424627e28df47631e425f9740f41
 ---
 
 A theme in W is one palette that the system renders onto every surface: the

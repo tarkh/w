@@ -9,7 +9,7 @@ description: >-
   configure yourself" requests.
 sources:
   - path: .claude/library/w-ai.md
-    sha256: cfbe9cf9552a3f8cddf70d08e326af624ff88f132659e583fb399680344160c5
+    sha256: 03a5fdbf137556293d33480cd23ea657356315aea50fe6b2a83a5271c7ef2359
 ---
 
 # W AI (configuring the assistant)

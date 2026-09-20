@@ -682,7 +682,12 @@ sync_site() {
 
 refresh_packs() { # <changed files>
   local changed="$1"
-  grep -q '^scripts/packs/' <<<"$changed" || return 0
+  # The bundle tree — or the machinery that deploys it. A fix in w-pack's own
+  # deploy step (a managed file arriving 0644 whatever its mode, 2026-09-19) or in
+  # the deploy SDK it stages changes what every installed bundle has on disk just
+  # as much as a changed bundle does; without this, such a fix reached the host and
+  # left the already-deployed bundles exactly as broken as before.
+  grep -qE '^(scripts/packs/|rootfs/usr/bin/w-pack$|scripts/install/lib/deploy\.sh$)' <<<"$changed" || return 0
   command -v w-pack >/dev/null 2>&1 || return 0
   info "Bundle tree changed — replaying installed bundles' setup (no package changes)..."
   run_priv w-pack refresh || warn "w-pack refresh reported a problem (bundles may need attention)."

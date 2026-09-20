@@ -67,7 +67,7 @@ Item {
         const o = opts || {};
         root.title = o.title || "";
         root.nameFilters = o.filters || [];
-        root.setFolder(o.folder || Store.get("picker.lastDir", root._home + "/Pictures"));
+        root.setFolder(o.folder || Store.get("picker.lastDir", root._pictures));
         root.gridFocusIdx = 0;
         root.focusRegion = "grid";
         root.active = true;
@@ -102,18 +102,29 @@ Item {
 
     // Places are offered only when they exist — a chip leading to an empty view is
     // worse than no chip. One sweep per open, so a folder made meanwhile shows up.
-    property var _places: []
-    readonly property var _candidates: [
-        { path: root._home,                 key: "pick.home" },
-        { path: root._home + "/Pictures",   key: "pick.pictures" },
-        { path: root._home + "/Downloads",  key: "pick.downloads" },
-        { path: root._home + "/Documents",  key: "pick.documents" }
-    ]
+    // The standard folders are resolved through xdg-user-dirs (`xdg-user-dir
+    // PICTURES`), never by name: their names follow the system language and the
+    // user may have moved them (w-userdirs). The chip label is the i18n one, which
+    // is what the folder is called in the current language anyway. Where the
+    // folder is unset or deleted, xdg-user-dir answers with the home itself, and
+    // the chip is dropped as a duplicate of Home.
+    property var _places: []                 // [{ path, key }] that exist right now
+    property string _pictures: root._home    // default start folder (Pictures)
     Process {
         id: places
-        command: ["sh", "-c", 'for d in "$HOME" "$HOME/Pictures" "$HOME/Downloads" "$HOME/Documents"; do [ -d "$d" ] && echo "$d"; done']
+        running: true      // once at startup too, so the first open already knows Pictures
+        command: ["sh", "-c",
+            'printf "pick.home\\t%s\\n" "$HOME"; for kv in PICTURES:pictures DOWNLOAD:downloads DOCUMENTS:documents; do '
+            + 'd=$(xdg-user-dir "${kv%%:*}" 2>/dev/null) || d=""; '
+            + '[ -n "$d" ] && [ "$d" != "$HOME" ] && [ -d "$d" ] && printf "pick.%s\\t%s\\n" "${kv#*:}" "$d"; done; true']
         stdout: StdioCollector {
-            onStreamFinished: root._places = (this.text || "").trim().split("\n").filter(p => p.length > 0)
+            onStreamFinished: {
+                const rows = (this.text || "").trim().split("\n").filter(l => l.indexOf("\t") > 0)
+                    .map(l => { const f = l.split("\t"); return { key: f[0], path: f[1] }; });
+                root._places = rows;
+                const pics = rows.find(r => r.key === "pick.pictures");
+                root._pictures = pics ? pics.path : root._home;
+            }
         }
     }
 
@@ -349,7 +360,7 @@ Item {
                 spacing: 6
                 Repeater {
                     id: placesRepeater
-                    model: root._candidates.filter(c => root._places.indexOf(c.path) >= 0)
+                    model: root._places
                     delegate: Chip {
                         id: placeCell
                         required property var modelData

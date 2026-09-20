@@ -236,3 +236,19 @@ EOF
   w_render_user_themes
   [[ ! -s "$RENDER_LOG" ]]
 }
+
+@test "w_home_subvols_read: paths only — comments (whole-line and trailing), blanks and trailing space dropped" {
+  printf '# header\n\n.cache/uv       # uv: cache\n  \n.cache/go\t# go\n.local/share/x   \n' > "$BATS_TEST_TMPDIR/reg"
+  run w_home_subvols_read "$BATS_TEST_TMPDIR/reg"
+  [ "$status" -eq 0 ]
+  [ "$output" = $'.cache/uv\n.cache/go\n.local/share/x' ]
+}
+
+@test "w_home_subvols_read: the shipped registry parses to home-relative paths" {
+  run w_home_subvols_read "$REPO/rootfs/usr/share/w/defaults/home-subvols"
+  [ "$status" -eq 0 ]
+  [ -n "$output" ]
+  while read -r p; do
+    [[ "$p" != /* && "$p" != *' '* ]]
+  done <<< "$output"
+}

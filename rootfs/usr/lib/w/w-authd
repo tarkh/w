@@ -1179,6 +1179,337 @@ class GcrPrompter:
             self.conn.unregister_object(self.reg_id)
 
 
+# ── LockSensor ─────────────────────────────────────────────────────────────────
+# Fingerprint verification FOR the lock screen, duty-cycled (`w-fingerprint
+# lock-sensor mode wake`). hyprlock's native integration holds VerifyStart for the
+# whole lock, and a reader without hardware finger-detect (uru4000) overheats in
+# libfprint's thermal model after ~4 min: fprintd reports verify-disconnected and
+# hyprlock 0.9.6 never tries again (upstream #1067). In wake mode hyprlock's
+# fingerprint is off (hyprlock-auth.conf) and this object verifies instead, only
+# for a WINDOW after lock / wake-from-sleep / activity while locked (hypridle's
+# 5 s listener → `w-fingerprint lock-sensor _arm` → Arm(u)). A match sends
+# hyprlock SIGUSR1 — its one external control, meaning "unlock".
+#
+# Exported on the session bus: com.w.authd /com/w/authd com.w.authd.LockSensor —
+# Arm(u seconds) · Disarm() · Status() → "state=… locked=… mode=… attempts=…".
+#
+# ⚠️ The verification is a CHILD PROCESS (`fprintd-verify <user>`), not a D-Bus
+# call of our own, for the reason _lamp_off documents at length: fprintd frees the
+# reader — and the uru4000's lamp goes out — on the CLIENT VANISHING, which a
+# process exit signals unambiguously and a GDBus connection close does not (tried;
+# the reader stayed claimed and every later polkit prompt fell back to the
+# password). So arm = spawn, disarm = SIGKILL, and the retry after a no-match is
+# simply the next spawn. The verdict is read off the tool's stdout ("Verify
+# result: verify-match (done)"); a kill of our own is never a verdict.
+#
+# "Locked" is the w-lock scope — lock_cmd (w-power) runs hyprlock as
+# `systemd-run --user --scope --unit=w-lock`, so `systemd --user` announces the
+# lock screen's start and end over PropertiesChanged/UnitRemoved (after
+# Manager.Subscribe, without which it announces nothing). A hyprlock started by
+# hand has no scope: Arm is ignored, exactly as documented in `w-fingerprint help`.
+
+LOCK_SENSOR_NAME = "com.w.authd"
+LOCK_SENSOR_PATH = "/com/w/authd"
+LOCK_SENSOR_IFACE = "com.w.authd.LockSensor"
+LOCK_SENSOR_XML = f"""
+<node>
+  <interface name="{LOCK_SENSOR_IFACE}">
+    <method name="Arm"><arg type="u" name="seconds" direction="in"/></method>
+    <method name="Disarm"/>
+    <method name="Status"><arg type="s" name="status" direction="out"/></method>
+  </interface>
+</node>
+"""
+LOCK_SCOPE_UNIT = "w-lock.scope"
+LOCK_SCOPE_PATH = "/org/freedesktop/systemd1/unit/w_2dlock_2escope"
+SYSTEMD_NAME = "org.freedesktop.systemd1"
+SYSTEMD_PATH = "/org/freedesktop/systemd1"
+SYSTEMD_MANAGER = "org.freedesktop.systemd1.Manager"
+SYSTEMD_UNIT = "org.freedesktop.systemd1.Unit"
+
+
+class LockSensor:
+    """State: idle (no child) · armed (fprintd-verify alive, window timer running)
+    · cooldown (the reader refused or gave up — verify-disconnected, a busy Claim,
+    no fingers, MAX_ATTEMPTS no-matches — wait COOLDOWN_SEC before the next Arm).
+    Unlock, sleep and Disarm all end in idle; every transition out of armed kills
+    the child, which is what releases the reader."""
+
+    MAX_ATTEMPTS = 3          # no-matches before a cooldown, like hyprlock's own loop
+    COOLDOWN_SEC = 60
+    RETRY_MS = 250            # breath between a no-match exit and the next spawn
+    MAX_WINDOW = 300          # LOCK_SENSOR_ARM's own ceiling; a bus peer gets no more
+    TIMEOUT_MS = 3000
+    # The one line that means "unlock" — the whole line, not a substring: every
+    # other verdict fprintd-verify prints (verify-no-match, verify-retry-scan,
+    # verify-disconnected…) must stay a non-event however the tool phrases it.
+    MATCH_LINE = "Verify result: verify-match (done)"
+
+    def __init__(self, fp):
+        self.fp = fp                  # Fingerprint: the enrolled-cache guard
+        self.bus = None
+        self.sys_bus = None
+        self.reg_id = None
+        self.owner_id = None
+        self.locked = False           # w-lock.scope active
+        self.mode = "native"          # LOCK_SENSOR, read at lock time
+        self.window = 30              # LOCK_SENSOR_ARM, same
+        self.child = None             # Gio.Subprocess while armed
+        self.attempts = 0             # no-matches since the last (re)arm cycle
+        self.window_src = None        # GLib source ids
+        self.cooldown_src = None
+        self.retry_src = None
+        try:
+            self.name = pwd.getpwuid(os.getuid()).pw_name
+        except KeyError:
+            self.name = ""
+
+    @property
+    def state(self):
+        if self.cooldown_src is not None:
+            return "cooldown"
+        return "armed" if self.child is not None else "idle"
+
+    # ── registration ─────────────────────────────────────────────────────────
+    def register(self):
+        self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        node = Gio.DBusNodeInfo.new_for_xml(LOCK_SENSOR_XML)
+        reg = getattr(self.bus, "register_object_with_closures2", self.bus.register_object)
+        self.reg_id = reg(LOCK_SENSOR_PATH, node.interfaces[0], self._on_call, None, None)
+        self.owner_id = Gio.bus_own_name_on_connection(
+            self.bus, LOCK_SENSOR_NAME, Gio.BusNameOwnerFlags.NONE, None, None
+        )
+        # systemd emits unit PropertiesChanged only to subscribed peers.
+        self.bus.call(
+            SYSTEMD_NAME, SYSTEMD_PATH, SYSTEMD_MANAGER, "Subscribe", None, None,
+            Gio.DBusCallFlags.NONE, self.TIMEOUT_MS, None, self._ignore, None,
+        )
+        self.bus.signal_subscribe(
+            SYSTEMD_NAME, "org.freedesktop.DBus.Properties", "PropertiesChanged",
+            LOCK_SCOPE_PATH, SYSTEMD_UNIT, Gio.DBusSignalFlags.NONE, self._on_scope, None,
+        )
+        # A finished scope is unloaded at once; the removal is the surer "unlocked".
+        self.bus.signal_subscribe(
+            SYSTEMD_NAME, SYSTEMD_MANAGER, "UnitRemoved", SYSTEMD_PATH, LOCK_SCOPE_UNIT,
+            Gio.DBusSignalFlags.NONE, lambda *_: self._set_locked(False), None,
+        )
+        self.sys_bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+        self.sys_bus.signal_subscribe(
+            "org.freedesktop.login1", "org.freedesktop.login1.Manager", "PrepareForSleep",
+            "/org/freedesktop/login1", None, Gio.DBusSignalFlags.NONE, self._on_sleep, None,
+        )
+        # Started under a live lock (daemon restart): read the scope, don't assume.
+        self.bus.call(
+            SYSTEMD_NAME, SYSTEMD_PATH, SYSTEMD_MANAGER, "GetUnit",
+            GLib.Variant("(s)", (LOCK_SCOPE_UNIT,)), None,
+            Gio.DBusCallFlags.NONE, self.TIMEOUT_MS, None, self._on_get_unit, None,
+        )
+
+    def unregister(self):
+        self._disarm()
+        if self.owner_id:
+            Gio.bus_unown_name(self.owner_id)
+        if self.bus and self.reg_id:
+            self.bus.unregister_object(self.reg_id)
+
+    @staticmethod
+    def _ignore(conn, res, _data):
+        try:
+            conn.call_finish(res)
+        except GLib.Error:
+            pass
+
+    # ── D-Bus surface ────────────────────────────────────────────────────────
+    def _on_call(self, conn, sender, path, iface, method, params, invocation):
+        if method == "Arm":
+            self._arm(params.unpack()[0])
+            invocation.return_value(None)
+        elif method == "Disarm":
+            self._disarm()
+            invocation.return_value(None)
+        elif method == "Status":
+            invocation.return_value(GLib.Variant("(s)", (self.status(),)))
+        else:
+            invocation.return_dbus_error("org.freedesktop.DBus.Error.UnknownMethod", method)
+
+    def status(self):
+        return (f"state={self.state} locked={'yes' if self.locked else 'no'} "
+                f"mode={self.mode} attempts={self.attempts}")
+
+    # ── lock / sleep tracking ────────────────────────────────────────────────
+    def _on_get_unit(self, conn, res, _data):
+        try:
+            (path,) = conn.call_finish(res).unpack()
+        except GLib.Error:
+            return                    # NoSuchUnit: not locked
+        conn.call(
+            SYSTEMD_NAME, path, "org.freedesktop.DBus.Properties", "Get",
+            GLib.Variant("(ss)", (SYSTEMD_UNIT, "ActiveState")), None,
+            Gio.DBusCallFlags.NONE, self.TIMEOUT_MS, None, self._on_active_state, None,
+        )
+
+    def _on_active_state(self, conn, res, _data):
+        try:
+            (state,) = conn.call_finish(res).unpack()
+        except GLib.Error:
+            return
+        self._set_locked(state == "active")
+
+    def _on_scope(self, _conn, _sender, _path, _iface, _signal, params, _data):
+        state = params.unpack()[1].get("ActiveState")
+        if state == "active":
+            self._set_locked(True)
+        elif state in ("inactive", "failed"):
+            self._set_locked(False)
+
+    def _set_locked(self, locked):
+        if locked == self.locked:
+            return
+        self.locked = locked
+        self.attempts = 0
+        self._clear(("cooldown_src",))
+        if locked:
+            self._read_conf()
+        else:
+            self._disarm()
+
+    def _read_conf(self):
+        # The layered config through the one sanctioned reader (w-conf.md): the mode
+        # decides whether a lock arms at all, the window how long. Read once per
+        # lock — the Hub cannot change either under a lock screen anyway.
+        try:
+            proc = Gio.Subprocess.new(
+                ["/usr/bin/w-conf", "list", "fingerprint", "--porcelain"],
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE,
+            )
+        except GLib.Error:
+            return
+        proc.communicate_utf8_async(None, None, self._on_conf, None)
+
+    def _on_conf(self, proc, res, _data):
+        try:
+            _ok, out, _err = proc.communicate_utf8_finish(res)
+        except GLib.Error:
+            return
+        for line in (out or "").splitlines():
+            f = line.split("\t")
+            if len(f) < 2:
+                continue
+            if f[0] == "LOCK_SENSOR":
+                self.mode = f[1]
+            elif f[0] == "LOCK_SENSOR_ARM" and f[1].isdigit():
+                self.window = int(f[1])
+        if self.locked and self.mode == "wake":
+            self._arm(self.window)
+
+    def _on_sleep(self, _conn, _sender, _path, _iface, _signal, params, _data):
+        (sleeping,) = params.unpack()
+        if sleeping:
+            self._disarm()            # the reader must not be mid-capture across suspend
+        elif self.locked and self.mode == "wake":
+            self._arm(self.window)    # lid opens onto a lit sensor
+
+    # ── arm / disarm ─────────────────────────────────────────────────────────
+    def _arm(self, seconds):
+        # Not under our lock, cooling down, or nothing to match against: a no-op.
+        # Under a native-mode lock hyprlock owns the reader; `_arm` never gets here
+        # (hypridle's tick is rendered in wake mode only) but the guard is cheap.
+        if (not self.locked or self.mode != "wake" or self.cooldown_src is not None
+                or not self.fp.enrolled(os.getuid())):
+            return
+        self._clear(("window_src",))
+        seconds = min(max(int(seconds), 1), self.MAX_WINDOW)
+        self.window_src = GLib.timeout_add_seconds(seconds, self._on_window)
+        if self.child is None:
+            self._spawn()
+
+    def _disarm(self):
+        self._clear(("window_src", "retry_src"))
+        self._kill()
+
+    def _on_window(self):
+        self.window_src = None
+        self._disarm()
+        return GLib.SOURCE_REMOVE
+
+    def _clear(self, names):
+        for n in names:
+            src = getattr(self, n)
+            if src is not None:
+                GLib.source_remove(src)
+                setattr(self, n, None)
+
+    def _spawn(self):
+        if not self.name or not os.access(Fingerprint.VERIFY_BIN, os.X_OK):
+            self._cooldown()
+            return
+        try:
+            self.child = Gio.Subprocess.new(
+                [Fingerprint.VERIFY_BIN, self.name],
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE,
+            )
+        except GLib.Error:
+            self._cooldown()
+            return
+        self.child.communicate_utf8_async(None, None, self._on_child, None)
+
+    def _kill(self):
+        # Gio.Subprocess drops its pid on reap, so a late signal can never reach a
+        # recycled number — the guard _lamp_off has to keep by hand.
+        proc, self.child = self.child, None
+        if proc is not None:
+            proc.send_signal(signal.SIGKILL)
+
+    def _on_child(self, proc, res, _data):
+        try:
+            _ok, out, _err = proc.communicate_utf8_finish(res)
+        except GLib.Error:
+            out = ""
+        if proc is not self.child:
+            return                    # our own kill: not a verdict
+        self.child = None
+        lines = (out or "").splitlines()
+        if self.MATCH_LINE in lines:
+            self._unlock()
+        elif any(line.startswith("Verify result: verify-no-match") for line in lines):
+            self.attempts += 1
+            if self.attempts >= self.MAX_ATTEMPTS:
+                self._cooldown()
+            elif self.window_src is not None:
+                self.retry_src = GLib.timeout_add(self.RETRY_MS, self._retry)
+        else:
+            # Claim refused (busy), verify-disconnected (libfprint's overheat guard),
+            # no fingers, fprintd gone: nothing a faster retry would change.
+            self._cooldown()
+
+    def _retry(self):
+        self.retry_src = None
+        if self.locked and self.child is None and self.window_src is not None:
+            self._spawn()
+        return GLib.SOURCE_REMOVE
+
+    def _unlock(self):
+        self.attempts = 0
+        self._disarm()
+        try:
+            Gio.Subprocess.new(
+                ["/usr/bin/pkill", "-USR1", "-x", "-u", str(os.getuid()), "hyprlock"],
+                Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE,
+            )
+        except GLib.Error:
+            pass
+
+    def _cooldown(self):
+        self._disarm()
+        self._clear(("cooldown_src",))
+        self.cooldown_src = GLib.timeout_add_seconds(self.COOLDOWN_SEC, self._on_cooldown)
+
+    def _on_cooldown(self):
+        self.cooldown_src = None
+        self.attempts = 0             # the next activity tick arms again
+        return GLib.SOURCE_REMOVE
+
+
 def main():
     ui = AuthUI(sock_path())
     ui.start()
@@ -1208,12 +1539,21 @@ def main():
             print(f"w-authd: gcr prompter unavailable: {e}", file=sys.stderr)
             prompter = None
 
+    lock_sensor = LockSensor(ui.fp)
+    try:
+        lock_sensor.register()
+    except GLib.Error as e:
+        print(f"w-authd: lock sensor unavailable: {e}", file=sys.stderr)
+        lock_sensor = None
+
     loop = GLib.MainLoop()
 
     def shutdown(*_):
         agent.unregister()
         if prompter is not None:
             prompter.unregister()
+        if lock_sensor is not None:
+            lock_sensor.unregister()
         try:
             os.unlink(ui.path)
         except FileNotFoundError:

@@ -24,6 +24,11 @@
 #
 # Run from the W repo. Options:
 #   --quiet   only print pages with problems (and the summary)
+#   --rehash <.claude/library/file.md>...
+#             re-anchor every page sourcing the given library files to their
+#             current sha256 WITHOUT review — only when the delta provably
+#             changed no fact the page states (a `git diff HEAD` already
+#             reviewed); same rule as w-ai-lib-check.
 #   -h        this help
 set -euo pipefail
 
@@ -35,9 +40,11 @@ quiet=0
 # only ever say "problems: N" without naming a single page. Both halves fixed:
 # default is verbose, and quiet now suppresses only the OK lines, exactly as the
 # help above says.
+rehash=0
 case "${1:-}" in
 "") ;;
 --quiet) quiet=1 ;;
+--rehash) rehash=1; shift; [[ $# -gt 0 ]] || { err "--rehash needs at least one library file"; exit 2; } ;;
 -h | --help)
     grep '^#' "$0" | tail -n +2 | sed 's/^# \{0,1\}//'
     exit 0
@@ -60,6 +67,28 @@ DOCS="$REPO/rootfs/usr/share/doc/w"
 
 # ── Every docs page that declares sources ─────────────────────────────────────
 mapfile -t pages < <(grep -rl '^sources:' "$DOCS" --include='*.md' | sort || true)
+
+# ── Rehash: rewrite the sha256 under a matching `- path:` in each page ────────
+if [[ $rehash == 1 ]]; then
+    changed=0
+    for f in "$@"; do
+        rel="${f#"$REPO"/}"; rel="${rel#./}"
+        [[ -f "$REPO/$rel" ]] || { err "no such library file: $rel"; exit 2; }
+        cur="$(sha256sum "$REPO/$rel" | awk '{print $1}')"
+        for page in "${pages[@]}"; do
+            grep -qF -- "path: $rel" "$page" || continue
+            tmp="$(mktemp)"
+            awk -v p="$rel" -v h="$cur" '
+                /^---/ { fm++ }
+                fm==1 && /^  - path:/ { hit = ($NF == p) }
+                fm==1 && hit && sub(/sha256:[ \t]*[0-9a-fA-F]+/, "sha256: " h) { hit = 0; n++ }
+                { print }
+                END { exit(n ? 0 : 3) }' "$page" > "$tmp" && { mv "$tmp" "$page"; echo "    rehash $rel → ${page#"$DOCS"/}"; changed=$((changed + 1)); } || rm -f "$tmp"
+        done
+    done
+    echo "rehashed: $changed anchor(s) updated"
+    exit 0
+fi
 
 if [[ $quiet == 0 ]]; then
     printf 'checking sources: of %s pages\n' "${#pages[@]}" >&2

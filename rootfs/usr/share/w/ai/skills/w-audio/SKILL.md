@@ -7,9 +7,9 @@ description: >-
   volume/mute, microphones, or a silent machine.
 sources:
   - path: .claude/library/package-audio.md
-    sha256: 1237dedc1aedf1e7a9242079de3f612fcbbc82416091cbf60c3e167ad705d578
+    sha256: 79bc76686abbd884f6cfc2de8671cc751ed83990682ca46721d120a15e73f65d
   - path: .claude/library/quickshell-volumecontrol.md
-    sha256: 9c0055751f65e7b00287a2db46f2770702be8c779cd7da87f5eaf2399205516a
+    sha256: e73cf90a4c84ea1442c562cc694876d95c2011a33678a0c86aca7270dc714e38
 tools:
   - w_audio_status
 ---

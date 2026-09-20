@@ -1,0 +1,367 @@
+#!/usr/bin/env bash
+# w-userdirs — W Linux standard home folders (xdg-user-dirs) that follow the language
+#
+# xdg-user-dirs owns WHERE the standard folders are: at every login
+# xdg-user-dirs-update creates the missing ones in the user's language and records
+# them in ~/.config/user-dirs.dirs, which is what programs read (`xdg-user-dir
+# PICTURES`). What upstream deliberately does NOT do is rename anything when the
+# language changes — `xdg-user-dirs-update --force` only creates the new empty
+# folders and repoints the config, leaving the old ones and their contents behind.
+# That step is a GNOME login dialog (xdg-user-dirs-gtk); on W it is this script.
+#
+# `sync` runs at every login (w-userdirs.service, before the graphical session, when
+# no program holds a path yet). It compares the language the folders were named in
+# (~/.config/user-dirs.locale, upstream's own anchor) with the current one, and
+# for every folder that still carries its default name in the OLD language it does
+# one rename(2) to the name in the new language — contents untouched, nothing
+# copied or merged — then repoints the config through `xdg-user-dirs-update
+# --set`. What it never touches: a folder the user moved or renamed themselves
+# (its path no longer matches the old default), and a folder whose new name is
+# already taken by a non-empty directory (both stay; a conflict is reported, never
+# resolved by moving files). The whole step is off with LOCALIZE=no (w-conf
+# `userdirs`, user-scope — W Hub -> System -> System language) and respects
+# xdg-user-dirs' own `enabled=False`. The translations come from xdg-user-dirs
+# itself (--dummy-output under LANGUAGE=<locale>), so W has no name table of its
+# own and covers every language the package does. See w-userdirs.md.
+
+set -euo pipefail
+
+CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}"
+DIRS_FILE="$CONF_DIR/user-dirs.dirs"
+LOCALE_FILE="$CONF_DIR/user-dirs.locale"
+# The system-wide xdg-user-dirs files and W's hook directory. Overridable so the
+# unit tests can run against a fixture tree (the W_CONF_LIB seam idea).
+XDG_DEFAULTS="${W_USERDIRS_DEFAULTS:-/etc/xdg/user-dirs.defaults}"
+XDG_SYS_CONF="${W_USERDIRS_SYSCONF:-/etc/xdg/user-dirs.conf}"
+HOOKS_DIR="${W_USERDIRS_HOOKS:-/usr/share/w/userdirs/hooks.d}"
+
+err() { echo "w-userdirs: $*" >&2; }
+die() { err "$*"; exit 1; }
+
+# W_I18N_LIB / W_CONF_LIB are dev/test seams: they let this CLI be sourced from a
+# checkout on a machine with no W installed (scripts/check/tests).
+# shellcheck source=../lib/w/w-i18n-lib.sh
+source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
+# shellcheck source=../lib/w/w-conf-lib.sh
+source "${W_CONF_LIB:-/usr/lib/w/w-conf-lib.sh}"
+
+usage() {
+  if w_help w-userdirs; then return 0; fi
+  cat <<EOF
+Usage: w-userdirs <command> [options]
+
+Info: Standard home folders (Documents, Pictures, ...) that follow the language.
+
+Commands:
+  status [--porcelain]   Each folder's path and state, the language anchor, and
+                         what the next login would rename
+  sync [--dry-run]       The login step: create missing folders, and rename the
+                         default-named ones when the language has changed
+                         (--dry-run only reports)
+  localize yes|no        Whether folders are renamed when the language changes
+  help                   Show this help
+
+Programs resolve a folder with \`xdg-user-dir <NAME>\` (NAME: DESKTOP DOWNLOAD
+DOCUMENTS MUSIC PICTURES VIDEOS), never by its name. Move a folder yourself with
+\`xdg-user-dirs-update --set <NAME> <path>\` and it is yours: no rename touches it.
+
+Files: ~/.config/user-dirs.dirs (where the folders are)
+       ~/.config/user-dirs.locale (the language they were named in)
+       /etc/xdg/user-dirs.defaults (which folders exist)
+Settings: w-conf cat userdirs
+
+Exit codes: 0 success · 1 runtime error · 2 usage
+
+Examples:
+  w-userdirs status
+  w-userdirs sync --dry-run
+  w-userdirs localize no
+EOF
+}
+
+# ── xdg-user-dirs state ────────────────────────────────────────────────────────
+
+have_xud() { command -v xdg-user-dirs-update >/dev/null 2>&1; }
+
+# `enabled=` from the system file, then the user's (the later wins) — the same
+# two files, same precedence, xdg-user-dirs-update reads.
+xud_enabled() {
+  local f v="true"
+  for f in "$XDG_SYS_CONF" "$CONF_DIR/user-dirs.conf"; do
+    [[ -r "$f" ]] || continue
+    v="$(sed -n 's/^[[:space:]]*enabled[[:space:]]*=[[:space:]]*\([A-Za-z]*\).*/\1/p' "$f" | tail -1)"
+    [[ -n "$v" ]] || v="true"
+  done
+  [[ "${v,,}" == "true" ]]
+}
+
+# The folder NAMEs W ships, in file order (the defaults file is our own).
+default_names() {
+  [[ -r "$XDG_DEFAULTS" ]] || die "$XDG_DEFAULTS not found (is xdg-user-dirs installed?)"
+  sed -n 's/^\([A-Z]\+\)=.*/\1/p' "$XDG_DEFAULTS"
+}
+
+# Undo user-dirs.dirs' shell escaping (\" \$ \` \\), the only escapes the format has.
+unescape() { local s="$1"; printf '%s' "${s//\\\\/$'\x01'}" | sed 's/\\\([$"`]\)/\1/g' | tr '\001' '\\'; }
+
+# Parse a user-dirs.dirs-shaped file into an associative array of absolute paths
+# (name → path). Mirrors load_user_dirs(): `XDG_<NAME>_DIR="$HOME/rel"` or an
+# absolute path, anything else ignored. A value of exactly "$HOME" (a folder the
+# user deleted — xdg-user-dirs reassigns it to the home) resolves to the home.
+# shellcheck disable=SC2034  # written through the nameref
+parse_dirs() { # <file> <assoc-name>
+  local file="$1"; local -n out="$2"
+  local line key val
+  [[ -r "$file" ]] || return 0
+  while IFS= read -r line; do
+    [[ "$line" =~ ^[[:space:]]*XDG_([A-Z]+)_DIR=\"(.*)\"[[:space:]]*$ ]] || continue
+    key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
+    if [[ "$val" == '$HOME' || "$val" == '$HOME/'* ]]; then val="$HOME${val#\$HOME}"
+    elif [[ "$val" != /* ]]; then continue; fi
+    out["$key"]="$(unescape "$val")"
+  done < "$file"
+}
+
+# The system language — /etc/locale.conf, the one fact w-locale owns — and only
+# then the environment. Not the other way round: the login step runs inside the
+# user's systemd manager, and on W that manager LINGERS (Linger=yes for the update
+# timers), so its LANG is whatever the machine spoke when the manager first
+# started, however many language switches ago. Reading the file also makes
+# `status` in a still-English session say what the NEXT login will do, which is
+# the question it is asked. Must be a generated non-C locale: gettext ignores
+# LANGUAGE under C/POSIX, and every locale w-locale ever set is generated.
+base_locale() {
+  local l
+  l="$(sed -n 's/^LANG=//p' "${W_USERDIRS_LOCALE_CONF:-/etc/locale.conf}" 2>/dev/null | tr -d '"' | head -1)"
+  [[ -n "$l" ]] || l="${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}"
+  [[ "$l" == C || "$l" == C.* || "$l" == POSIX ]] && l=""
+  echo "${l:-C.UTF-8}"
+}
+
+# The language the current session names folders in, in the form xdg-user-dirs
+# writes to user-dirs.locale (codeset dropped: ru_RU.UTF-8 → ru_RU).
+current_locale() { local l; l="$(base_locale)"; echo "${l%%.*}"; }
+
+# The default folders as they would be named in <locale>, without creating anything:
+# xdg-user-dirs-update's own --force --dummy-output does the per-element gettext,
+# so the answer is exactly what a first login in that language would produce.
+# `C` gives the untranslated defaults. Fills the named assoc (name → abs path).
+#
+# Run against an EMPTY config dir on purpose: with the user's real config in view
+# the tool writes the dummy file only if something differs from it — and asking
+# for the names of the language the folders already have is exactly the case
+# where nothing does (found on the VM: no file, exit 0). An empty config makes
+# every entry new, so the file is always written.
+names_for() { # <locale|C> <assoc-name>
+  local loc="$1" tmp
+  tmp="$(mktemp -d)"
+  LC_ALL="$(base_locale)" LANGUAGE="$loc" XDG_CONFIG_HOME="$tmp" \
+    xdg-user-dirs-update --force --dummy-output "$tmp/dirs" >/dev/null 2>&1 \
+    || { rm -rf "$tmp"; die "xdg-user-dirs-update failed (locale $loc)"; }
+  parse_dirs "$tmp/dirs" "$2"
+  rm -rf "$tmp"
+}
+
+# ── Config ─────────────────────────────────────────────────────────────────────
+
+localize_on() { [[ "$(wconf_get userdirs LOCALIZE yes)" == "yes" ]]; }
+
+# ── The rename step ────────────────────────────────────────────────────────────
+
+# Empty directory (not a symlink)?
+is_empty_dir() { [[ -d "$1" && ! -L "$1" ]] && [[ -z "$(ls -A "$1" 2>/dev/null)" ]]; }
+
+# After a folder moved: whatever else names that path gets to follow (a W-Pack's
+# document root, say). Each drop-in runs as the user, once per renamed folder;
+# a failing hook is reported and never blocks the rest.
+run_hooks() { # <NAME> <old> <new>
+  local h
+  [[ -d "$HOOKS_DIR" ]] || return 0
+  for h in "$HOOKS_DIR"/*; do
+    [[ -f "$h" && -x "$h" ]] || continue
+    W_USERDIR_NAME="$1" W_USERDIR_OLD="$2" W_USERDIR_NEW="$3" "$h" \
+      || err "hook ${h##*/} failed for $1 (ignored)"
+  done
+}
+
+# Rename one folder, or explain why not. Prints what it did; returns 0 on a rename,
+# 1 when it left things alone (the caller counts).
+rename_dir() { # <NAME> <old> <new> <dry-run:0|1>
+  local name="$1" old="$2" new="$3" dry="$4"
+  if [[ ! -d "$old" || -L "$old" ]]; then
+    echo "  $name: $old is not a directory, nothing to rename"; return 1
+  fi
+  if [[ -e "$new" || -L "$new" ]]; then
+    if is_empty_dir "$new"; then
+      ((dry)) || rmdir "$new"
+    else
+      err "$name: $new already exists and is not empty — keeping both $old and $new (resolve by hand)"
+      return 1
+    fi
+  fi
+  echo "  $name: ${old#"$HOME/"} -> ${new#"$HOME/"}"
+  ((dry)) && return 0
+  mv -T -- "$old" "$new"     # one rename(2): same filesystem, contents untouched
+  xdg-user-dirs-update --set "$name" "$new" >/dev/null \
+    || err "$name: renamed, but xdg-user-dirs-update --set failed — check $DIRS_FILE"
+  run_hooks "$name" "$old" "$new"
+  return 0
+}
+
+cmd_sync() {
+  local dry=0
+  case "${1:-}" in
+    --dry-run) dry=1 ;;
+    "") ;;
+    *) err "sync: unknown option: $1"; exit 2 ;;
+  esac
+  [[ $EUID -ne 0 ]] || die "sync runs as the user whose home it is, not as root"
+  have_xud || die "xdg-user-dirs is not installed"
+  xud_enabled || { echo "w-userdirs: xdg-user-dirs disabled (enabled=False), nothing to do"; return 0; }
+
+  local cur saved="" name n=0
+  cur="$(current_locale)"
+  [[ -r "$LOCALE_FILE" ]] && saved="$(tr -d '\n' < "$LOCALE_FILE")"
+  declare -A old_names=() new_names=() have=()
+
+  # First login ever (no config and no anchor): a home may already hold the
+  # folders under their ENGLISH names — mod_screencapture made ~/Pictures, a
+  # browser made ~/Downloads, a machine installed before this subsystem existed
+  # has all of them. Those ARE the standard folders, so on a non-English system
+  # they are renamed first and xdg-user-dirs-update then adopts them, instead of
+  # planting a second, translated set beside them.
+  if [[ -z "$saved" && ! -e "$DIRS_FILE" ]]; then
+    if localize_on; then
+      names_for C old_names; names_for "$cur" new_names
+      for name in $(default_names); do
+        [[ -n "${old_names[$name]:-}" && -n "${new_names[$name]:-}" ]] || continue
+        [[ "${old_names[$name]}" != "${new_names[$name]}" && -d "${old_names[$name]}" ]] || continue
+        rename_dir "$name" "${old_names[$name]}" "${new_names[$name]}" "$dry" && n=$((n + 1))
+      done
+    fi
+    ((dry)) && { echo "w-userdirs: dry run — $n folder(s) would be renamed, then created for $cur"; return 0; }
+    LC_ALL="$(base_locale)" xdg-user-dirs-update || die "xdg-user-dirs-update failed"
+    # Upstream writes the anchor only when it found NO config — and the --set calls
+    # above already wrote one for the adopted folders. Same value either way.
+    printf '%s' "$cur" > "$LOCALE_FILE"
+    echo "w-userdirs: folders set up for $cur ($n renamed from English)"
+    return 0
+  fi
+
+  # Every other login: let upstream create what is missing / reassign what was
+  # deleted, then decide whether the language moved under the folders.
+  ((dry)) || LC_ALL="$(base_locale)" xdg-user-dirs-update || die "xdg-user-dirs-update failed"
+  # A config without an anchor (written by --set or brought from elsewhere): adopt
+  # the current language as the anchor; there is no "old" to rename from.
+  if [[ -z "$saved" ]]; then
+    ((dry)) || printf '%s' "$cur" > "$LOCALE_FILE"
+    echo "w-userdirs: folders anchored to $cur"
+    return 0
+  fi
+  [[ "$saved" != "$cur" ]] || { echo "w-userdirs: folders already named for $cur"; return 0; }
+  localize_on || { echo "w-userdirs: language changed ($saved -> $cur) but LOCALIZE=no — folders kept"; return 0; }
+
+  names_for "$saved" old_names; names_for "$cur" new_names; parse_dirs "$DIRS_FILE" have
+  echo "w-userdirs: language changed $saved -> $cur"
+  ((dry)) && echo "w-userdirs: dry run — nothing is changed"
+  for name in $(default_names); do
+    [[ -n "${old_names[$name]:-}" && -n "${new_names[$name]:-}" ]] || continue
+    # Not where the old default put it → the user moved it; theirs, not ours.
+    [[ "${have[$name]:-}" == "${old_names[$name]}" ]] || continue
+    [[ "${old_names[$name]}" != "${new_names[$name]}" ]] || continue
+    rename_dir "$name" "${old_names[$name]}" "${new_names[$name]}" "$dry" && n=$((n + 1))
+  done
+  ((dry)) && { echo "w-userdirs: $n folder(s) would be renamed"; return 0; }
+  printf '%s' "$cur" > "$LOCALE_FILE"
+  echo "w-userdirs: $n folder(s) renamed"
+}
+
+# ── status ─────────────────────────────────────────────────────────────────────
+
+cmd_status() {
+  local porcelain=0
+  case "${1:-}" in
+    --porcelain) porcelain=1 ;;
+    "") ;;
+    *) err "status: unknown option: $1"; exit 2 ;;
+  esac
+  local cur saved="" enabled=yes loc name state pending=0 localize
+  localize="$(wconf_get userdirs LOCALIZE yes)"
+  cur="$(current_locale)"
+  [[ -r "$LOCALE_FILE" ]] && saved="$(tr -d '\n' < "$LOCALE_FILE")"
+  xud_enabled || enabled=no
+  declare -A have=() old_names=() new_names=()
+  parse_dirs "$DIRS_FILE" have
+  if have_xud; then
+    names_for "$cur" new_names
+    [[ -n "$saved" && "$saved" != "$cur" ]] && names_for "$saved" old_names
+  fi
+
+  # "default" = under the default name of the language the folders were named in
+  # (after a language change: the OLD one — that is what the next login moves);
+  # "custom" = anywhere else, the user's choice or a conflict left standing.
+  local -a rows=()
+  if have_xud; then
+    for name in $(default_names); do
+      loc="${have[$name]:-}"
+      if [[ -z "$loc" ]]; then state="unset"
+      elif [[ "$loc" == "$HOME" ]]; then state=missing
+      elif [[ -n "${old_names[$name]:-}" ]]; then
+        if [[ "$loc" == "${old_names[$name]}" ]]; then
+          state=default
+          [[ "${old_names[$name]}" != "${new_names[$name]:-}" && "$localize" == yes && "$enabled" == yes ]] \
+            && pending=$((pending + 1))
+        else state=custom; fi
+      elif [[ "$loc" == "${new_names[$name]:-}" ]]; then state=default
+      else state=custom; fi
+      rows+=("$name"$'\t'"$loc"$'\t'"$state")
+    done
+  fi
+
+  if ((porcelain)); then
+    printf 'LOCALIZE\t%s\nENABLED\t%s\nINSTALLED\t%s\nLOCALE_SAVED\t%s\nLOCALE_CURRENT\t%s\nPENDING\t%s\n' \
+      "$localize" "$enabled" "$(have_xud && echo yes || echo no)" "$saved" "$cur" "$pending"
+    local r; for r in "${rows[@]}"; do printf 'DIR\t%s\n' "$r"; done
+    return 0
+  fi
+  have_xud || { echo "xdg-user-dirs: not installed"; return 0; }
+  echo "Folders follow the language: $localize   xdg-user-dirs: $([[ $enabled == yes ]] && echo enabled || echo disabled)"
+  echo "Named in: ${saved:-— (not set up yet)}   Session language: $cur"
+  local r
+  for r in "${rows[@]}"; do
+    IFS=$'\t' read -r name loc state <<< "$r"
+    printf '  %-10s %-8s %s\n' "$name" "$state" "${loc:+${loc/#"$HOME"/~}}"
+  done
+  if ((pending)); then echo "Next login renames $pending folder(s) — preview: w-userdirs sync --dry-run"
+  elif [[ -n "$saved" && "$saved" != "$cur" ]]; then
+    if [[ "$localize" != yes ]]; then echo "Language changed; folders keep their names (LOCALIZE=no)"
+    elif [[ "$enabled" != yes ]]; then echo "Language changed; xdg-user-dirs is disabled, nothing will move"
+    else echo "Language changed, nothing to rename"; fi
+  fi
+}
+
+# ── localize ───────────────────────────────────────────────────────────────────
+
+cmd_localize() {
+  local v="${1:-}"
+  case "$v" in
+    yes|no) ;;
+    on|true)   v=yes ;;
+    off|false) v=no ;;
+    "") err "localize: yes|no required"; exit 2 ;;
+    *)  err "localize: expected yes|no, got: $v"; exit 2 ;;
+  esac
+  # wconf_set is the only writer: atomic, and it refuses a key locked by a fleet
+  # policy (explaining which file) — the user layer, as the schema says.
+  wconf_set userdirs LOCALIZE "$v" user
+  echo "w-userdirs: LOCALIZE=$v (applies at the next login after a language change)"
+}
+
+case "${1:-}" in
+  status)   shift; cmd_status "$@" ;;
+  sync)     shift; cmd_sync "$@" ;;
+  localize) shift; cmd_localize "$@" ;;
+  help|-h|--help) usage ;;
+  "")       usage >&2; exit 2 ;;
+  *)        err "unknown command: $1"; usage >&2; exit 2 ;;
+esac

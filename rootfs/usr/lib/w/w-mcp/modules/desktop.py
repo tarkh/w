@@ -257,14 +257,20 @@ def register(mcp):
     def w_screenshot(
         mode: Annotated[Literal["full", "output", "window"], desc("full = all outputs, output = focused monitor, window = focused window")] = "full",
     ) -> str:
-        """Capture the screen to ~/Pictures/Screenshots and return the saved path
-        (Tier 1: user-scope). Capturing is not analyzing: only save and report the
-        path — do not read the image back unless the user explicitly asks (vision
-        tokens + the screen's contents go to the provider)."""
+        """Capture the screen into the Screenshots subfolder of the user's Pictures
+        folder (`xdg-user-dir PICTURES` — its name follows the system language) and
+        return the saved path (Tier 1: user-scope). Capturing is not analyzing: only
+        save and report the path — do not read the image back unless the user
+        explicitly asks (vision tokens + the screen's contents go to the provider)."""
         err = run(["w-screenshot", mode, "--save"], timeout=30)
         # w-screenshot --save notifies but does not print the path; report the newest
-        # capture so the model gets the concrete file it just created.
-        shots = Path(os.path.expanduser("~/Pictures/Screenshots"))
+        # capture so the model gets the concrete file it just created. Same folder
+        # resolution as the script: the XDG one, not a literal ~/Pictures.
+        pictures = run(["xdg-user-dir", "PICTURES"], timeout=5)
+        home = os.path.expanduser("~")
+        if not pictures.startswith("/") or pictures.rstrip("/") == home:
+            pictures = os.path.join(home, "Pictures")   # unconfigured yet / deleted / no package
+        shots = Path(pictures) / "Screenshots"
         newest = max(shots.glob("*.png"), key=lambda p: p.stat().st_mtime, default=None) if shots.is_dir() else None
         if newest and datetime.datetime.now().timestamp() - newest.stat().st_mtime < 60:
             return f"saved: {newest}"

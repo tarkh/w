@@ -11,13 +11,13 @@ description: >-
   RGB devices for just one user.
 sources:
   - path: .claude/library/w-theme.md
-    sha256: 846128d6fe4b73cfc9b4e833d75e0390f2023e89d1a2e07a8e9b6dae05e28e08
+    sha256: b2a973c39eac5eebda173cfc43b710a91ab4cb68ae63a599c3ccf45e6e6eaa04
   - path: .claude/library/w-style.md
-    sha256: e64419af33ab98c8afb42dbacf9e0a0bcb324f3f70a439fae33328ec4392fba5
+    sha256: 7f6de5a570ffecfd15231d9b70c3b10cba7a966bba308a68662fd0ffce8c25ee
   - path: .claude/library/w-wallpaper.md
-    sha256: 7cdb354e1eb86ed817b8bb5356db0a35b05a7fa05020e2c126217c83b65b7b68
+    sha256: 2499a3c31263d765ac650f83ea6e84264c64424627e28df47631e425f9740f41
   - path: .claude/library/w-appearance.md
-    sha256: 635f4abe38c80529de495e85ff44b201642ab2e6d42b61ddfcb09010afbe5dab
+    sha256: cc748c2f5307f25fceee27548910a89556ab1a23bf1617ce7d9556788987aae0
 tools:
   - w_theme_status
   - w_theme_set
@@ -219,9 +219,11 @@ Appearance → Settings tab:
 - `w-appearance blur <theme|off>` — force Hyprland blur off.
 - `w-appearance motion <theme|off>` — force Hyprland animations off (global toggle).
 - `w-appearance rgb <on|off>` — recolor all RGB devices via the OpenRGB axis
-  (600-rgb) on every login/theme render. `off` leaves devices untouched (last
-  color stays — it is "don't recolor", not "lights out"); `on` = default;
-  `unset` in wconf = follow the theme.
+  (600-rgb) on every login/theme render, and after suspend/resume (`w-rgb`
+  systemd-sleep hook, `post`-only — devices with no onboard memory, e.g. most
+  mice, power off during suspend and come back on the factory palette). `off`
+  leaves devices untouched (last color stays — it is "don't recolor", not
+  "lights out"); `on` = default; `unset` in wconf = follow the theme.
 - `w-appearance rgb-level <soft|medium|crisp>` — which of the theme's three
   dedicated RGB pigments (`W_RGB_SOFT`/`_MEDIUM`/`_CRISP`, `medium` = default)
   colors the hardware. These are **not** `W_PRIMARY`/the screen accent: they are

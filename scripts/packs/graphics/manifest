@@ -14,9 +14,12 @@
 # mcpinkscape: the server refuses to start without its JSON config
 # (~/.config/mcpinkscape.conf, hard-coded default path), so the bundle seeds a
 # sane one: stdio, bridge "auto" (native socket if ever built, else the
-# active-window CLI bridge, else offline), documents in ~/Pictures/mcpinkscape.
+# active-window CLI bridge, else offline), documents in <Pictures>/mcpinkscape.
 # `user` class — the file also holds remote-mode API-key policy the user may
-# add; W never overwrites it.
+# add; W never overwrites it. The seed says ~/Pictures; setup-user.sh rewrites
+# that to the account's real Pictures folder (`xdg-user-dir PICTURES` — named in
+# the user's language), and the w-userdirs hook below keeps it following a
+# rename when the language changes later (managed: W's glue, not user data).
 #
 # Krita: the same `user` seed idea. Krita's Settings → Themes lists every KDE
 # colour scheme on the XDG path, and W's qt axis already renders one there
@@ -42,3 +45,4 @@
 .config/inkscape/preferences.xml	user
 .config/kritarc	user
 .config/mcpinkscape.conf	user
+/usr/share/w/userdirs/hooks.d/mcpinkscape	managed

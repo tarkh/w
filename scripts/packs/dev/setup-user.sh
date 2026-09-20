@@ -54,7 +54,7 @@ fi
 # from mise.toml) — exactly the profile that should not ride inside @home snapshots.
 # Carve them as nested btrfs subvolumes: snapper's snapshots are non-recursive, so a
 # nested subvolume is excluded natively. Same pattern as the uv/pip caches
-# (modules/uv.sh) and the containers pack's rootless storage.
+# (defaults/home-subvols → w_home_subvol) and the containers pack's rootless storage.
 #
 # Per account by nature — every user has their own toolchains, so every user needs
 # their own exclusion.

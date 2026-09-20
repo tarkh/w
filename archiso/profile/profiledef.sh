@@ -64,6 +64,7 @@ file_permissions=(
   ["/root/w/rootfs/usr/lib/w/w-theme/palette.py"]="0:0:755"
   ["/root/w/rootfs/usr/lib/systemd/system-sleep/w-power"]="0:0:755"
   ["/root/w/rootfs/usr/lib/systemd/system-sleep/w-sensors"]="0:0:755"
+  ["/root/w/rootfs/usr/lib/systemd/system-sleep/w-rgb"]="0:0:755"
   # mkinitcpio install + runtime hooks: sourced by name, but mkinitcpio's own
   # add_runscript re-installs the runtime one 755 into the image, and a 644
   # install hook is skipped outright — so the whole tree is executable by nature.

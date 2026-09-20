@@ -85,5 +85,6 @@ W machine with `w-info`.
 - [`w-theme`](reference/w-theme.md) — Switch, add and manage W themes with seamless crossfade.
 - [`w-time`](reference/w-time.md) — Set the timezone, the system clock and NTP (systemd-timesyncd).
 - [`w-update`](reference/w-update.md) — Update all system and AUR packages (repo + AUR in one pass).
+- [`w-userdirs`](reference/w-userdirs.md) — Standard home folders (Documents, Pictures, ...) that follow the language.
 - [`w-wallpaper`](reference/w-wallpaper.md) — Select the wallpaper for the current resolution tier.
 <!-- W-DOCS:reference-toc END -->

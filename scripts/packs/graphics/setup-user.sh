@@ -60,6 +60,18 @@ if command -v uv >/dev/null; then
 else
   warn "uv not found — install the 'uv' module first (apply.sh --uv). Skipping mcpinkscape."
 fi
+# The seeded document root says ~/Pictures, but the account's Pictures folder is
+# whatever xdg-user-dirs named it in the user's language (~/Изображения on a
+# Russian system). Rewrite the seed value only — a root the user chose is theirs.
+# Renames after this point are followed by the w-userdirs hook this bundle ships.
+MCPI_CONF="$USER_HOME/.config/mcpinkscape.conf"
+if [[ -f "$MCPI_CONF" ]] && grep -q '"document_root": "~/Pictures/mcpinkscape"' "$MCPI_CONF"; then
+  pics="$(as_user xdg-user-dir PICTURES 2>/dev/null || true)"
+  if [[ -n "$pics" && "$pics" != "$USER_HOME" && "$pics" != "$USER_HOME/Pictures" ]]; then
+    as_user sed -i "s|\"document_root\": \"~/Pictures/mcpinkscape\"|\"document_root\": \"~${pics#"$USER_HOME"}/mcpinkscape\"|" "$MCPI_CONF"
+    info "mcpinkscape documents: ${pics/#"$USER_HOME"/~}/mcpinkscape"
+  fi
+fi
 
 # ── 2. GIMP MCP bridge (plug-in + server, pinned release) ────────────────────
 if [[ -f "$PLUGIN_DIR/gimpmcp.py" && -f "$PLUGIN_DIR/gimpmcp/gimp_mcp_server.py" ]]; then

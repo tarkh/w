@@ -87,5 +87,6 @@ W выводит `w-info`.
 - [`w-theme`](reference/w-theme.md) — Переключение, создание и управление темами W с плавным переходом.
 - [`w-time`](reference/w-time.md) — Настройка часового пояса, системных часов и NTP (systemd-timesyncd).
 - [`w-update`](reference/w-update.md) — Обновление всех системных и AUR-пакетов (репозитории + AUR за один проход).
+- [`w-userdirs`](reference/w-userdirs.md) — Стандартные папки дома (Документы, Изображения, ...), следующие за языком.
 - [`w-wallpaper`](reference/w-wallpaper.md) — Выбор обоев под текущую ступень разрешения.
 <!-- W-DOCS:reference-toc END -->

@@ -5,9 +5,9 @@ order: 1
 summary: The single update path, the badge in the bar, Arch news, and what to do when an upgrade goes wrong.
 sources:
   - path: .claude/library/w-update.md
-    sha256: 60bec3543825f62331f0c0daa7af83f21a467705df9d6b1dfbb933da7415d117
+    sha256: 004038d61a61d74780748e6bf3ad212974e646e931fa4459b8b076a7ddf5f8dd
   - path: .claude/library/w-mirrors.md
-    sha256: 14ad9894e2c6f65dfa71e6e77d8113285c226ea9955bee465e804e938517f115
+    sha256: 713856f43f54c44fc52642f8968824cdca2f0c967b7bcca2c6943e9a0f6f147c
 ---
 
 W has one native update path built on `pacman` and `yay`. There are no

@@ -1,0 +1,22 @@
+# /etc/xdg/user-dirs.defaults — W Linux: the standard folders of a home directory.
+#
+# Read by xdg-user-dirs-update at every login (xdg-user-dirs.service). Each value
+# is a path relative to the home and is TRANSLATED element by element into the
+# user's language through gettext (~/Pictures on an English system is
+# ~/Изображения on a Russian one), then recorded in ~/.config/user-dirs.dirs —
+# which is what programs read (`xdg-user-dir PICTURES`). Names are never hard-
+# coded anywhere in W for that reason; see w-userdirs.md.
+#
+# W ships six of upstream's nine. TEMPLATES (GNOME's "New document" menu) and
+# PUBLICSHARE (a personal file share) have no consumer on this desktop, and
+# PROJECTS (new in xdg-user-dirs 0.20) would plant a folder W has no opinion
+# about into every home. A folder that is not listed simply is not created;
+# `xdg-user-dir TEMPLATES` then answers with the home itself, which is the
+# spec's own fallback. Shadows the package's copy (pacman keeps ours and writes
+# its own as .pacnew).
+DESKTOP=Desktop
+DOWNLOAD=Downloads
+DOCUMENTS=Documents
+MUSIC=Music
+PICTURES=Pictures
+VIDEOS=Videos

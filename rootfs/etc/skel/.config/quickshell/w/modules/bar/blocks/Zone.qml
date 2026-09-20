@@ -90,9 +90,15 @@ Item {
     readonly property bool defaultHandle:     handlePersists && !hasHandleContent
     readonly property bool handleHasChrome:   foldEnabled && (hasHandleContent || defaultHandle || showChevron)
 
+    // ── Persisted state (folded zone remembers its expanded/collapsed position) ─
+    // key/id for the universal Store; each zone with a unique `id` gets its own slot.
+    // Can be opted out via fcfg.rememberState = false (default: true).
+    readonly property string  storeKey:       "zone.folded." + block.id
+    readonly property bool    rememberState:  fcfg.rememberState !== false
+
     // ── Expansion state ───────────────────────────────────────────────────────
     property bool hovered:    false
-    property bool pinnedOpen: false
+    property bool pinnedOpen: rememberState ? (Store.get(storeKey, false) === true) : false
     readonly property bool expanded: !foldEnabled || (clickMode ? pinnedOpen : hovered)
 
     // Collapse the whole zone (and its gap) when there's nothing to show: no visible
@@ -257,7 +263,10 @@ Item {
                 anchors.fill: parent
                 enabled: block.handlePersists
                 cursorShape: block.handlePersists ? Qt.PointingHandCursor : Qt.ArrowCursor
-                onClicked: block.pinnedOpen = !block.pinnedOpen
+                onClicked: {
+                    block.pinnedOpen = !block.pinnedOpen;
+                    if (block.rememberState) Store.set(block.storeKey, block.pinnedOpen);
+                }
             }
         }
 

@@ -213,3 +213,39 @@ w_render_user_themes() {
     w_render_user_theme "${entry%%$'\t'*}" "${entry#*$'\t'}"
   done
 }
+
+# ── Per-account state outside @home snapshots ───────────────────────────────
+#
+# w_home_subvol <dir> <owner> — make <dir> a nested btrfs subvolume owned by
+# <owner>, so it rides OUTSIDE @home snapshots: snapper's snapshots are
+# non-recursive, so a nested subvolume is excluded natively. For the large,
+# ephemeral, network-recoverable state a toolchain keeps per user (uv/pip
+# download caches, Go's module + build cache, …) — the profile that has no
+# business in a rollback. Acts only while the path is ABSENT: a populated
+# directory cannot be converted in place, so an existing one is left as it is
+# (WARN — it will ride in @home snapshots). Best-effort: off btrfs, or when the
+# create fails, a plain directory is made so the caller's tool still works.
+# Which paths — /usr/share/w/defaults/home-subvols (mod_homesubvol); the W-Packs
+# per-user layer carves its own (dev → mise) with the same rules.
+w_home_subvol() {
+  local dir="$1" owner="$2"
+  if [[ ! -e "$dir" ]]; then
+    if btrfs subvolume create "$dir" >/dev/null 2>&1; then
+      chown "$owner:$owner" "$dir"
+      info "Created nested subvolume $dir (excluded from @home snapshots)."
+    else
+      install -d -o "$owner" -g "$owner" "$dir"
+      echo "  WARN: $dir not on btrfs (or subvolume create failed) — plain dir, no snapshot exclusion."
+    fi
+  elif btrfs subvolume show "$dir" >/dev/null 2>&1; then
+    info "$dir already a subvolume — nothing to do."
+  else
+    echo "  WARN: $dir already exists as a regular dir — leaving as-is (will ride in @home snapshots)."
+  fi
+}
+
+# w_home_subvols_read <registry> — print the home-relative paths a registry
+# lists, one per line; `#` comments (whole-line or trailing) and blanks dropped.
+w_home_subvols_read() {
+  sed 's/#.*//; s/[[:space:]]*$//; /^$/d' "$1"
+}

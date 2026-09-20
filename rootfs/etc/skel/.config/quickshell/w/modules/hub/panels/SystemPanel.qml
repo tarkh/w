@@ -130,7 +130,7 @@ Item {
     property int focusIdx: 0
 
     readonly property var focusables: [verRow, channelRow, docsRow, kernelRow, kernelRebootRow,
-                                      localeRow, updRow, syncRow, vacuumRow, retRow,
+                                      localeRow, userdirsRow, updRow, syncRow, vacuumRow, retRow,
                                       sessModeRow, sessLayoutsRow, sessAutoRow]
     readonly property var visFocusables: root.focusables.filter((f) => f.visible)
 
@@ -241,6 +241,52 @@ Item {
         onFileChanged: reload()
         onLoaded: { const m = (text() || "").match(/^LANG=([^\s#]+)/m); root.lang = m ? m[1].replace(/"/g, "") : ""; }
     }
+
+    // ── Standard home folders (w-userdirs): do they follow the language? ─────────────
+    // User-scope like Session: the tool's porcelain for the value, `w-conf list` for a
+    // fleet lock, re-read after our own setter exits. No polkit anywhere.
+    property string userdirsLocalize: "yes"
+    property bool   userdirsInstalled: true
+    Process {
+        id: udStat
+        running: true
+        command: ["w-userdirs", "status", "--porcelain"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const kv = {};
+                for (const line of (this.text || "").split("\n")) {
+                    const f = line.split("\t");
+                    if (f.length >= 2 && f[0] !== "DIR") kv[f[0]] = f[1];
+                }
+                root.userdirsLocalize = kv.LOCALIZE || "yes";
+                root.userdirsInstalled = kv.INSTALLED !== "no";
+            }
+        }
+    }
+    property var userdirsLocked: ({})
+    Process {
+        id: udConf
+        running: true
+        command: ["w-conf", "list", "userdirs", "--porcelain"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const locked = {};
+                for (const line of (this.text || "").split("\n")) {
+                    const f = line.split("\t");
+                    if (f.length >= 5 && f[3] === "locked") locked[f[0]] = true;
+                }
+                root.userdirsLocked = locked;
+            }
+        }
+    }
+    Process {
+        id: udSet
+        onExited: { udStat.running = false; udStat.running = true; udConf.running = false; udConf.running = true; }
+    }
+    readonly property var userdirsOptions: [
+        { id: "yes", label: Strings.t("hub.userdirs.yes") },
+        { id: "no",  label: Strings.t("hub.userdirs.no") }
+    ]
 
     // ── About: os-release version + update channel ───────────────────────────────────
     // IMAGE_VERSION is the release (a git tag); W_BUILD_DATE is the day this image was
@@ -649,6 +695,34 @@ Item {
                     actionText: Strings.t("hub.change")
                     focused: root.focusedRow === localeRow
                     onActivated: root.navigate("system.locale")
+                }
+                // Whether the standard home folders (Documents, Pictures, …) are
+                // renamed into the new language at the next login. A per-user
+                // setting written by w-userdirs itself (no polkit): the folders are
+                // this account's, and so is the login step that renames them.
+                SelectRow {
+                    id: userdirsRow
+                    width: parent.width
+                    icon: "folder"; glyph: String.fromCodePoint(0xf024b)   // nf-md-folder
+                    label: Strings.t("hub.userdirs")
+                    enabled: root.userdirsInstalled
+                    currentId: root.userdirsLocalize
+                    value: Strings.t("hub.userdirs." + root.userdirsLocalize)
+                    options: root.userdirsOptions
+                    locked: root.userdirsLocked["LOCALIZE"] === true
+                    lockedHint: Strings.t("hub.lockedByPolicy")
+                    focused: root.focusedRow === userdirsRow
+                    onActivated: menuLayer.openMenu(userdirsRow, root.userdirsOptions, root.userdirsLocalize, (id) => {
+                        if (id === root.userdirsLocalize) return;
+                        udSet.running = false; udSet.command = ["w-userdirs", "localize", id]; udSet.running = true;
+                    })
+                }
+                Text {
+                    width: parent.width
+                    text: Strings.t("hub.userdirsHint")
+                    color: Colors.muted
+                    font.family: Fonts.family; font.pixelSize: 11
+                    wrapMode: Text.WordWrap
                 }
 
                 // Updates.

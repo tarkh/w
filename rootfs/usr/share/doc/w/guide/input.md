@@ -5,11 +5,13 @@ order: 6
 summary: Keyboard layouts and the switch key, key repeat, mouse and touchpad behaviour, gestures, and where the fingerprint reader is set up.
 sources:
   - path: .claude/library/w-keyboard.md
-    sha256: 13b38a7476f4b3928d2c11bdbe3c0a906b1f0d65b2ec8b84c67adb41c90f85dc
+    sha256: ce8652939203622146af301b8f3ca9294fb723e85a8706a261d902fd41bbbf35
   - path: .claude/library/w-pointer.md
-    sha256: d8344be0c6e6e9e74217ae93f6bb1279480eb2350564b6e00b0f0a60b7c0fe5f
+    sha256: 6305ddbe5a3269ba4a9d36d27bb1b1a2c2001ee5d387cfa9ff6ca0d525152067
   - path: .claude/library/w-locale.md
-    sha256: d44d9db19c73ed5c0c355de68fdaf802a2b1eb11152c486910df1adf13f59445
+    sha256: 689971e1187491ddf127d58d89c4fb4aa632cf5bd7015df76e762f7100287707
+  - path: .claude/library/w-userdirs.md
+    sha256: e3aed83e00209e9f3d94b94de1e9ee6c67c85028be243b5f49b9f1e7c9a4b328
 ---
 
 **Hub → Input** is where the hardware you type and point with is configured. It
@@ -134,6 +136,27 @@ sudo w-langpack apply
 
 `w-langpack status` says what is missing before you run it. Nothing is broken in
 the meantime: anything without its language pack simply stays in English.
+
+### Your folders follow the language
+
+The standard folders in your home — Documents, Downloads, Pictures, Music,
+Videos, Desktop — are created in your language at your first login, and the
+programs find them by their role, not their name (a screenshot lands in the
+Pictures folder whatever it is called). When you switch the language, they are
+**renamed at your next login**: `~/Pictures` becomes `~/Изображения`, with
+everything in it exactly where it was — a rename is all that happens, nothing is
+copied, merged or deleted.
+
+Two things are left alone on purpose. A folder you moved or renamed yourself
+(`xdg-user-dirs-update --set DOWNLOAD /path` is the command; a file manager
+does the same) is yours and keeps its name in every language. And if the new
+name is already taken by a folder with files in it, both stay as they are —
+`w-userdirs status` says so, and merging them is your call.
+
+If you would rather keep the English names, the switch is right under the
+language: **Hub → System → Language → Folder names follow the language → No**.
+It is per user and needs no password. `w-userdirs sync --dry-run` previews what
+the next login would rename.
 
 ### What will not translate
 

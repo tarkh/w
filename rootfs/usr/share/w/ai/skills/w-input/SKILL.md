@@ -4,23 +4,26 @@ description: >-
   Input on W Linux: keyboard shortcuts (w-hotkeys, profiles, the Hub Hotkeys
   section), keyboard layouts and typing behaviour (w-keyboard: layout ring, toggle
   key, auto-repeat, NumLock), mouse and touchpad (w-pointer: speed, acceleration,
-  scrolling, tap-to-click, gestures), and the system language/locale (w-locale,
-  LANG, the w-langpack language profile). Load this for keybindings, remapping,
-  layouts, mouse/touchpad behaviour, the interface language, or why part of the UI
-  is still in another language after switching it.
+  scrolling, tap-to-click, gestures), the system language (w-locale, LANG, the
+  w-langpack profile) and the standard home folders that follow it (w-userdirs,
+  xdg-user-dir). Load this for keybindings, remapping, layouts, mouse/touchpad
+  behaviour, the interface language, why the UI is partly in another language, or
+  where ~/Pictures and the other standard folders are.
 sources:
   - path: .claude/library/w-hotkeys.md
-    sha256: cedb796f65ff1c859ff32b9f37987cfa9d2980fb1d5f7469a56c959d942e4e8e
+    sha256: 360cafda8f05a02474301207755cbc1dc16814eb468a06001eac619c5d2d8cc7
   - path: .claude/library/w-keyboard.md
-    sha256: 13b38a7476f4b3928d2c11bdbe3c0a906b1f0d65b2ec8b84c67adb41c90f85dc
+    sha256: ce8652939203622146af301b8f3ca9294fb723e85a8706a261d902fd41bbbf35
   - path: .claude/library/w-locale.md
-    sha256: d44d9db19c73ed5c0c355de68fdaf802a2b1eb11152c486910df1adf13f59445
+    sha256: 689971e1187491ddf127d58d89c4fb4aa632cf5bd7015df76e762f7100287707
+  - path: .claude/library/w-userdirs.md
+    sha256: e3aed83e00209e9f3d94b94de1e9ee6c67c85028be243b5f49b9f1e7c9a4b328
   - path: .claude/library/w-langpack.md
-    sha256: b56563d3f04a6e5186afb7d702583d668b90eac8fe3bf89703e697e14f3c7bfc
+    sha256: b7bf4920d29434899f30e19e604026f7fd7a7df02da828a93a52f73238d2f6d7
   - path: .claude/library/config-i18n.md
-    sha256: 412c8f72b60a8e71d531496d3866cfa27ebe6087b423412ead83c8cfbded3039
+    sha256: 48a0c29ef79886e2a0892da82b6b818c6f2d1190b65c74a50cc3e1ea258a53b1
   - path: .claude/library/w-pointer.md
-    sha256: d8344be0c6e6e9e74217ae93f6bb1279480eb2350564b6e00b0f0a60b7c0fe5f
+    sha256: 6305ddbe5a3269ba4a9d36d27bb1b1a2c2001ee5d387cfa9ff6ca0d525152067
 tools:
   - w_keyboard_status
   - w_hotkeys_status
@@ -177,6 +180,41 @@ is root** (it edits `/etc/locale.gen`, runs `locale-gen`, writes `LANG`).
 In the W Hub this lives in the **System** panel's "Language" section (it is a
 system, relogin-scoped setting, closer to About/Updates than to the layout ring),
 actuated through polkit.
+
+## Standard home folders — `w-userdirs`
+
+The standard folders (Documents, Downloads, Pictures, Music, Videos, Desktop) are
+managed by **xdg-user-dirs**: created in the user's language at login and recorded in
+`~/.config/user-dirs.dirs`. **Never spell one by name** (`~/Pictures`) — resolve it:
+`xdg-user-dir PICTURES` (also `DOWNLOAD`, `DOCUMENTS`, `MUSIC`, `VIDEOS`, `DESKTOP`).
+On a Russian system Pictures is `~/Изображения`; and the user may have moved any of
+them. W's own tools (screenshots, the file picker, mcpinkscape's document root) all
+resolve this way.
+
+Upstream never renames a folder when the language changes; W does, at the **first
+login after** the change (`w-userdirs sync`, a user unit before the graphical
+session), for every folder still carrying its default name in the old language —
+one `rename()`, contents untouched. Left alone: a folder the user moved (its path no
+longer matches the default), and one whose new name is already taken by a
+non-empty folder (both stay; `w-userdirs status` reports it). The step is off with
+`w-userdirs localize no` (per-user, no polkit — W Hub → System → System language,
+"Folder names follow the language"); xdg-user-dirs' own `enabled=False` is
+respected too.
+
+- `w-userdirs status [--porcelain]` — each folder's path and state (`default` /
+  `custom` / `missing` / `unset`), the language the folders were named in
+  (`~/.config/user-dirs.locale`) vs the session's, and how many renames the next
+  login would do.
+- `w-userdirs sync --dry-run` — preview exactly those renames (never run `sync`
+  itself for the user inside a live session: programs hold the old paths; it is
+  the login's job).
+- `w-userdirs localize yes|no` — the setting (`w-conf cat userdirs`).
+- A user who wants a folder elsewhere: `xdg-user-dirs-update --set DOWNLOAD
+  /path` — from then on it is theirs and no rename touches it.
+
+"I switched to Russian but my folders are still English": either the user has not
+logged in again yet, `localize` is `no`, or the folders were moved by hand — `status`
+tells which.
 
 ## The language profile — `w-langpack`
 

@@ -1,0 +1,34 @@
+# userdirs.manifest — config owned by mod_userdirs (standard home folders:
+# xdg-user-dirs + the rename-on-language-change step, w-userdirs).
+#
+#   • /etc/xdg/user-dirs.defaults — WHICH folders exist and their English
+#     names (translated per user by xdg-user-dirs). W's curated six; shadows
+#     the package's copy, so it is W's vendor data: managed.
+#   • /usr/share/w/defaults/userdirs.conf + .schema — W's default for the one
+#     setting (LOCALIZE) and WHO may decide it.
+#   • /etc/w/userdirs.conf — the admin's DEVIATIONS. Class override: the
+#     update never touches it; `w-reset userdirs` drops the deviations.
+#   • /usr/share/w/userdirs/hooks.d/ — what other subsystems run after a folder
+#     is renamed (a W-Pack whose config names a path under PICTURES, say).
+#     The directory is W's, the drop-ins belong to whoever ships them.
+#
+# ~/.config/w/userdirs.conf is where the setting normally lands (user-scope),
+# created on demand and with no vendor default — class user-conf: `w-reset
+# userdirs` deletes it (its "default" IS absence).
+#
+# NOT tracked here — xdg-user-dirs' own per-user state, not W configuration:
+#   • ~/.config/user-dirs.dirs   — where each folder is, written by
+#     xdg-user-dirs-update; the user edits it through `xdg-user-dirs-update
+#     --set` or their file manager, and W must never reset it: it can point
+#     at folders full of files.
+#   • ~/.config/user-dirs.locale — the language the folders were named in;
+#     the anchor w-userdirs compares against. Resetting it would make the next
+#     login believe nothing changed.
+#
+# Format: <path>\t<class>   class: managed | override | user-conf
+/etc/xdg/user-dirs.defaults	managed
+/usr/share/w/defaults/userdirs.conf	managed
+/usr/share/w/defaults/userdirs.schema	managed
+/usr/share/w/userdirs/hooks.d/	managed
+/etc/w/userdirs.conf	override
+.config/w/userdirs.conf	user-conf

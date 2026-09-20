@@ -8,17 +8,17 @@ description: >-
   Monitors and the night light are w-displays; reopening windows at login is w-session.
 sources:
   - path: .claude/library/package-hyprland.md
-    sha256: 39aff302ce90ea1ea2ed24607f8476586bed1980cb1f5533b9c9b7897df3db62
+    sha256: 1de62a5b2513cb022e41927e13e7d3299516829de92ecfa18dd87e5678ae9207
   - path: .claude/library/quickshell.md
-    sha256: 1ddc54593c92571de2d2b8658b376e7ecb2dc44b2292ca77da3ec07a3717bbe2
+    sha256: da1b14d9d934188dd9b49ece41af8b58ab8d5abe06c6172e198e1c5ade171759
   - path: .claude/library/quickshell-bar.md
-    sha256: 535ef9874fedc06b73a9f2224283306e498bbdcde4d892a292f5b7b4c9263e6c
+    sha256: 76dc9b56a2cdf3a879e737a653ea5bc330722c1eb346e64f917765823a1abf5c
   - path: .claude/library/w-bar.md
-    sha256: 32f85bd9637a23ce14e911d48ab0586ac0c569cc27f750bcdca25e3fdf5c75f6
+    sha256: 763c1acafab94122e8a18c1c3f0b149eef2e54978f352f7ec4162b8241bdd787
   - path: .claude/library/quickshell-assistant.md
-    sha256: 4d3098dde3047c6d5b7057911ca6393be05627792968b4f46a3542b69f18bb33
+    sha256: b296b0e3249a090498c07b6ccdcc39eb754df404119b9dd026a9584fd7abe185
   - path: .claude/library/quickshell-keyboard.md
-    sha256: dc74f0589ce0eb8f24ebddd8f3c8bbb5aa1cd2b21ce63e2b5f6d3a472aa1b0c8
+    sha256: 0f132daff3b5514e1f520397d9489286c4fec4a03b654d94b6c7f564f0b1f0bc
 tools:
   - w_desktop_context
   - w_notify
@@ -208,7 +208,9 @@ Everything shell-side is one Quickshell instance:
 `w-screenshot` is the capture tool (region/window/output/full × annotate/copy/save).
 By default `Super+Shift+I` takes a region screenshot and opens the annotator
 (`Super+I` the whole output, `Super+Ctrl+I` the focused window); saved images go to
-`~/Pictures/Screenshots`.
+`Screenshots/` inside the user's Pictures folder — `$(xdg-user-dir PICTURES)/Screenshots`,
+never a literal `~/Pictures`: the folder is named in the system language (`~/Изображения`
+on a Russian system) and follows a language change (`w-userdirs`, skill **w-input**).
 
 ## Desktop tools (via `w-mcp`)
 
@@ -230,7 +232,7 @@ polkit prompt is involved; the host's tool-approval covers them.
   every needless `critical` teaches them to ignore the next one; the tool's description
   has the per-level rule. Managing the notification system itself (DND, history, per-app
   mute) is the **w-notifications** skill.
-- **`w_screenshot`** — capture to `~/Pictures/Screenshots` and get the file path.
+- **`w_screenshot`** — capture to `<Pictures>/Screenshots` (`xdg-user-dir PICTURES`) and get the file path.
   Interactive region select (`Super+Ctrl+S`) is deliberately not exposed here.
   **Capturing is not analyzing:** take the shot, report the path, and do not read the
   image back unless asked to look at it.

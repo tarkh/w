@@ -1,0 +1,16 @@
+# fingerprint.schema — which layer may decide each key of the `fingerprint` subsystem.
+#
+# Read by /usr/lib/w/w-conf-lib.sh (and its Python twin) during the load
+# pass; a user-layer assignment to a `system` key is dropped with a warning, and
+# `wconf_set` refuses to write it in the first place. See w-conf.md.
+#
+# Format: <KEY>\t<scope>       scope: system | user | both
+#   system — root domain: the admin (or fleet policy) decides, per machine.
+#   user   — the logged-in user may override it in ~/.config/w/fingerprint.conf.
+#   both   — either layer may speak; the usual priority order applies.
+
+# Both are about one person's lock screen: hyprlock-auth.conf and the hypridle
+# tick are rendered into that user's home, and w-authd is their user service.
+# A fleet that wants one answer pins it in /etc/w/policy.d.
+LOCK_SENSOR	user
+LOCK_SENSOR_ARM	user

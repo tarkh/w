@@ -5,9 +5,9 @@ order: 4
 summary: Окна, рабочие столы, попапы, уведомления, скриншоты и восстановление сессии.
 sources:
   - path: .claude/library/package-hyprland.md
-    sha256: 39aff302ce90ea1ea2ed24607f8476586bed1980cb1f5533b9c9b7897df3db62
+    sha256: 1de62a5b2513cb022e41927e13e7d3299516829de92ecfa18dd87e5678ae9207
   - path: .claude/library/quickshell.md
-    sha256: 1ddc54593c92571de2d2b8658b376e7ecb2dc44b2292ca77da3ec07a3717bbe2
+    sha256: da1b14d9d934188dd9b49ece41af8b58ab8d5abe06c6172e198e1c5ade171759
 anchors:
   windows-and-workspaces: окна-и-рабочие-столы
   the-shell-surfaces: поверхности-шелла

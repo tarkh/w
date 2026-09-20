@@ -11,15 +11,15 @@ description: >-
   that is not lit.
 sources:
   - path: .claude/library/w-power.md
-    sha256: d56c98271d2ab9abb9ea80de17e27be551895dce7c52ab76df830482b004f797
+    sha256: 6ebee081798bf911e01e3677de0d6eba65052d329682ae63eb095bd0fdc6b59b
   - path: .claude/library/w-kbdlight.md
-    sha256: c119c45ae51cfa7e33b66c1754a362ddd33d7c2851b7bae80654f877bbabb068
+    sha256: d17c2a2a0ecf20c3a464a254d778e0873def9ebb8833b4362e08eb9869dec506
   - path: .claude/library/quickshell-powermenu.md
-    sha256: 8a5ae4b1fdf5e2dad05e7741d0aec8c2c8b9b20c0ba0bcedd92108383bffac33
+    sha256: 8d9f9fb42f9cc89eac3b17ba1c5d379da87d8071eabcfe8aa976d9599ef3b518
   - path: .claude/library/quickshell-bar.md
-    sha256: 535ef9874fedc06b73a9f2224283306e498bbdcde4d892a292f5b7b4c9263e6c
+    sha256: 76dc9b56a2cdf3a879e737a653ea5bc330722c1eb346e64f917765823a1abf5c
   - path: .claude/library/package-hyprlock.md
-    sha256: 263500b4423d4929bac38e2068e28bc32b9a3e5dd42600d0798973dfbb9acdb8
+    sha256: b22971fe5d7f69876a20eb7082c4e3f0895c47c23caf1024b44a856da7893755
 tools:
   - w_power_status
   - w_power_profile
@@ -119,6 +119,15 @@ renders its config from the active preset, with **separate AC and battery timers
   DPMS back on and re-asserts the night light (see the `w-desktop` skill).
 - The lock screen is **hyprlock** (a GPU locker: blurred background, PAM password +
   optional fingerprint). Manual lock is `Super+L` (a w-hotkeys default bind).
+- **"The fingerprint stops working after a few minutes on the lock screen"** — not a
+  broken enrolment: in the default mode hyprlock keeps the reader scanning for the whole
+  lock, and libfprint's overheat guard (any reader without hardware finger detection,
+  e.g. DigitalPersona U.are.U) disables it after ~4 minutes with `Device disabled to
+  prevent overheating` in `journalctl -u fprintd`. The fix is the lock-sensor mode
+  `w-fingerprint lock-sensor mode wake` (Hub → Input → Fingerprint → Lock screen →
+  Sensor → On activity): the reader then lights up only for a window after the lock, a
+  wake-up or any activity while locked — see the `w-security` skill. Do not restart
+  fprintd or re-enrol as a "fix".
 
 Diagnose with `pgrep -a hypridle` (if it is not running, idle-lock and lock-before-
 sleep will not fire) — `w_power_status` reports this. Idle timeouts are a user setting

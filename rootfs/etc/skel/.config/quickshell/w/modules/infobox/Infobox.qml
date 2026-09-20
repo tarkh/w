@@ -204,6 +204,19 @@ Scope {
                     anchors.margins: card.padC
                     spacing: 10
 
+                    // A large centred glyph above the title — statement cards only
+                    // (curtain, AI gate, not-found), never alongside `back`/`tall`.
+                    Text {
+                        width: parent.width
+                        topPadding: 8
+                        text: root.content.glyph || ""
+                        color: Colors.accentInk
+                        font.family: Fonts.family
+                        font.pixelSize: 40
+                        horizontalAlignment: Text.AlignHCenter
+                        visible: text.length > 0
+                    }
+
                     // Header line: optional ‹ Back + title on ONE compact line
                     // (the docs card). The glyph form — a large centred glyph above
                     // a centred title — stays for statement cards (curtain, AI gate).

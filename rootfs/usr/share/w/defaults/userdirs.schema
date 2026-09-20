@@ -1,0 +1,17 @@
+# userdirs.schema — which layer may decide each key of the `userdirs` subsystem.
+#
+# Read by /usr/lib/w/w-conf-lib.sh (and its Python twin) during the load
+# pass; a user-layer assignment to a `system` key is dropped with a warning, and
+# `wconf_set` refuses to write it in the first place. See w-conf.md.
+#
+# Format: <KEY>\t<scope>       scope: system | user | both
+#   system — root domain: the admin (or fleet policy) decides, per machine.
+#   user   — the logged-in user may override it in ~/.config/w/userdirs.conf.
+#   both   — either layer may speak; the usual priority order applies.
+#
+# The folders are one user's own, renamed by that user's own login step, so the
+# key is theirs — no polkit anywhere in this subsystem (the Hub calls
+# `w-userdirs` directly, as it calls `w-session`). A fleet that wants to fix it
+# still can: policy.d sits above the user layer and locks the setter.
+
+LOCALIZE	user
