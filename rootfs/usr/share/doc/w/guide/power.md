@@ -5,7 +5,7 @@ order: 8
 summary: Power profiles, the idle cascade of lock, screen-off and suspend, lid and power-button actions, and the battery charge limit.
 sources:
   - path: .claude/library/w-power.md
-    sha256: bfa673c5c0c45593547bddfcd97ed2484497e9a62ea42c2ffd7b0602dfb4b57c
+    sha256: 940356f6554a008dbc7035b3b9945bf742428fb27fb9daefe165b9f480558114
   - path: .claude/library/w-kbdlight.md
     sha256: d17c2a2a0ecf20c3a464a254d778e0873def9ebb8833b4362e08eb9869dec506
 ---
@@ -66,7 +66,11 @@ Two behaviours worth knowing about, both intentional:
   unlocked desktop — and it waits for the lock screen to finish appearing before
   it actually goes to sleep, so you see the whole thing draw rather than a
   half-faded flash. In a terminal, use `w-power sleep` rather than
-  `systemctl suspend` to get that same behaviour.
+  `systemctl suspend` to get that same behaviour. Closing the lid suspends
+  through systemd rather than through W, so there the lock screen simply
+  appears without the fade — the animation would not be visible with the lid
+  shut, and skipping it is what keeps a half-drawn locker off the screen you
+  come back to.
 - Once the screen is locked, nudging the mouse blanks the display again after
   the screen-off delay rather than leaving it lit.
 

@@ -8,6 +8,16 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.18.1
+
+- **Fixed: locking at the exact moment of a suspend no longer freezes
+  half-way and replays the animation on resume.** When suspend arrives via
+  the lid, a bare `systemctl suspend`, or critical battery, the lock screen
+  used to cut off mid-fade-in and the rest of the animation played over the
+  desktop after wake. The lock now skips its fade-in when a suspend is
+  already in flight — the screen is going off anyway — while normal locks
+  (`Super+L`, idle, `w-power sleep`) keep it.
+
 ## v0.18.0
 
 - **New W-Pack: ComfyUI.** Local image/video generation as a system service

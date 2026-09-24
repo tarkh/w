@@ -292,7 +292,13 @@ general {
   # already blanked. The plain-hyprlock fallback runs only when the scope
   # launcher itself failed (rc=1), never when hyprlock ran and died (rc >= 128):
   # a crash on exit must not re-lock the session the user just unlocked.
-  lock_cmd = hyprctl dispatch 'hl.dsp.dpms({ action = "on" })' && sleep 0.1 && pidof hyprlock || systemd-run --user --scope --unit=w-lock --quiet --collect hyprlock || [ \$? -ge 128 ] || hyprlock
+  # The flags come from 'w-power _lock-flags': a lock that happens inside a
+  # suspend already in flight gets --no-fade-in (see lock_flags). The answer is
+  # VALIDATED, not trusted: a w-power too old to know the verb prints its usage
+  # text on stdout, which would reach hyprlock as arguments and leave the screen
+  # unlocked. Anything but the one flag we expect becomes the empty string, i.e.
+  # exactly the behaviour from before this flag existed.
+  lock_cmd = f=\$(w-power _lock-flags 2>/dev/null); [ "\$f" = --no-fade-in ] || f=; hyprctl dispatch 'hl.dsp.dpms({ action = "on" })' && sleep 0.1 && pidof hyprlock || systemd-run --user --scope --unit=w-lock --quiet --collect hyprlock \$f || [ \$? -ge 128 ] || hyprlock \$f
   # Lock before sleep. hypridle itself holds a logind delay inhibitor from
   # startup and, in mode 3, releases it only once the compositor reports the
   # session locked (hyprland-lock-notify) -- and hyprlock takes that lock only
@@ -698,6 +704,27 @@ cmd_power_key() {
   echo "w-power: power key -> $act"
 }
 
+# ── The lock about to be started, and whether it may animate ─────────────────
+# Extra flags for the hyprlock that lock_cmd starts. A lock that lands INSIDE a
+# suspend already in flight — the lid through logind's HandleLidSwitch*, a bare
+# `systemctl suspend`, the critical-battery action — must not fade in: hypridle
+# acks the sleep on the lock-surface commit, which is before the fadeIn has
+# played, so the freeze lands mid-animation and, CLOCK_MONOTONIC not advancing
+# across S3, the rest of it replays over the woken desktop. On those paths the
+# animation is invisible anyway (the screen is going off), so dropping it costs
+# nothing and makes hypridle's ack honest. Visible locks keep the fade: the
+# hotkey, the lock tile, the idle link, and `w-power sleep`, which locks BEFORE
+# it asks for the suspend and waits the fade out itself.
+# logind's PreparingForSleep is the authoritative answer and needs no privileges.
+# Never fatal: a lock must not depend on this working (upstream hypridle#146).
+lock_flags() {
+  local p
+  p="$(busctl --system get-property org.freedesktop.login1 /org/freedesktop/login1 \
+       org.freedesktop.login1.Manager PreparingForSleep 2>/dev/null)" || return 0
+  [[ "$p" == *true* ]] && echo --no-fade-in
+  return 0
+}
+
 # ── Sleep the right way ───────────────────────────────────────────────────────
 # `systemctl suspend` alone freezes the machine mid-lock. hypridle's inhibit_sleep=3
 # releases its logind delay inhibitor from onLocked() — i.e. the moment hyprlock's
@@ -1042,6 +1069,7 @@ case "${1:-}" in
   _render-skel)   cmd_render_skel ;;            # internal: mod_power, the useradd template
   _sync)          cmd_sync ;;                   # internal: w-power-monitor (user, on AC<->battery)
   _charge-apply)  need_root; charge_apply ;;   # internal: w-charge-limit.service / sleep hook
+  _lock-flags)    lock_flags ;;                # internal: hypridle lock_cmd (fade or not)
   _lidwake-pre)   lidwake_pre ;;               # internal: sleep hook (pre)
   _lidwake-post)  lidwake_post ;;              # internal: sleep hook (post)
   help|-h|--help) usage ;;

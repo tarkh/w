@@ -11,7 +11,7 @@ description: >-
   that is not lit.
 sources:
   - path: .claude/library/w-power.md
-    sha256: bfa673c5c0c45593547bddfcd97ed2484497e9a62ea42c2ffd7b0602dfb4b57c
+    sha256: 940356f6554a008dbc7035b3b9945bf742428fb27fb9daefe165b9f480558114
   - path: .claude/library/w-kbdlight.md
     sha256: d17c2a2a0ecf20c3a464a254d778e0873def9ebb8833b4362e08eb9869dec506
   - path: .claude/library/quickshell-powermenu.md
@@ -19,7 +19,7 @@ sources:
   - path: .claude/library/quickshell-bar.md
     sha256: 76dc9b56a2cdf3a879e737a653ea5bc330722c1eb346e64f917765823a1abf5c
   - path: .claude/library/package-hyprlock.md
-    sha256: c2f5a26bf2605dc998d071c8912b8364f2776ab8d6e44cf848e11063a433810f
+    sha256: c86fee0f613668f1ab38d2e71cb332df9f4758492c2b80bf7cebf9853856b22b
 tools:
   - w_power_status
   - w_power_profile
@@ -126,6 +126,12 @@ renders its config from the active preset, with **separate AC and battery timers
   only then asks for the suspend. The Power menu's suspend tile and the auto-suspend
   timer already use it. If a user reports "the lock screen looks broken when I suspend",
   this is the answer — not a theme or GPU problem.
+- **Paths W does not own — the lid, a bare `systemctl suspend`, the critical-battery
+  action — lock without the fade instead.** `lock_cmd` asks `w-power _lock-flags`, which
+  reads logind's `PreparingForSleep`: a lock landing inside a suspend already in flight
+  starts `hyprlock --no-fade-in`, so the committed surface is already the final image and
+  there is no half-played animation to freeze or to replay after the resume. Nobody sees
+  that fade anyway (the screen is going off); every visible lock keeps it.
 - The lock screen is **hyprlock** (a GPU locker: blurred background, PAM password +
   optional fingerprint). Manual lock is `Super+L` (a w-hotkeys default bind).
 - **"The fingerprint stops working after a few minutes on the lock screen"** — not a
