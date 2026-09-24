@@ -75,6 +75,8 @@ Options:
   --porcelain       list: KEY<TAB>VALUE<TAB>LAYER<TAB>locked<TAB>SCOPE (for GUIs)
   --prefix <P>      list/cat: only keys starting with P (e.g. NTP_)
   --path            origin: print the winning file instead of the layer name
+  --                End option parsing; needed before a <value> that itself
+                    starts with '-' (e.g. a flags string for comfyui.ARGS)
 
 Exit codes:
   0  Success
@@ -85,6 +87,7 @@ Examples:
   w-conf get power CHARGE_LIMIT
   w-conf origin ai HOST
   w-conf cat power
+  w-conf set comfyui ARGS -- "--lowvram --cpu-vae"
   w-conf list time --prefix NTP_
   sudo w-conf set power CHARGE_LIMIT 80
 EOF
@@ -102,6 +105,11 @@ parse_opts() {
       --porcelain) PORCELAIN=1 ;;
       --path)      WANT_PATH=1 ;;
       --prefix)    shift; PREFIX="${1:-}"; [[ -n "$PREFIX" ]] || { err "--prefix needs a value"; exit 2; } ;;
+      # A `set` value that itself starts with `-` (comfyui.ARGS holding CLI
+      # flags is the common case) would otherwise be swallowed by the `-*`
+      # catch-all below. `--` ends option parsing, GNU-style: everything after
+      # it is positional even if it starts with a dash.
+      --)          shift; while (($#)); do ARGS+=("$1"); shift; done; break ;;
       -*)          err "unknown option: $1"; usage >&2; exit 2 ;;
       *)           ARGS+=("$1") ;;
     esac

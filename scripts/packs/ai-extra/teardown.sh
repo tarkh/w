@@ -3,11 +3,11 @@
 # by `w-pack remove` as root with:
 #   BUNDLE_NAME  BUNDLE_DIR  PACK_PACKAGES (1|0)
 #
-# THIS BUNDLE IS WHY THE INVERSE HAS TO BE DECLARED. setup.sh installs Ollama by
-# GPU variant (ollama / ollama-cuda / ollama-rocm), decided at install time from
-# lspci — so the bundle's main package is deliberately NOT in pkgs.txt, and a
-# remover that only undid the tree would leave it behind, service and all. Only
-# the bundle knows what it installed, so only the bundle can take it back.
+# THIS BUNDLE IS WHY THE INVERSE HAS TO BE DECLARED. setup.sh installs Ollama as
+# base + GPU backend (ollama, plus ollama-cuda / ollama-rocm), the backend decided
+# at install time from lspci — so the bundle's main package is deliberately NOT in
+# pkgs.txt, and a remover that only undid the tree would leave it behind, service
+# and all. Only the bundle knows what it installed, so only it can take it back.
 #
 # What is NOT undone, by design:
 #   * /var/lib/ollama — the model store. Gigabytes of downloads, and a nested
@@ -31,18 +31,20 @@ if systemctl list-unit-files ollama.service &>/dev/null; then
     || warn "could not disable ollama.service (already gone?)"
 fi
 
-# ── 2. The GPU-variant package setup.sh chose (only when packages were asked for) ─
-# Whichever variant is actually installed is the one to take, not the one this
-# machine would pick today — the GPU may have changed since.
-variant="$(pacman -Qq 2>/dev/null | grep -E '^ollama(-cuda|-rocm)?$' | head -1 || true)"
-if [[ -n "$variant" ]]; then
+# ── 2. The Ollama packages setup.sh installed (only when packages were asked for) ─
+# Whatever is actually installed is what gets taken, not what this machine would
+# pick today — the GPU may have changed since. Base and backend go in ONE call:
+# they are not competing variants, `ollama-rocm`/`ollama-cuda` DEPEND on `ollama`,
+# so removing the base alone is refused while a backend is still installed.
+mapfile -t variants < <(pacman -Qq ollama ollama-cuda ollama-rocm 2>/dev/null || true)
+if (( ${#variants[@]} )); then
   if [[ "$WITH_PACKAGES" == 1 ]]; then
-    info "Removing $variant (installed by this bundle's setup, not by pkgs.txt)..."
-    pacman -Rns --noconfirm "$variant" || warn "could not remove $variant"
+    info "Removing ${variants[*]} (installed by this bundle's setup, not by pkgs.txt)..."
+    pacman -Rns --noconfirm "${variants[@]}" || warn "could not remove ${variants[*]}"
   else
-    info "Left installed: $variant — this bundle installed it outside pkgs.txt."
-    info "  It is included if you re-run with --packages, or remove it yourself:"
-    info "      sudo pacman -Rns $variant"
+    info "Left installed: ${variants[*]} — this bundle installed them outside pkgs.txt."
+    info "  They are included if you re-run with --packages, or remove them yourself:"
+    info "      sudo pacman -Rns ${variants[*]}"
   fi
 fi
 

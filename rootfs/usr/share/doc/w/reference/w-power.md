@@ -39,6 +39,10 @@ Commands:
   power-key <poweroff|suspend|menu|ignore>
                              Power-button action (root; menu = open the W power menu)
   mode <laptop|desktop|auto> Apply a machine-mode preset to every knob (root)
+  sleep                      Suspend the right way: lock the screen, wait for the
+                             lock screen to finish drawing, THEN sleep. Prefer this
+                             over a bare 'systemctl suspend', which freezes the
+                             machine while the locker is still fading in
   apply                      Re-render every node from $CONF (root)
   help                       Show this help
 

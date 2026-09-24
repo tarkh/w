@@ -80,10 +80,14 @@ Scope {
 
     // Lock/suspend keep apps running; logout/reboot/shutdown go through
     // w-session-exit (graceful close with reachable save dialogs, then act).
+    // Suspend goes through `w-power sleep`, never a bare `systemctl suspend`: it
+    // locks first and waits for hyprlock to finish drawing, so the screen does not
+    // freeze half-faded on the way down (see w-power.md). The fallback keeps the
+    // tile working on a system where w-power is missing.
     function cmdFor(id) {
         switch (id) {
         case "lock":     return "loginctl lock-session";
-        case "suspend":  return "systemctl suspend";
+        case "suspend":  return "w-power sleep || systemctl suspend";
         case "logout":   return "w-session-exit logout";
         case "reboot":   return "w-session-exit reboot";
         case "shutdown": return "w-session-exit shutdown";

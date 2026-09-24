@@ -16,7 +16,8 @@
 #   i18n/greeter.json   → rootfs/etc/greetd/quickshell/w/core/i18n.json
 #   i18n/installer.json → scripts/install/i18n/<lang>.conf
 #   i18n/scripts.json   → rootfs/usr/share/w/i18n/<lang>.conf
-#   i18n/apps.json      → localized keys inside rootfs/usr/share/applications/*.desktop
+#   i18n/apps.json      → localized keys inside */usr/share/applications/*.desktop
+#                         (the base tree, and the same path inside a W-Pack)
 #   i18n/help/<lang>/   → rootfs/usr/share/w/i18n/help/<lang>/w-<tool>.txt
 #
 # THE HELP DOMAIN IS THE ODD ONE and deliberately so. It is not a JSON catalog:
@@ -205,6 +206,21 @@ def render_conf(cat, lang, domain):
 
 
 DESKTOP_KEY = re.compile(r"^([A-Za-z0-9-]+)(\[[^\]]+\])?=(.*)$")
+
+
+def desktop_path(root, base):
+    """Where a W desktop entry lives. The base system is the common case; a
+    W-Pack keeps its own under config/root/ so the entry appears in the launcher
+    only while that bundle is installed — but its Name/Comment are translated
+    from the same catalog as everything else, so the resolver has to look there
+    too. First match wins; a missing file is reported by the caller."""
+    core = root / "rootfs/usr/share/applications" / f"{base}.desktop"
+    if core.is_file():
+        return core
+    for pack in sorted((root / "scripts/packs").glob(
+            f"*/config/root/usr/share/applications/{base}.desktop")):
+        return pack
+    return core
 
 
 def render_desktop(root, cat, langs, path_of):
@@ -407,9 +423,7 @@ def main():
 
     cat = load(root, "apps")
     langs = validate("apps", cat, allow_newline=False)
-    targets.update(render_desktop(
-        root, cat, langs,
-        lambda base: root / "rootfs/usr/share/applications" / f"{base}.desktop"))
+    targets.update(render_desktop(root, cat, langs, lambda base: desktop_path(root, base)))
 
     targets.update(render_help(root))
 

@@ -7,7 +7,7 @@ description: >-
   already-installed bundle is covered by that bundle's own skill (skills/<bundle>).
 sources:
   - path: .claude/library/packs.md
-    sha256: e8eb036707ee490118c710f0c8dbb5fff425224454aca9746b6437a43bb51afc
+    sha256: b9702c060e7fb45344e1d4810faf9e2034c04f67692cc9ecb0cec8c65089a3ed
 tools:
   - w_pack_list
   - w_pack_status

@@ -10,9 +10,9 @@ description: >-
   fingerprints, firmware, or LUKS/TPM2/Secure Boot questions.
 sources:
   - path: .claude/library/security.md
-    sha256: 3ab6ec5bf765fd6759ab071d57d8dbcefada49bd30c7c7546a3e93422f6bb63a
+    sha256: 3ec7c64f94e8053341ba52ded39be6b779d58ea1284c8db81f32c45f0697e12c
   - path: .claude/library/w-fingerprint.md
-    sha256: ef4418b8810541f823dfeea55d2f2518a81c40b6161ff3f05300aae63fe46d78
+    sha256: db6347feb144b0a35aec53c7c5cb7ee5b3386a4d2cfa904f582ec9915356bd24
   - path: .claude/library/w-ssh.md
     sha256: b1a094a3801dad4efdd25e9e56439883f0e2a3d71cde53a717ca77597bb8ca2b
   - path: .claude/library/package-limine.md
@@ -121,6 +121,17 @@ Three things worth knowing before you diagnose anything:
 - **The reader takes a single claim.** While an enrolment is running, authentication by
   finger is unavailable — and vice versa, an enrolment started while the password dialog
   is asking for a finger fails with `busy`. That is not a bug; wait and retry.
+- **"The finger stopped working after a resume, everywhere"** — the lock screen *and*
+  every polkit prompt, while `w-fingerprint status` still lists the enrolled fingers.
+  That is fprintd holding a device it could not close: look for `Error closing device
+  after disconnect: The device is still busy` in `journalctl -u fprintd` just before
+  the suspend. It happens when a verification is killed at the moment the machine
+  freezes, so the daemon never gets to finish the close, and the bus resets the reader
+  on resume. `systemctl restart fprintd` clears it. W avoids creating this on its own
+  sleep path (`w-power sleep` tells the lock sensor to stand down before locking), so
+  a bare `systemctl suspend` with the reader lit is the likely trigger — as is `native`
+  mode, where hyprlock holds the reader for the whole lock and so still holds it when
+  the machine freezes. Suggest `wake` mode to a user this keeps happening to.
 - **The first enrolled finger turns the fingerprint mode on**, and deleting the last one
   turns it off: the password dialog offers the reader only when there is something to
   match. So "why does it ask for my finger now?" and "why did it stop?" are usually this.

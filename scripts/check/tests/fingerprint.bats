@@ -315,6 +315,21 @@ EOF
   grep -q '^LOCK_SENSOR_ARM=120' "$WCONF_HOME/.config/w/fingerprint.conf"
 }
 
+@test "lock-sensor _presleep: declares the sleep window to the daemon, default and explicit" {
+  run "$REPO/$BIN" lock-sensor _presleep
+  [ "$status" -eq 0 ]
+  grep -q 'com.w.authd.LockSensor Suspending u 20' "$BUSCTL_LOG"
+  run "$REPO/$BIN" lock-sensor _presleep 45
+  [ "$status" -eq 0 ]
+  grep -q 'com.w.authd.LockSensor Suspending u 45' "$BUSCTL_LOG"
+}
+
+@test "lock-sensor _presleep: a dead daemon never fails the caller (a suspend must not block)" {
+  rm -f "$STUBS/busctl"
+  run "$REPO/$BIN" lock-sensor _presleep
+  [ "$status" -eq 0 ]
+}
+
 @test "lock-sensor: a policy-pinned mode is reported locked and refused" {
   mkdir -p "$WCONF_ETC/policy.d"
   printf 'LOCK_SENSOR=native\n' > "$WCONF_ETC/policy.d/fingerprint.conf"

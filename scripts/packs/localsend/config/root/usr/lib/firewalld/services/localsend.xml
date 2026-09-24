@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<service>
+  <short>LocalSend</short>
+  <description>LocalSend is an open-source AirDrop alternative for sending files between devices on the same local network. Allows the discovery multicast and the HTTPS transfer port on 53317/tcp+udp.</description>
+  <port protocol="udp" port="53317"/>
+  <port protocol="tcp" port="53317"/>
+</service>

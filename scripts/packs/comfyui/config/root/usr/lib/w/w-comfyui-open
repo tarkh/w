@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# w-comfyui-open — open ComfyUI's web interface, starting the service first if it
+# is not running. Shipped by the `comfyui` W-Pack.
+#
+# Helper, not a command: the only caller is w-comfyui.desktop. It lives in
+# /usr/lib/w (off PATH, not a `w-*` tool) because it is the launcher entry's
+# implementation, not a surface anyone is meant to learn — the documented way to
+# drive the service by hand stays `systemctl` (see the bundle's SKILL).
+#
+# WHY IT EXISTS. W ships the service installed but disabled: it is heavy and
+# optional, and "enabled at boot" is the user's call, not the installer's. That
+# leaves a gap the desktop has to cover — a launcher entry that only ran
+# `xdg-open` would show "connection refused" to anyone who had not already
+# started the unit, which is every first run. So this does the three steps a
+# human would otherwise do in a terminal: start it (polkit asks, through W's own
+# auth dialog, because this is a system unit), wait for the port to answer, then
+# open the browser. PyTorch takes tens of seconds to import, hence the wait and
+# the notification that something is happening — without either, the desktop
+# looks frozen between the password prompt and the browser.
+#
+# Idempotent: with the service already up it is just `xdg-open`.
+
+set -uo pipefail
+
+UNIT=comfyui.service
+ICON=applications-graphics
+# Generous, and deliberately so: a cold first start imports torch, initialises
+# the GPU runtime and unpacks the frontend. Overshooting costs a spinner; falling
+# short costs a browser tab on a refused connection.
+WAIT_SECONDS=90
+
+# shellcheck source=../../../../../../../rootfs/usr/lib/w/w-i18n-lib.sh
+source /usr/lib/w/w-i18n-lib.sh
+
+notify() { # <urgency> <title> <body>
+  command -v notify-send >/dev/null || return 0
+  notify-send --app-name="W" --icon="$ICON" --urgency="$1" "$2" "$3" 2>/dev/null || true
+}
+
+# ── Where it answers ──────────────────────────────────────────────────────────
+# The layered reader, not a grep of /etc/w: the address is an admin-owned key of
+# the `comfyui` subsystem and may legitimately come from any layer.
+# shellcheck source=../../../../../../../rootfs/usr/lib/w/w-conf-lib.sh
+source "${W_CONF_LIB:-/usr/lib/w/w-conf-lib.sh}"
+wconf_load comfyui
+host="$(wconf_get comfyui LISTEN 127.0.0.1)"
+port="$(wconf_get comfyui PORT 8188)"
+# A wildcard bind is an address to listen on, never one to connect to.
+case "$host" in 0.0.0.0|::|"") host=127.0.0.1 ;; esac
+url="http://$host:$port/"
+
+# ── Up already? ───────────────────────────────────────────────────────────────
+port_open() { (exec 3<>"/dev/tcp/$host/$port") 2>/dev/null && exec 3>&- 3<&-; }
+
+if ! systemctl is-active --quiet "$UNIT"; then
+  notify normal "$(w_t comfyui.starting)" "$(w_t comfyui.starting_body)"
+  # System unit from a user session: systemd routes this through polkit, which
+  # W answers with its own dialog (fingerprint or password). A refusal here is a
+  # decision, not an error — say so once and stop.
+  if ! systemctl start "$UNIT" 2>/dev/null; then
+    notify critical "$(w_t comfyui.failed)" "$(w_t comfyui.failed_body)"
+    exit 1
+  fi
+fi
+
+for ((i = 0; i < WAIT_SECONDS; i++)); do
+  port_open && break
+  sleep 1
+done
+
+if ! port_open; then
+  notify critical "$(w_t comfyui.failed)" "$(w_t comfyui.failed_body)"
+  exit 1
+fi
+
+exec xdg-open "$url"

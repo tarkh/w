@@ -1,0 +1,24 @@
+# localsend bundle — optional tray/receiver unit. Follows the same shape as
+# bitwarden.service (PartOf/After graphical-session.target, ConditionEnvironment
+# WAYLAND_DISPLAY, Restart=on-failure) with one deliberate difference: nothing
+# in this bundle ever runs `systemctl --user enable` on it. It ships present
+# but inert — turn it on yourself:
+#   systemctl --user enable --now localsend.service
+# See setup-user.sh / pack-localsend.md for why autostart defaults to off.
+
+[Unit]
+Description=LocalSend (AirDrop-like file transfer, tray)
+PartOf=graphical-session.target
+After=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+Type=simple
+# --hidden keeps it in the tray instead of opening a window at login.
+ExecStart=/usr/bin/localsend --hidden
+Restart=on-failure
+RestartSec=5s
+Slice=app-graphical.slice
+
+[Install]
+WantedBy=graphical-session.target

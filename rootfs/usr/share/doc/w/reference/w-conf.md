@@ -33,6 +33,8 @@ Options:
   --porcelain       list: KEY<TAB>VALUE<TAB>LAYER<TAB>locked<TAB>SCOPE (for GUIs)
   --prefix <P>      list/cat: only keys starting with P (e.g. NTP_)
   --path            origin: print the winning file instead of the layer name
+  --                End option parsing; needed before a <value> that itself
+                    starts with '-' (e.g. a flags string for comfyui.ARGS)
 
 Exit codes:
   0  Success
@@ -43,6 +45,7 @@ Examples:
   w-conf get power CHARGE_LIMIT
   w-conf origin ai HOST
   w-conf cat power
+  w-conf set comfyui ARGS -- "--lowvram --cpu-vae"
   w-conf list time --prefix NTP_
   sudo w-conf set power CHARGE_LIMIT 80
 ```

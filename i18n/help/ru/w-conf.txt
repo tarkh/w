@@ -1,4 +1,4 @@
-# w-i18n-src: 101d3c2664a55a3c5168c7b94d0571da4cd29101e986b87428bf9aae776a376d
+# w-i18n-src: 4fdc28bd55fe3a9175af5d99439c6c0e609f16997628a451ad5b87a8173f1b28
 Использование: w-conf <команда> [параметры]
 
 Info: Чтение и запись слоёной конфигурации W (вендор → админ → пользователь).
@@ -22,6 +22,8 @@ Info: Чтение и запись слоёной конфигурации W (в
   --porcelain       list: KEY<TAB>VALUE<TAB>LAYER<TAB>locked<TAB>SCOPE (для GUI)
   --prefix <P>      list/cat: только ключи, начинающиеся с P (например, NTP_)
   --path            origin: напечатать победивший файл, а не имя слоя
+  --                Завершить разбор параметров; нужно перед <знач>, которое
+                    само начинается с '-' (например, строка флагов comfyui.ARGS)
 
 Коды выхода:
   0  Успех
@@ -35,3 +37,4 @@ Info: Чтение и запись слоёной конфигурации W (в
   w-conf cat power
   w-conf list time --prefix NTP_
   sudo w-conf set power CHARGE_LIMIT 80
+  w-conf set comfyui ARGS -- "--lowvram --cpu-vae"

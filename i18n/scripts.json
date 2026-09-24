@@ -19,6 +19,11 @@
 
   "term.holdClose":    { "en": "Close this window? [y/N]", "ru": "Закрыть окно? [y/N]" },
 
+  "comfyui.starting":      { "en": "Starting ComfyUI…", "ru": "Запускаем ComfyUI…" },
+  "comfyui.starting_body": { "en": "The generative engine is warming up — the browser will open when the port answers.", "ru": "Движок генерации запускается — браузер откроется, когда порт ответит." },
+  "comfyui.failed":       { "en": "ComfyUI did not start", "ru": "ComfyUI не запустился" },
+  "comfyui.failed_body":  { "en": "See 'systemctl status comfyui' for the reason.", "ru": "Причину смотрите в 'systemctl status comfyui'." },
+
   "session.app":       { "en": "Session", "ru": "Сессия" },
   "session.cancelled": { "en": "Cancelled — windows still open", "ru": "Отменено — окна ещё открыты" },
 

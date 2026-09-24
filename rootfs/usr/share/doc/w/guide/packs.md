@@ -5,7 +5,7 @@ order: 10
 summary: What a pack is, the bundles W offers, installing one for the machine and setting it up for your account, and how to undo it.
 sources:
   - path: .claude/library/packs.md
-    sha256: e8eb036707ee490118c710f0c8dbb5fff425224454aca9746b6437a43bb51afc
+    sha256: b9702c060e7fb45344e1d4810faf9e2034c04f67692cc9ecb0cec8c65089a3ed
 ---
 
 W installs in two layers. The **base** is everything a working desktop needs and
@@ -40,6 +40,15 @@ it into the desktop — so a pack arrives configured, not merely downloaded.
   left alone and you pick the file once in the app (Settings → Chat settings →
   Chat background → Choose from file). Either way, from then on every theme
   switch recolours a running Telegram live.
+- **localsend** — LocalSend, an open-source AirDrop-like way to send files to
+  your phone, tablet or another computer: official apps on Linux, Windows,
+  macOS, Android and iOS all talk the same open protocol over the local
+  network — no account, no cloud. The pack seeds W's accent colour into it,
+  opens the firewall for it on trusted (home) networks only, and adds a
+  right-click "Send with LocalSend" action to Nemo. It does not start
+  automatically — open it when you need it, or turn on
+  `systemctl --user enable --now localsend.service` for it to sit in the tray,
+  always ready to receive.
 - **graphics** — 2D creative work: GIMP for raster editing and photo retouching
   (with the G'MIC filter suite), Inkscape for vector drawing and design, Krita
   for digital painting. All three follow the W theme (Krita through its "W"
@@ -56,6 +65,11 @@ it into the desktop — so a pack arrives configured, not merely downloaded.
   disk) is not included; add it yourself if you need it.
 - **ai-extra** — the advanced stack for [the AI assistant](ai.md#advanced): local
   models, semantic memory, better web search.
+- **comfyui** — local image and video generation with ComfyUI, a node-based
+  editor and backend running as a system service on [localhost](ai.md#comfyui).
+  The engine is matched to your GPU at install; models are shared machine-wide
+  in `/var/lib/w/ai-models`. Open **ComfyUI** from the app menu, or
+  `systemctl start comfyui`, and visit `http://127.0.0.1:8188/`.
 
 **Hub → Packs** lists them with their state and does the whole life cycle —
 installing, setting up and removing. Anything long or privileged opens a terminal

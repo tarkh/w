@@ -17,7 +17,7 @@ sources:
   - path: .claude/library/w-wallpaper.md
     sha256: 2499a3c31263d765ac650f83ea6e84264c64424627e28df47631e425f9740f41
   - path: .claude/library/w-appearance.md
-    sha256: cc748c2f5307f25fceee27548910a89556ab1a23bf1617ce7d9556788987aae0
+    sha256: 9e1fc708089ef7b0320fda529d4fdeb69d4375fd4f1ff6ed0efdff3cb1058f88
 tools:
   - w_theme_status
   - w_theme_set

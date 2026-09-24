@@ -8,6 +8,8 @@ sources:
     sha256: 03a5fdbf137556293d33480cd23ea657356315aea50fe6b2a83a5271c7ef2359
   - path: .claude/library/ai-integration.md
     sha256: f32aa75761dcd502adb75af9854472c0c4385f7794e9acc932f5c06d7775fa46
+  - path: .claude/library/pack-comfyui.md
+    sha256: 4ce59ba5fdc058104eeb36992e34d23136a3377ca9fb75e055e99473f2786258
 ---
 
 W ships an AI assistant that runs in a terminal and can drive the machine
@@ -117,3 +119,29 @@ works exactly like the one above.
 
 Nothing here is required for an ordinary chat session; it is the difference
 between an assistant that can look things up and one that can only answer.
+
+## ComfyUI
+
+Generation of images and video is a separate optional bundle — see
+[the packs guide](packs.md). It runs ComfyUI as a system service: a node-based
+editor and backend combined, on `http://127.0.0.1:8188/`. Open it from the app
+menu (which starts the service, asks for the admin password the first time and
+opens the browser) or start it yourself with `systemctl start comfyui`.
+
+- **GPU matching:** the engine is installed with the driver your hardware needs
+  (`nvidia` / `amd` / `intel` Arc / `cpu`), detected automatically.
+- **Adding nodes:** the node manager is built in and already switched on, so a
+  node pack you are missing is installed from the interface itself — nothing to
+  clone, nothing to install by hand. It only works while ComfyUI answers on
+  `127.0.0.1`: expose the engine to the network and the manager stops installing
+  anything, which is its own safety rule rather than W's.
+- **Shared model store:** models are downloaded into
+  `/var/lib/w/ai-models`, a snapshot-excluded store shared by the whole machine;
+  every account set up for the pack writes there.
+- **Where your results land:** `/var/lib/w/comfyui/data/output` (under the engine
+  directory, wherever it was installed). You can open that folder in the file
+  manager, collect renders and drop source images into `input/` next to it —
+  access comes with the `w-ai` group the bundle adds you to, which takes effect
+  at your next login.
+- **The assistant can help** with ComfyUI workflows, model placement and the
+  service — load the *comfyui* knowledge pack when asked about local generation.

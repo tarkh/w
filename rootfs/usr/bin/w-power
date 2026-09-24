@@ -333,10 +333,14 @@ listener {
 EOF
     [[ "$susp" -gt 0 ]] && cat <<EOF
 
-# Suspend $susp s after the display turns off (fires at ${ts}s).
+# Suspend $susp s after the display turns off (fires at ${ts}s). Goes through
+# 'w-power sleep', not a bare 'systemctl suspend': it locks first and lets hyprlock
+# finish drawing before asking for S3, so the machine never freezes mid-fadeIn. On
+# this particular path the screen is normally locked already (the lock link fired
+# long ago), and then it suspends straight away -- there is no fade to wait for.
 listener {
   timeout = $ts
-  on-timeout = systemctl suspend
+  on-timeout = w-power sleep
 }
 EOF
     # Keyboard backlight: an INDEPENDENT timer, not a cascade link — it counts from
@@ -485,6 +489,10 @@ Commands:
   power-key <poweroff|suspend|menu|ignore>
                              Power-button action (root; menu = open the W power menu)
   mode <laptop|desktop|auto> Apply a machine-mode preset to every knob (root)
+  sleep                      Suspend the right way: lock the screen, wait for the
+                             lock screen to finish drawing, THEN sleep. Prefer this
+                             over a bare 'systemctl suspend', which freezes the
+                             machine while the locker is still fading in
   apply                      Re-render every node from $CONF (root)
   help                       Show this help
 
@@ -688,6 +696,91 @@ cmd_power_key() {
   pkey_valid "$act" || { err "power-key: action must be poweroff|suspend|menu|ignore"; exit 2; }
   set_kv POWER_KEY "$act"; render_logind; reload_logind
   echo "w-power: power key -> $act"
+}
+
+# ── Sleep the right way ───────────────────────────────────────────────────────
+# `systemctl suspend` alone freezes the machine mid-lock. hypridle's inhibit_sleep=3
+# releases its logind delay inhibitor from onLocked() — i.e. the moment hyprlock's
+# lock surface is committed, which is BEFORE its fadeIn has played. What the user
+# sees is a translucent half-drawn locker, then black; and because CLOCK_MONOTONIC
+# does not advance across S3, a resume can pick the frozen animation back up and
+# finish it on top of the woken desktop (hypridle#146 documents the same race).
+#
+# Upstream's answer is `hyprlock --no-fade-in` — no animation, no animation to
+# interrupt. We want the animation, so we invert the order instead: lock FIRST,
+# let the locker finish drawing, and only then ask for the suspend. By the time
+# PrepareForSleep arrives hyprlock is already up, lock_cmd short-circuits on its
+# own `pidof hyprlock`, the lock ack is immediate and there is no race left to
+# lose. inhibit_sleep=3 stays as the net under the paths we do not own (a bare
+# `systemctl suspend`, a lid close).
+SLEEP_SETTLE_MS=500     # startup + screencopy grab, ON TOP of the fade (see below)
+SLEEP_FADE_MS=300       # fallback when hyprlock.conf names no fadeIn
+SLEEP_FADE_MAX_MS=3000  # a typo in the config must not turn a suspend into a hang
+SLEEP_WAIT_MS=2000      # how long to wait for the hyprlock process to appear at all
+SLEEP_READER_MS=300     # grace for fprintd to close a reader we just took away
+
+# Milliseconds hyprlock's fade-in takes, read from the live config rather than
+# guessed: `animation = fadeIn, ONOFF, SPEED, CURVE` where SPEED is in DEciseconds,
+# the Hyprland convention (hyprlock has its own parser but the same units). ONOFF=0
+# or `animations { enabled = false }` means there is no fade to wait for. The bare
+# `enabled` match is the animations block's own switch: every other toggle in
+# hyprlock.conf is namespaced (`pam:enabled`, `auth:fingerprint:enabled`).
+sleep_fade_ms() {
+  local conf ds
+  conf="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprlock.conf"
+  [[ -r "$conf" ]] || { echo "$SLEEP_FADE_MS"; return 0; }
+  grep -qE '^[[:space:]]*enabled[[:space:]]*=[[:space:]]*(false|0)[[:space:]]*$' "$conf" \
+    && { echo 0; return 0; }
+  ds="$(sed -n 's/^[[:space:]]*animation[[:space:]]*=[[:space:]]*fadeIn[[:space:]]*,[[:space:]]*\([0-9]\+\)[[:space:]]*,[[:space:]]*\([0-9]\+\).*/\1 \2/p' \
+        "$conf" | head -n1)"
+  [[ -n "$ds" ]] || { echo "$SLEEP_FADE_MS"; return 0; }
+  [[ "${ds%% *}" == "0" ]] && { echo 0; return 0; }     # ONOFF=0: animation disabled
+  ds=$(( ${ds##* } * 100 ))
+  (( ds > SLEEP_FADE_MAX_MS )) && ds=$SLEEP_FADE_MAX_MS
+  echo "$ds"
+}
+
+cmd_sleep() {
+  [[ $EUID -eq 0 ]] && die "sleep: run this as the session user, not root"
+  local waited=0 settle already=0
+  # Already locked (the idle cascade's lock link fired long ago, or the user locked
+  # by hand): there is no fade about to start, so lock-session is a no-op and the
+  # settle would be dead time in front of an already-black screen.
+  hyprlock_running && already=1
+  # Tell the lock sensor a suspend is coming BEFORE locking. Locking early is what
+  # lets the locker finish drawing, but it also moves the lock out from under
+  # w-authd's sleep-window guard: the sensor would arm, claim the reader, and get
+  # killed mid-capture by the freeze a second later — after which fprintd holds a
+  # device it can no longer close and every verify fails until it is restarted.
+  # Declaring the intent opens that window early. Best-effort: no sensor, no daemon,
+  # or native mode all make this a no-op, and none of them may block a suspend.
+  w-fingerprint lock-sensor _presleep >/dev/null 2>&1 || true
+  # Never let a failed lock block the suspend — but do not swallow the reason
+  # either: hypridle's journal is where this path is debugged from.
+  loginctl lock-session || true
+  # Gate the rest on hyprlock being installed at all: on a machine with no locker
+  # there is nothing to draw and nothing to wait for.
+  if (( ! already )) && command -v hyprlock >/dev/null 2>&1; then
+    # hyprlock's own startup and its screencopy grab both happen BEFORE the fade
+    # begins, and the process appearing is the earliest thing we can observe (it
+    # sets no LockedHint and Hyprland emits no session-lock IPC event), so the
+    # settle has to cover them on top of the fade itself.
+    while ! hyprlock_running && (( waited < SLEEP_WAIT_MS )); do
+      sleep 0.05; waited=$(( waited + 50 ))
+    done
+    if hyprlock_running; then
+      settle=$(( $(sleep_fade_ms) + SLEEP_SETTLE_MS ))
+      sleep "$(printf '%d.%03d' $(( settle / 1000 )) $(( settle % 1000 )))"
+    fi
+  else
+    # The paths that skip the settle (already locked, or no locker at all) leave
+    # nothing between the _presleep disarm and the freeze. If the sensor was armed, fprintd
+    # is right now closing the reader we took away from it ("try again later") and
+    # must not be frozen mid-cleanup. On the drawing path the settle already is
+    # this pause, several times over.
+    sleep "$(printf '0.%03d' "$SLEEP_READER_MS")"
+  fi
+  systemctl suspend
 }
 
 # ── Lid as a wake source ──────────────────────────────────────────────────────
@@ -943,6 +1036,7 @@ case "${1:-}" in
   lid-wake)       shift; cmd_lid_wake "$@" ;;
   power-key)      shift; cmd_power_key "$@" ;;
   mode)           shift; cmd_mode "$@" ;;
+  sleep)          cmd_sleep ;;
   apply)          render_all ;;
   _render-user)   cmd_render_user ;;            # internal: mod_power, once per account
   _render-skel)   cmd_render_skel ;;            # internal: mod_power, the useradd template

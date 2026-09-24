@@ -226,6 +226,10 @@
     "en": "Telegram Desktop messenger, themed by W",
     "ru": "Мессенджер Telegram Desktop в теме W"
   },
+  "p_localsend": {
+    "en": "LocalSend: AirDrop-like file transfer to phones/laptops, themed by W",
+    "ru": "LocalSend: обмен файлами с телефонами и ноутбуками как AirDrop, в теме W"
+  },
   "p_graphics": {
     "en": "Graphics and design: GIMP, Inkscape, Krita, G'MIC filters, AI assistant bridges",
     "ru": "Графика и дизайн: GIMP, Inkscape, Krita, фильтры G'MIC, мосты для AI-ассистента"

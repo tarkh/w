@@ -10,7 +10,7 @@ description: >-
   explains how to read the layers with w-conf).
 sources:
   - path: .claude/library/w-conf.md
-    sha256: 083f77dead911616b7866ddc036c7b6b0c68ee52537fabea3bd076c72e24eb44
+    sha256: 832e311ba1c9bd50d2ba5ba177e86999612a91cf34843933d028eacf4897ff00
   - path: .claude/library/w-reset.md
     sha256: dc6b89319dae0e5bc8a9ef4f13f842c7aa7aa17fd7a945477ef4c928769c8868
   - path: .claude/library/update-system.md

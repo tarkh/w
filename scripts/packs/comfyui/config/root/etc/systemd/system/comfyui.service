@@ -1,0 +1,71 @@
+# ComfyUI as a W service — shipped by the `comfyui` W-Pack.
+#
+# WHAT ACTUALLY RUNS is the 10-w.conf drop-in that setup.sh renders next to this
+# file: it re-emits ExecStart, the environment and the read-write paths from the
+# `comfyui` and `ai-models` subsystems, so the admin can move the engine and the
+# model store to another disk without editing a unit. The values below are the
+# vendor defaults verbatim — kept complete and valid so this file reads as a
+# working unit on its own, and so `systemd-analyze verify` has something to chew
+# on before the drop-in exists.
+#
+# Not enabled by installation: W ships it stopped. It is a heavy optional
+# service, and the launcher entry starts it on demand (see w-comfyui-open).
+# `systemctl enable comfyui` if you want it at boot — that is systemd's state to
+# hold, which is why the bundle ships no autostart config key of its own.
+#
+# There is exactly ONE service, not a "backend" and a "UI": ComfyUI's modern web
+# interface ships as a Python package inside the same process and is served off
+# the same port. See pack-comfyui.md.
+#
+# --enable-manager turns on ComfyUI-Manager, which since v4 is a pip package the
+# ENGINE CORE knows about rather than a custom node — it is what installs nodes
+# from the web interface, and the core ignores it entirely unless asked. Harmless
+# when the package is absent: core logs the missing dependency and drops the flag.
+
+[Unit]
+Description=ComfyUI generative-media engine (W)
+Documentation=https://docs.comfy.org
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=comfyui
+Group=comfyui
+WorkingDirectory=/var/lib/w/comfyui/app
+Environment=HOME=/var/lib/w/comfyui
+Environment=HF_HOME=/var/lib/w/ai-models/hf
+ExecStart=/var/lib/w/comfyui/app/.venv/bin/python /var/lib/w/comfyui/app/main.py --base-directory /var/lib/w/comfyui/data --models-directory /var/lib/w/ai-models --listen 127.0.0.1 --port 8188 --enable-manager
+Restart=on-failure
+RestartSec=5
+# Loading a multi-gigabyte checkpoint off a cold cache is slow, and systemd's
+# default would kill the start before PyTorch finishes importing on a spinning
+# disk or a first run.
+TimeoutStartSec=600
+
+# ── Confinement ───────────────────────────────────────────────────────────────
+# Sized to what a GPU workload actually needs. Two knobs are left OFF on purpose,
+# and both would look like tightening while breaking generation outright:
+#   PrivateDevices=       hides /dev/dri and /dev/kfd → no GPU at all.
+#   MemoryDenyWriteExecute= PyTorch compiles kernels at runtime (inductor/JIT),
+#                         which is W^X by definition.
+# SystemCallFilter= is also absent: @system-service is the plausible set, but the
+# vendor GPU stacks are exactly the code that trips it, and W can verify only one
+# vendor's driver on its own hardware — a filter nobody tested on NVIDIA would be
+# a rule that fails on someone else's machine, not a rule.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/w/comfyui /var/lib/w/ai-models
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

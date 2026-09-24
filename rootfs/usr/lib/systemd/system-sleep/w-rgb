@@ -13,6 +13,18 @@
 # absorb USB re-enumeration lag — and hands off to a backgrounded subshell
 # itself, so this hook returns immediately and never delays resume.
 #
+# That background subshell is exactly why the call goes through a transient
+# SCOPE. A system-sleep hook runs inside systemd-suspend.service, which is
+# Type=oneshot with the default KillMode=control-group: about a second after the
+# hook returns the service deactivates and systemd kills everything left in its
+# cgroup — including a `& disown`ed child, since disown only clears the shell's
+# job table, not cgroup membership. The 600-rgb retry loop needs several seconds
+# (bring up the OpenRGB SDK server, wait for detection), so it was being killed
+# before it ever reached a device: the hook logged its render line every resume
+# and the mouse still came back grey. `systemd-run --scope` migrates the
+# processes into a cgroup of their own, out of reach of that teardown, and
+# --collect reaps the scope once the last of them exits.
+#
 # Independent file, not folded into w-power's hook: RGB is a w-style/appearance
 # axis, not a power-domain concern (same reasoning as w-sensors being its own
 # file — see package-sensors.md).
@@ -32,7 +44,8 @@ post() {
     [[ -n "$user" ]]                                || continue
     [[ " ${seen[*]-} " == *" $user "* ]]           && continue
     seen+=("$user")
-    runuser -u "$user" -- w-style apply rgb 2>/dev/null || true
+    systemd-run --scope --quiet --collect --unit="w-rgb-resume-$user" \
+      runuser -u "$user" -- w-style apply rgb >/dev/null 2>&1 || true
   done
 }
 

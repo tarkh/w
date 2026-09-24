@@ -5,7 +5,7 @@ order: 8
 summary: Power profiles, the idle cascade of lock, screen-off and suspend, lid and power-button actions, and the battery charge limit.
 sources:
   - path: .claude/library/w-power.md
-    sha256: 6ebee081798bf911e01e3677de0d6eba65052d329682ae63eb095bd0fdc6b59b
+    sha256: bfa673c5c0c45593547bddfcd97ed2484497e9a62ea42c2ffd7b0602dfb4b57c
   - path: .claude/library/w-kbdlight.md
     sha256: d17c2a2a0ecf20c3a464a254d778e0873def9ebb8833b4362e08eb9869dec506
 ---
@@ -63,7 +63,10 @@ comes back the moment you touch anything.
 Two behaviours worth knowing about, both intentional:
 
 - The machine always locks **before** it suspends, so it never resumes to an
-  unlocked desktop.
+  unlocked desktop — and it waits for the lock screen to finish appearing before
+  it actually goes to sleep, so you see the whole thing draw rather than a
+  half-faded flash. In a terminal, use `w-power sleep` rather than
+  `systemctl suspend` to get that same behaviour.
 - Once the screen is locked, nudging the mouse blanks the display again after
   the screen-off delay rather than leaving it lit.
 

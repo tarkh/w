@@ -1,0 +1,15 @@
+[Desktop Entry]
+Name=ComfyUI
+Name[ru]=ComfyUI
+Comment=Generate images and video with the local ComfyUI engine
+Comment[ru]=Генерация изображений и видео на локальном движке ComfyUI
+Exec=/usr/lib/w/w-comfyui-open
+Icon=applications-graphics
+Type=Application
+# The launcher entry, not the engine: it starts comfyui.service on demand (via
+# w-comfyui-open) and opens the web interface. The service stays disabled — a
+# heavyweight optional engine that boot-enables itself would surprise. See
+# pack-comfyui.md.
+Categories=Graphics;2DGraphics;
+Keywords=comfyui;ai;image;video;generation;diffusion;stable-diffusion;generate;
+Keywords[ru]=комфию;ии;изображения;видео;генерация;диффузия;comfyui;ai;image;video;generation;diffusion;stable-diffusion;generate;

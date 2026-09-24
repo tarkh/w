@@ -1,0 +1,15 @@
+# comfyui.schema — who may set each key of the `comfyui` subsystem (see w-conf.md).
+# Format: <KEY>\t<scope>   scope: system | user | both
+#
+# Every key is `system`. ComfyUI runs on W as ONE machine-wide service under its
+# own account — the analogue of ollama.service, not a per-account app: where it
+# is installed, which address it answers on, which PyTorch build sits in its
+# virtualenv and what its command line says are all root-domain facts, and a user
+# layer could not act on them anyway (the unit is rendered by a root setup step).
+# A fleet that wants to fix them harder still can: policy.d sits above the admin
+# layer and locks the keys.
+ROOT	system
+LISTEN	system
+PORT	system
+GPU	system
+ARGS	system

@@ -1,0 +1,22 @@
+# localsend bundle — config ownership (deploy.sh SDK + w-reset).
+# TSV: <path>	<class>. All rows here are absolute → config/root<path> (always
+# managed). No home-relative rows: the per-account artefact (the accent-colour
+# seed inside LocalSend's own settings file) is written by the wstyle axis
+# directly, not tracked here — see wstyle/500-localsend/module.sh for why.
+
+# firewalld service definition: 53317/tcp+udp, LocalSend's fixed discovery +
+# transfer port (multicast 224.0.0.167 for discovery, plain HTTP for the
+# transfer itself). Mirrors the shape of firewalld's own built-in `mdns`
+# service. Not enabled by just existing — setup.sh/teardown.sh add/remove it
+# from the `home` zone explicitly.
+/usr/lib/firewalld/services/localsend.xml	managed
+
+# Nemo Action: "Send with LocalSend" on any file selection, system-wide (every
+# account on the machine, not just the installing one — a context-menu entry
+# is not a personal preference the way SSH-agent choice or autostart are).
+/usr/share/nemo/actions/localsend-send.nemo_action	managed
+
+# Autostart unit, shipped but NOT enabled by setup-user.sh (see setup-user.sh
+# and ai/SKILL.md): whether LocalSend runs in the tray at login is left off by
+# default, one command away — `systemctl --user enable --now localsend.service`.
+/etc/systemd/user/localsend.service	managed

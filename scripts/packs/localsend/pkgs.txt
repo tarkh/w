@@ -1,0 +1,9 @@
+# localsend bundle — packages (repo + AUR names; w-pack installs via yay).
+#
+# localsend-bin over localsend/localsend-git: the source AUR package pulls
+# cargo+clang+cmake+ninja+llvm+fvm to rebuild the whole Flutter/Rust app from
+# source (heavy, slow, easy to break on a toolchain bump) for the exact same
+# upstream release the -bin package just repackages from the official .deb.
+# Confirmed on the test VM: correct .desktop (Exec=localsend %U), icon, tray
+# support (libayatana-appindicator) all present out of the box.
+localsend-bin

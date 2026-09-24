@@ -1,0 +1,10 @@
+# ai-models.schema — who may set each key of the `ai-models` subsystem (see w-conf.md).
+# Format: <KEY>\t<scope>   scope: system | user | both
+#
+# Where the machine keeps tens (or hundreds) of gigabytes of model weights is a
+# root-domain decision: the directory is shared by every AI service on the box,
+# lives outside any home, is owned by a system group, and moving it is a disk
+# layout choice an admin makes — not a per-account preference. One user pointing
+# the store at their own path would silently strand every other account's
+# downloads and every service already running against the old one.
+DIR	system

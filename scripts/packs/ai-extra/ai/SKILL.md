@@ -16,8 +16,9 @@ system only. Curated into `/usr/share/w/ai/skills/ai-extra/` when installed.
 
 ## What the user has
 
-- **Local inference engine:** Ollama, package variant matched to the GPU at
-  install time (`ollama` / `ollama-cuda` / `ollama-rocm`), service `ollama.service`
+- **Local inference engine:** Ollama as base + GPU backend, matched to the card at
+  install time (`ollama`, plus `ollama-cuda` on NVIDIA / `ollama-rocm` on AMD — the
+  backend depends on the base and pulls it in), service `ollama.service`
   listening on `127.0.0.1:11434`. Models live in `/var/lib/ollama` (a nested btrfs
   subvolume, excluded from root snapshots).
 - **Embedding model:** `qllama/bge-m3:q8_0` (~635MB, multilingual, dense 1024-dim,
@@ -68,10 +69,16 @@ system only. Curated into `/usr/share/w/ai/skills/ai-extra/` when installed.
 - **Model pull needs network:** if the machine was offline at install time, the
   bundle still succeeds (setup is best-effort) — re-pull manually with the command
   above.
-- **GPU variant is picked once:** if you swap GPU vendors later, `w-pack install
-  ai-extra` again will warn rather than replace an already-installed variant
-  (avoids mixing `ollama`/`ollama-cuda`/`ollama-rocm`) — remove the old package
-  yourself first if you want the new variant.
+- **The GPU backend is picked once:** if you swap GPU vendors later, `w-pack
+  install ai-extra` again will warn rather than replace an already-installed
+  *backend* (avoids mixing `ollama-cuda` with `ollama-rocm`) — remove the old one
+  yourself first if you want the new one. The bare base `ollama` is never treated
+  as a competitor: it is the binary every backend depends on, so a machine holding
+  only the base still gets its backend installed.
+- **Which backend is actually live** is a runtime question, not a package one:
+  `journalctl -u ollama | grep 'inference compute'` names the library (`ROCm`/
+  `CUDA`), the device and its VRAM. Ollama drops integrated GPUs on purpose —
+  `OLLAMA_IGPU_ENABLE=1` overrides that, rarely worth it.
 - **No config to reset:** this bundle carries no `manifest` — there is nothing for
   `w-reset ai-extra` to do beyond the (nonexistent) config files. Feature toggles
   are plain user preference, not a "default" to revert to.

@@ -1,0 +1,23 @@
+# comfyui bundle — packages (official repos, no AUR).
+#
+# w-pack feeds this list to yay when present (repo + AUR in one pass) as the
+# build user; pacman fallback if yay is absent.
+#
+# Almost nothing belongs here, and that is the point. ComfyUI itself is NOT a
+# package: the AUR carries a `comfyui` PKGBUILD, but its core — the PyTorch
+# virtualenv — is a `pip install` fired from post_install into a pacman-owned
+# /opt, so the "tracked by pacman" benefit is illusory while the cost is real
+# (a 3-vote package, flagged out of date against an upstream that releases
+# weekly). setup.sh installs the engine with upstream's own `comfy-cli` instead
+# — the same "vendor installer over AUR" call W already made for the assistant
+# hosts. See pack-comfyui.md for the full comparison.
+#
+# git: `comfy install` clones the ComfyUI repository and `comfy update` pulls it.
+# Present on every W install today as a transitive dependency of the AUR
+# toolchain; named explicitly because this bundle would break without it, and a
+# dependency nobody declared is a dependency that can disappear.
+git
+
+# uv is installed by the base system (apply.sh --uv, package-python.md) and is
+# what setup.sh uses to put `comfy-cli` in the service account's own scope, so
+# it is deliberately NOT repeated here.

@@ -7,6 +7,11 @@ zed                 # Zed editor — Rust/GPU (GPUI), native Wayland; binary is 
                     # vulkan-icd-loader + vulkan-driver (mesa/vulkan-intel ride in
                     # via apply.sh --gpu) and libsqlite3.
 
+# ── common tooling ────────────────────────────────────────────────────────────
+cmake
+clang
+ninja
+
 # ── git tooling ───────────────────────────────────────────────────────────────
 # git itself is NOT listed: it is already a base-system citizen (mod_updatesys and
 # mod_ai both install it), it just had no configuration or theme of its own until

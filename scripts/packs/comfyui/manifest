@@ -1,0 +1,31 @@
+# comfyui bundle — config ownership (deploy.sh SDK + w-reset).
+# TSV: <path>	<class>. All rows here are absolute → config/root<path> (always
+# managed). No home-relative rows: the per-account half (group membership in
+# `w-ai`) is done by setup-user.sh, not tracked here.
+#
+# What is deliberately NOT here:
+#   * comfyui.service.d/10-w.conf — the drop-in carrying the admin's paths. It
+#     is RENDERED at install/refresh time by setup.sh from the `comfyui` and
+#     `ai-models` subsystems (rootfs/usr/share/w/defaults/*.{conf,schema}); a
+#     shipped copy would be a second truth that fights w-conf on every refresh.
+#
+# The unit's ExecStart and paths are vendor defaults; the drop-in overrides.
+
+# Unit running the engine, plus the drop-in directory that setup.sh renders into.
+# (The directory itself is not declared — it is empty until setup.sh writes it,
+# and systemd ignores an empty drop-in dir.)
+/etc/systemd/system/comfyui.service	managed
+
+# The two identities the bundle is build around: the `comfyui` service account
+# and the `w-ai` shared model-store group. Declarative (systemd-sysusers), so
+# re-running setup is a no-op and removal by w-pack simply drops the file.
+/usr/lib/sysusers.d/w-comfyui.conf	managed
+
+# Launcher helper behind w-comfyui.desktop — starts the service on demand and
+# opens the web interface.
+/usr/lib/w/w-comfyui-open	managed
+
+# Launcher entry. Written by w-i18n-gen with Name/Comment/Keywords localizations
+# from i18n/apps.json (see config-i18n.md) — the catalog and this file drift as
+# one.
+/usr/share/applications/w-comfyui.desktop	managed

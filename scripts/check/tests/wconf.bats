@@ -241,6 +241,28 @@ setup() {
   [ "$(wconf_origin probe K)" = "vendor" ]
 }
 
+# ── CLI wrapper (rootfs/usr/bin/w-conf): option parsing ──────────────────────
+# These run the actual script as a subprocess (not the sourced library), the
+# only way to exercise its own arg loop.
+
+@test "cli: -- ends option parsing, so a value starting with '-' reaches set" {
+  # comfyui.ARGS ("--lowvram --cpu-vae") is exactly this shape: without `--`
+  # the `-*` catch-all mistook the value itself for an unknown option.
+  run env W_CONF_LIB="$REPO/rootfs/usr/lib/w/w-conf-lib.sh" WCONF_ETC="$WCONF_ETC" \
+      WCONF_VENDOR_DIR="$WCONF_VENDOR_DIR" WCONF_HOME="$WCONF_HOME" \
+      bash "$REPO/rootfs/usr/bin/w-conf" set probe ARGS -- "--lowvram --cpu-vae"
+  [ "$status" -eq 0 ]
+  [ "$(wconf_get probe ARGS)" = "--lowvram --cpu-vae" ]
+}
+
+@test "cli: a genuine unknown option is still rejected" {
+  run env W_CONF_LIB="$REPO/rootfs/usr/lib/w/w-conf-lib.sh" WCONF_ETC="$WCONF_ETC" \
+      WCONF_VENDOR_DIR="$WCONF_VENDOR_DIR" WCONF_HOME="$WCONF_HOME" \
+      bash "$REPO/rootfs/usr/bin/w-conf" set probe ARGS --bogus
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"unknown option: --bogus"* ]]
+}
+
 # ── Scope declaration read back out ──────────────────────────────────────────
 
 @test "scope: a glob row declares a whole catalog family" {

@@ -5,7 +5,7 @@ order: 3
 summary: Что W включает из коробки — защита ядра, sudo-rs, фаервол, шифрованный DNS, keyring, обновления прошивки, отпечаток пальца и Secure Boot.
 sources:
   - path: .claude/library/security.md
-    sha256: 3ab6ec5bf765fd6759ab071d57d8dbcefada49bd30c7c7546a3e93422f6bb63a
+    sha256: 3ec7c64f94e8053341ba52ded39be6b779d58ea1284c8db81f32c45f0697e12c
 anchors:
   what-is-on-by-default: что-включено-по-умолчанию
   fingerprint-login: вход-по-отпечатку

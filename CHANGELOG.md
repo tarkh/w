@@ -8,6 +8,45 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.18.0
+
+- **New W-Pack: ComfyUI.** Local image/video generation as a system service
+  on `:8188`, with the GPU-matched engine build (NVIDIA/AMD/Intel Arc/CPU)
+  chosen automatically, a shared model store under `/var/lib/w/ai-models`,
+  and ComfyUI-Manager enabled by default so custom nodes install from the
+  UI. Extra launch flags go through `w-conf set comfyui ARGS "..."`; extra
+  environment variables go in an admin-owned `20-local.conf` drop-in.
+  Off by default — install with `w-pack install comfyui`.
+
+- **New W-Pack: LocalSend.** AirDrop-alike file transfer, integrated into
+  Nemo's right-click menu ("Send with LocalSend") and scoped to the home
+  firewall zone. Its accent colour follows your W theme automatically,
+  the same way every other GTK4/libadwaita app does.
+
+- **`w-conf` now accepts `--` to end option parsing**, for setting values
+  that start with a dash:
+
+  ```
+  w-conf set comfyui ARGS -- --lowvram
+  ```
+
+- **Dev pack: added `cmake`, `clang`, and `ninja`** to the common toolchain.
+
+- **Fixed: `ai-extra` could silently skip installing the GPU-accelerated
+  Ollama backend** if the plain `ollama` package was already present on
+  the machine (e.g. pulled in earlier as a dependency) — it was mistaken
+  for a deliberate choice and left alone. It now installs the right
+  backend regardless.
+
+- **New `w-power sleep` command.** Suspending now waits for the lock
+  screen to finish drawing first, avoiding a black or half-drawn locker
+  on resume; the Power menu and idle-timeout suspend now use it.
+
+- **Fixed: some RGB mice/keyboards could still come back at their factory
+  colour after resume**, even with the resume hook introduced in v0.17.0
+  — systemd could kill it before it finished detecting the device. It now
+  runs in a way that survives to completion.
+
 ## v0.17.0
 
 - **Home folders now follow the system language.** If your interface is in

@@ -3,8 +3,8 @@
 # config (none — this bundle ships no manifest), always as root with:
 #   BUNDLE_NAME  BUNDLE_DIR
 #
-# Installs the local-inference/embedding engine (Ollama, GPU-variant matched to
-# the machine — same vendor detection as mod_gpu) and pulls the default embedding
+# Installs the local-inference/embedding engine (Ollama base + GPU backend matched
+# to the machine — same vendor detection as mod_gpu) and pulls the default embedding
 # model. All of that is shared: one engine, one model store, one service for the
 # whole machine.
 #
@@ -20,22 +20,25 @@ set -uo pipefail   # NOT -e: keep going on non-fatal steps
 info() { echo -e "  \033[1;35m->\033[0m $*"; }
 warn() { echo -e "  \033[1;33mWARN:\033[0m $*" >&2; }
 
-# ── 1. Ollama — GPU-variant package (mirrors mod_gpu's vendor detection) ─────
+# ── 1. Ollama — base + GPU backend (mirrors mod_gpu's vendor detection) ──────
 # Repo-only packages (no AUR), so a plain pacman is enough — pkgs.txt cannot list a
-# fixed name because the right variant depends on the machine.
-info "Detecting GPU vendor for the Ollama package variant..."
+# fixed name because the right backend depends on the machine.
+info "Detecting GPU vendor for the Ollama backend package..."
 gpu_lines="$(lspci -nn 2>/dev/null | grep -Ei 'VGA compatible controller|3D controller|Display controller' || true)"
 ollama_pkg="ollama"
 echo "$gpu_lines" | grep -qi '\[10de:' && ollama_pkg="ollama-cuda"
 echo "$gpu_lines" | grep -qi '\[1002:' && ollama_pkg="ollama-rocm"
 
-# If a different variant is already installed, leave it alone (e.g. the user
-# switched GPUs and hand-picked a variant) rather than mixing providers.
-installed_variant="$(pacman -Qq 2>/dev/null | grep -E '^ollama(-cuda|-rocm)?$' | head -1 || true)"
-if [[ -n "$installed_variant" && "$installed_variant" != "$ollama_pkg" ]]; then
-  warn "ollama variant '$installed_variant' already installed — leaving as-is (wanted '$ollama_pkg')."
-  ollama_pkg="$installed_variant"
-elif [[ -z "$installed_variant" ]]; then
+# Arch packages Ollama as base + backend, not as competing builds: `ollama` is the
+# binary, `ollama-cuda`/`ollama-rocm` are GPU backends that DEPEND on it and pull
+# it in. So the base being installed says nothing about acceleration, and only
+# another BACKEND means the user made their own pick (e.g. after a GPU swap) —
+# that one is left alone rather than mixing providers.
+installed_backend="$(pacman -Qq ollama-cuda ollama-rocm 2>/dev/null | head -1 || true)"
+if [[ -n "$installed_backend" && "$installed_backend" != "$ollama_pkg" ]]; then
+  warn "ollama backend '$installed_backend' already installed — leaving as-is (wanted '$ollama_pkg')."
+  ollama_pkg="$installed_backend"
+elif ! pacman -Qq "$ollama_pkg" &>/dev/null; then
   info "Installing $ollama_pkg..."
   pacman -S --needed --noconfirm "$ollama_pkg" || warn "pacman install of $ollama_pkg failed."
 fi

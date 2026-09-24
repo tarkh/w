@@ -289,6 +289,11 @@ cmd_lock_sensor() {
       ;;
     _arm)    sensor_call Arm u "$(wconf_get "$SUBSYS" LOCK_SENSOR_ARM 30)" >/dev/null || true ;;
     _disarm) sensor_call Disarm >/dev/null || true ;;
+    # `w-power sleep` declaring an imminent suspend, BEFORE it locks the screen: the
+    # lock that follows must not light the reader, because the freeze would kill the
+    # verification mid-capture and leave fprintd holding a device it can no longer
+    # close. The argument is a safety ceiling — w-authd re-arms if no sleep arrives.
+    _presleep) sensor_call Suspending u "${arg:-20}" >/dev/null || true ;;
     "")      err "lock-sensor: subcommand required"; exit 2 ;;
     *)       err "lock-sensor: unknown subcommand: $sub"; exit 2 ;;
   esac

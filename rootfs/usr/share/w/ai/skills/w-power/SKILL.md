@@ -11,15 +11,15 @@ description: >-
   that is not lit.
 sources:
   - path: .claude/library/w-power.md
-    sha256: 6ebee081798bf911e01e3677de0d6eba65052d329682ae63eb095bd0fdc6b59b
+    sha256: bfa673c5c0c45593547bddfcd97ed2484497e9a62ea42c2ffd7b0602dfb4b57c
   - path: .claude/library/w-kbdlight.md
     sha256: d17c2a2a0ecf20c3a464a254d778e0873def9ebb8833b4362e08eb9869dec506
   - path: .claude/library/quickshell-powermenu.md
-    sha256: 8d9f9fb42f9cc89eac3b17ba1c5d379da87d8071eabcfe8aa976d9599ef3b518
+    sha256: d4e8525acfe0c22fb0184845c221fe0536a9e731b8b0b1dbf553af3efa65c85a
   - path: .claude/library/quickshell-bar.md
     sha256: 76dc9b56a2cdf3a879e737a653ea5bc330722c1eb346e64f917765823a1abf5c
   - path: .claude/library/package-hyprlock.md
-    sha256: b22971fe5d7f69876a20eb7082c4e3f0895c47c23caf1024b44a856da7893755
+    sha256: c2f5a26bf2605dc998d071c8912b8364f2776ab8d6e44cf848e11063a433810f
 tools:
   - w_power_status
   - w_power_profile
@@ -117,6 +117,15 @@ renders its config from the active preset, with **separate AC and battery timers
 - **Lock-before-sleep** — `before_sleep_cmd = loginctl lock-session` runs *before*
   suspend, so the machine always resumes to the lock screen; `after_sleep_cmd` turns
   DPMS back on and re-asserts the night light (see the `w-desktop` skill).
+- **Suspend the machine with `w-power sleep`, never a bare `systemctl suspend`.** The
+  session counts as locked the moment hyprlock's surface is committed, which is before
+  its fade-in has played — a bare suspend therefore freezes the machine mid-animation
+  (a translucent half-drawn locker, then black), and because the monotonic clock does
+  not advance across S3 the frozen animation can even finish on top of the woken
+  desktop. `w-power sleep` locks first, waits for the locker to finish drawing, and
+  only then asks for the suspend. The Power menu's suspend tile and the auto-suspend
+  timer already use it. If a user reports "the lock screen looks broken when I suspend",
+  this is the answer — not a theme or GPU problem.
 - The lock screen is **hyprlock** (a GPU locker: blurred background, PAM password +
   optional fingerprint). Manual lock is `Super+L` (a w-hotkeys default bind).
 - **"The fingerprint stops working after a few minutes on the lock screen"** — not a
@@ -238,7 +247,7 @@ is re-applied after resume (firmware resets it).
 | Action | Command |
 |---|---|
 | Lock | `loginctl lock-session` |
-| Suspend | `systemctl suspend` (hypridle locks first via `before_sleep_cmd`) |
+| Suspend | `w-power sleep` (locks, waits for the locker to draw, then suspends) |
 | Logout / Reboot / Shutdown | `w-session-exit <logout\|reboot\|shutdown>` |
 
 **`w-session-exit`** is a graceful exit: it closes each window (editors show their save
@@ -262,5 +271,5 @@ the user to use the power menu so this graceful path runs.
 - **`w_power_mode`** *(Tier 2, polkit)* — set laptop | desktop | auto (switches the
   whole preset table; explicit deviations survive — see above). Gated by `W_AI_TOOL_POWER`.
 
-Suspend/reboot/shutdown stay user actions through the power menu (or `systemctl suspend`
+Suspend/reboot/shutdown stay user actions through the power menu (or `w-power sleep`
 / `w-session-exit` in a shell) — there is no privileged suspend/shutdown tool.
