@@ -187,20 +187,13 @@ COMFY="$ROOT/.local/bin/comfy"
 
 # ── 6. ComfyUI workspace via comfy-cli (only while not already present) ───────
 # `comfy install` clones the app into the workspace and builds its `.venv`; the
-# GPU flag is chosen from the GPU key (auto → lspci match, INTEL_ARC only for a
-# real Intel discrete card). REFRESH must never rebuild an existing workspace —
-# the venv check below IS the idempotency guard. ComfyUI-Manager is NOT settled
-# here (`comfy install` does pip it in, but only on a fresh workspace, and the
-# engine ignores it without a flag) — step 6d owns it. Telemetry is off via the
-# standard env wins.
-gpu_lines="$(lspci -nn 2>/dev/null | grep -Ei 'VGA compatible controller|3D controller|Display controller' || true)"
-# Discrete Intel is decided by PCI device id, never by the marketing name: lspci
-# prints the name BEFORE the [vendor:device] pair ("DG2 [Arc A770] [8086:56a0]"),
-# and that field order is not a contract — a name-then-id regex matches nothing.
-# Discrete ids live in three ranges: DG2/Alchemist 4f8x and 56xx, Battlemage e2xx;
-# no Intel iGPU falls inside them (those are 46xx, 4cxx, 4exx, 59xx, 64xx, 7dxx,
-# 9axx, a7xx). DG1 (49xx) stays out on purpose — torch-XPU does not support it.
-INTEL_DGPU='\[8086:(4f8[0-9a-f]|56[0-9a-f]{2}|e2[0-9a-f]{2})\]'
+# GPU flag is chosen from the GPU key (auto → the shared w-gpu-lib.sh seam,
+# INTEL_ARC only for a real Intel discrete card). REFRESH must never rebuild an
+# existing workspace — the venv check below IS the idempotency guard.
+# ComfyUI-Manager is NOT settled here (`comfy install` does pip it in, but only
+# on a fresh workspace, and the engine ignores it without a flag) — step 6d
+# owns it. Telemetry is off via the standard env wins.
+GPU_LIB="${W_GPU_LIB:-/usr/lib/w/w-gpu-lib.sh}"
 gpu_flags=""
 case "$GPU" in
   nvidia) gpu_flags="--nvidia" ;;
@@ -208,13 +201,20 @@ case "$GPU" in
   intel)  gpu_flags="--intel-arc" ;;
   cpu)    gpu_flags="--cpu" ;;
   auto)
-    if   echo "$gpu_lines" | grep -qi '\[10de:'; then gpu_flags="--nvidia"
-    elif echo "$gpu_lines" | grep -qi '\[1002:'; then gpu_flags="--amd --rocm-version 7.2"
-    elif echo "$gpu_lines" | grep -qiE "$INTEL_DGPU"; then gpu_flags="--intel-arc"
-    elif echo "$gpu_lines" | grep -qi '\[8086:'; then
+    if [[ -r "$GPU_LIB" ]]; then
+      # shellcheck source=/dev/null
+      source "$GPU_LIB"
+      if   w_gpu_has nvidia;      then gpu_flags="--nvidia"
+      elif w_gpu_has amd;         then gpu_flags="--amd --rocm-version 7.2"
+      elif w_gpu_intel_discrete;  then gpu_flags="--intel-arc"
+      elif w_gpu_has intel; then
+        gpu_flags="--cpu"
+        warn 'Intel graphics found, but not a supported discrete Arc/Battlemage — installing CPU-only (real-time synthesis will be slow).'
+      else gpu_flags="--cpu"; warn 'no supported GPU matched — installing CPU-only (real-time synthesis will be slow).'
+      fi
+    else
       gpu_flags="--cpu"
-      warn 'Intel graphics found, but not a supported discrete Arc/Battlemage — installing CPU-only (real-time synthesis will be slow).'
-    else gpu_flags="--cpu"; warn 'no supported GPU matched — installing CPU-only (real-time synthesis will be slow).'
+      warn "w-gpu-lib.sh missing — cannot detect GPU, installing CPU-only."
     fi
     ;;
   *) warn "GPU='$GPU' unknown (nvidia|amd|intel|cpu|auto) — falling back to CPU."; gpu_flags="--cpu" ;;

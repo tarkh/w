@@ -54,6 +54,10 @@ Notes:
   the Hub and the AI tools never name it, and `w-pack list --all` or an install
   by name are the only ways to it. Once installed it is listed like any other:
   a machine must always be able to say what is on it.
+  A bundle may also declare a `pre.sh`: a root step that runs BEFORE its
+  packages — enabling a repo, syncing pacman, resolving a hardware-variant
+  package a virtual provider would otherwise pick wrong. `refresh` never
+  re-runs it, the same policy as packages.
   A bundle someone else installed is NOT set up for you automatically — that
   would spend your disk and network on a choice you never made. `w-pack list`
   says so plainly, and `w-pack setup <bundle>` is the one command that fixes it.

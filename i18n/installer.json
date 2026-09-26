@@ -238,6 +238,10 @@
     "en": "Desktop virtualization: libvirt + QEMU/KVM, virt-manager, GNOME Boxes",
     "ru": "Десктопная виртуализация: libvirt + QEMU/KVM, virt-manager, GNOME Boxes"
   },
+  "p_gaming": {
+    "en": "Gaming: Steam, Proton tooling, Lutris and Heroic launchers, MangoHud overlay",
+    "ru": "Игры: Steam, инструментарий Proton, лаунчеры Lutris и Heroic, оверлей MangoHud"
+  },
   "_section:4": "Validation / passwords",
   "pass_confirm": {
     "en": "Confirm password:",

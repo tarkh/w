@@ -5,7 +5,7 @@ order: 8
 summary: Power profiles, the idle cascade of lock, screen-off and suspend, lid and power-button actions, and the battery charge limit.
 sources:
   - path: .claude/library/w-power.md
-    sha256: 940356f6554a008dbc7035b3b9945bf742428fb27fb9daefe165b9f480558114
+    sha256: eebff106ab709f77a24affe9666690495e7d556311281f76a42aefde4d969d34
   - path: .claude/library/w-kbdlight.md
     sha256: d17c2a2a0ecf20c3a464a254d778e0873def9ebb8833b4362e08eb9869dec506
 ---

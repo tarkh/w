@@ -5,9 +5,11 @@ order: 4
 summary: Windows, workspaces, popups, notifications, screenshots and session restore.
 sources:
   - path: .claude/library/package-hyprland.md
-    sha256: 1de62a5b2513cb022e41927e13e7d3299516829de92ecfa18dd87e5678ae9207
+    sha256: ab8c62f0ff8e9573e02a1e88ca5e65dc364decfcc6d645dcd9280c8b3795eb9c
   - path: .claude/library/quickshell.md
     sha256: da1b14d9d934188dd9b49ece41af8b58ab8d5abe06c6172e198e1c5ade171759
+  - path: .claude/library/w-screenshot.md
+    sha256: 24a2008239b8083d729aa3a1e26f220d1d5a1d448f8f5825c5275ee38b7f88eb
 ---
 
 W desktop = the Hyprland compositor with the Quickshell UI on top. Both are
@@ -70,6 +72,33 @@ previous windows and tabs"**; W does not switch that on for you.
 
 ## Screenshots
 
-<kbd>Super+PrintScreen</kbd> opens the region picker; the result lands in the
-notifications with a one-click copy. `w-screenshot` carries the full set of
-modes (window, monitor, delayed) for scripts and the CLI.
+Three keys, all of which land you in the same place — a frozen copy of the
+screen you can draw on straight away, with the toolbar next to your selection.
+Nothing else opens: copy, save or pin the result from that toolbar and it is
+gone again.
+
+| Key | Captures |
+| --- | --- |
+| <kbd>Super+I</kbd> | the monitor you are on, already selected |
+| <kbd>Super+Shift+I</kbd> | nothing yet — drag the area you want |
+| <kbd>Super+Ctrl+I</kbd> | the focused window, already selected |
+
+The editor's Save button asks where and under what name, opening on the
+`Screenshots` folder inside your pictures folder. Two more keys skip the editor
+entirely and write the file straight there, no questions asked:
+
+| Key | Saves |
+| --- | --- |
+| <kbd>Super+Alt+I</kbd> | the focused monitor |
+| <kbd>Super+Ctrl+Alt+I</kbd> | the focused window |
+
+Files are named `W-<date>_<time>.png`. The annotation colours and font follow
+your theme, and every key here is rebindable in **Hub → Hotkeys** — including
+unbinding the two you do not want.
+
+The editor is Flameshot. W also ships the older one, Satty, for the case where
+Flameshot misbehaves on your hardware — `w-conf set --user screenshot ANNOTATOR
+satty` switches over for the next capture, and `w-conf unset --user screenshot
+ANNOTATOR` switches back. Whichever is
+set, `w-screenshot` carries the full set of modes for scripts and the CLI,
+including the ones with no editor at all (`--copy`, `--save`).

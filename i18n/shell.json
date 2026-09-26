@@ -2304,6 +2304,14 @@
     "en": "Screenshot (window)",
     "ru": "Снимок окна"
   },
+  "hotkeys.screenshot_screen_save": {
+    "en": "Screenshot (screen, save)",
+    "ru": "Снимок экрана (сохранить)"
+  },
+  "hotkeys.screenshot_window_save": {
+    "en": "Screenshot (window, save)",
+    "ru": "Снимок окна (сохранить)"
+  },
   "hotkeys.dnd": {
     "en": "Do Not Disturb",
     "ru": "Не беспокоить"

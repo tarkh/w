@@ -103,6 +103,8 @@ layouts	system	SUPER + O
 screenshot_screen	system	SUPER + I
 screenshot_region	system	SUPER + SHIFT + I
 screenshot_window	system	SUPER + CTRL + I
+screenshot_screen_save	system	SUPER + ALT + I
+screenshot_window_save	system	SUPER + CTRL + ALT + I
 dnd	system	SUPER + SHIFT + D
 nightlight	system	SUPER + SHIFT + N
 

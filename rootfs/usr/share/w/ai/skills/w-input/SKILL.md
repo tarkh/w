@@ -11,7 +11,7 @@ description: >-
   where ~/Pictures and the other standard folders are.
 sources:
   - path: .claude/library/w-hotkeys.md
-    sha256: 360cafda8f05a02474301207755cbc1dc16814eb468a06001eac619c5d2d8cc7
+    sha256: 1412907e2778150860aa8a8ee1b25668588e68d8254f1e145cc4bfc8fa05ac14
   - path: .claude/library/w-keyboard.md
     sha256: ce8652939203622146af301b8f3ca9294fb723e85a8706a261d902fd41bbbf35
   - path: .claude/library/w-locale.md
@@ -47,7 +47,7 @@ Hyprland dispatchers (`~/.config/hypr/hotkeys-catalog.lua`); **profiles** select
 which chord runs which token; the active fragment `hotkeys.lua` is what the
 compositor loads. Changes apply live via `hyprctl reload`.
 
-- Built-in profiles: **`default`** (81 tokens across 8 categories — apps, window,
+- Built-in profiles: **`default`** (84 tokens across 8 categories — apps, window,
   focus, move, workspace, dwindle, system, menu) and **`i3-vim`** (an i3/vim-style diff).
   User profiles are named `^[a-z0-9-]+$`. Run `w-hotkeys catalog` for the live list
   rather than quoting a count from memory. The `menu` category (menu_up/down/left/

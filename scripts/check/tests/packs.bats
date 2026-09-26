@@ -239,6 +239,56 @@ w-style() { :; }
   [[ ! -f "$BATS_TEST_TMPDIR/trace" ]]
 }
 
+# ── pre.sh (fifth extension point, root, BEFORE packages) ────────────────────
+pre_row() {                                             # <bundle> [exit-code]
+  cat > "$W_PACKS_DIR/$1/pre.sh" <<EOF
+echo "\$BUNDLE_NAME pre \$BUNDLE_DIR" >> "$BATS_TEST_TMPDIR/trace"
+exit ${2:-0}
+EOF
+}
+
+# Both package-install paths are stubbed (not PATH-hidden), AFTER `source
+# w-pack` in setup() has already defined its own pack_yay/w_pac — so the test
+# is hermetic whether or not the machine running it actually has yay installed;
+# install_pkgs must not touch a real pacman/yay/sudoers either way.
+stub_pkg_install() {
+  pack_yay() { echo "PKGS $*" >> "$BATS_TEST_TMPDIR/trace"; }
+  w_pac()    { echo "PKGS $*" >> "$BATS_TEST_TMPDIR/trace"; }
+}
+
+@test "install: pre.sh runs before packages, with BUNDLE_NAME/BUNDLE_DIR" {
+  mkbundle alpha
+  state_forget alpha
+  pre_row alpha
+  stub_pkg_install
+  TARGET_USER=alice; TARGET_HOME="$ALICE"
+  run install_bundle alpha
+  [[ "$status" -eq 0 ]]
+  [[ "$(head -1 "$BATS_TEST_TMPDIR/trace")" == "alpha pre $W_PACKS_DIR/alpha" ]]
+  grep -q "^PKGS " "$BATS_TEST_TMPDIR/trace"
+  is_installed alpha
+}
+
+@test "install: a failing pre.sh aborts before packages or state" {
+  mkbundle alpha
+  state_forget alpha
+  pre_row alpha 3
+  stub_pkg_install
+  TARGET_USER=alice; TARGET_HOME="$ALICE"
+  run install_bundle alpha
+  [[ "$status" -ne 0 ]]
+  ! is_installed alpha
+  [[ ! -f "$BATS_TEST_TMPDIR/trace" ]] || ! grep -q "^PKGS " "$BATS_TEST_TMPDIR/trace"
+}
+
+@test "refresh: does not run pre.sh" {
+  mkbundle alpha
+  pre_row alpha
+  run cmd_refresh alpha
+  [[ "$status" -eq 0 ]]
+  [[ ! -f "$BATS_TEST_TMPDIR/trace" ]] || ! grep -q " pre " "$BATS_TEST_TMPDIR/trace"
+}
+
 @test "remove: unknown and not-installed bundles fail with their own message" {
   mkbundle alpha
   run cmd_remove nosuch

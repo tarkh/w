@@ -5,7 +5,7 @@ order: 10
 summary: What a pack is, the bundles W offers, installing one for the machine and setting it up for your account, and how to undo it.
 sources:
   - path: .claude/library/packs.md
-    sha256: b9702c060e7fb45344e1d4810faf9e2034c04f67692cc9ecb0cec8c65089a3ed
+    sha256: 77e6b1307966e37236394abcd9174756c7b4fee07b79972cb01ad747072f627b
 ---
 
 W installs in two layers. The **base** is everything a working desktop needs and
@@ -57,6 +57,20 @@ it into the desktop — so a pack arrives configured, not merely downloaded.
   export vector documents through an Inkscape server, and run edits inside a
   running GIMP and look at the result — with whatever model your profile uses,
   local or cloud. Generative painting in Krita is planned for a companion pack.
+- **gaming** — Steam, Lutris and Heroic side by side on one shared
+  Proton/Wine/MangoHud/gamemode foundation: Steam covers most of a typical
+  library, Lutris is the catch-all for everything else (GOG, Amazon, native
+  installers, emulation), Heroic talks to Epic/GOG's own APIs directly. The
+  pack enables the `multilib` repository, matches the 32-bit graphics stack to
+  your GPU, keeps your game library out of `@home` snapshots (it can run to
+  hundreds of gigabytes and is fully recoverable from the storefronts
+  themselves), and dresses the MangoHud FPS overlay (`Shift_F12`) and the
+  Heroic window itself in your active W colours — Heroic opens in them from its
+  very first launch, and follows every later theme change the next time you
+  start it. Installing games on a second drive stays each launcher's own
+  setting: Steam's **Settings → Storage**, Heroic's **Default Installation
+  Path**, Lutris's **Default installation folder**. Use a Linux filesystem for
+  that drive — games on NTFS or exFAT break under Proton.
 - **virt** — desktop virtualization: libvirt and QEMU/KVM underneath, with
   virt-manager for full control and GNOME Boxes for creating a VM in one click
   from an ISO. A default network is ready to go the moment the pack is set up,

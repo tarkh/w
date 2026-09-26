@@ -1,0 +1,17 @@
+# screenshot.schema — which layer may decide each key of the `screenshot` subsystem.
+#
+# Read by /usr/lib/w/w-conf-lib.sh (and its Python twin) during the load
+# pass; a user-layer assignment to a `system` key is dropped with a warning, and
+# `wconf_set` refuses to write it in the first place. See w-conf.md.
+#
+# Format: <KEY>\t<scope>       scope: system | user | both
+#   system — root domain: the admin (or fleet policy) decides, per machine.
+#   user   — the logged-in user may override it in ~/.config/w/screenshot.conf.
+#   both   — either layer may speak; the usual priority order applies.
+#
+# The only key here is `user`: which annotation UI opens is a matter of personal
+# taste inside one graphical session, it touches nothing outside that user's own
+# screen, and both tools are installed on every machine anyway. A fleet that
+# wants to pin one of them still can — policy.d sits above the user layer.
+
+ANNOTATOR	user

@@ -24,6 +24,7 @@
 #                                     # name from the CLI, which is the whole point.
 #                                     # Hidden UNTIL installed, not hidden outright —
 #                                     # see bundle_hidden().
+#     pre.sh                         # root step BEFORE packages (repos, hardware-variant pkgs)
 #     pkgs.txt                       # packages (repo + AUR), one per line, # comments
 #     setup.sh                       # post-install tuning (idempotent), like an apply module
 #     manifest                       # config ownership (TSV: <path>\t<class>)
@@ -188,6 +189,10 @@ Notes:
   the Hub and the AI tools never name it, and \`w-pack list --all\` or an install
   by name are the only ways to it. Once installed it is listed like any other:
   a machine must always be able to say what is on it.
+  A bundle may also declare a \`pre.sh\`: a root step that runs BEFORE its
+  packages — enabling a repo, syncing pacman, resolving a hardware-variant
+  package a virtual provider would otherwise pick wrong. \`refresh\` never
+  re-runs it, the same policy as packages.
   A bundle someone else installed is NOT set up for you automatically — that
   would spend your disk and network on a choice you never made. \`w-pack list\`
   says so plainly, and \`w-pack setup <bundle>\` is the one command that fixes it.
@@ -391,6 +396,21 @@ bundle_has_user_layer() {
     [[ "$path" == /* ]] || return 0                     # a home-relative row
   done < "$bdir/manifest"
   return 1
+}
+
+# ── pre.sh (bundle prepare step, root, BEFORE packages) ──────────────────────
+# A fifth extension point, ahead of everything else: some bundles need the
+# machine changed before pkgs.txt can even resolve — enabling a repo, `pacman
+# -Sy`, a hardware-variant package a virtual provider would otherwise pick
+# wrong. setup.sh runs too late for that. Not called by refresh (cmd_refresh
+# below): it is exactly the network operation refresh promises not to be.
+run_prepare() {
+  local name="$1" bdir; bdir="$(bundle_dir "$name")"
+  local pre="$bdir/pre.sh"
+  [[ -f "$pre" ]] || return 0
+  info "Running '$name' prepare step..."
+  BUNDLE_NAME="$name" BUNDLE_DIR="$bdir" \
+    bash "$pre" || { err "prepare failed for '$name'"; return 1; }
 }
 
 # ── Package install (yay: repo + AUR in one pass, as the unprivileged build user) ─
@@ -639,6 +659,7 @@ install_bundle() {
   done
 
   info "Installing bundle '$name' ($(meta_field "$name" DESC))..."
+  run_prepare           "$name" || return 1
   install_pkgs          "$name"
   deploy_configs_system "$name"
   deploy_wstyle         "$name"
@@ -706,9 +727,11 @@ cmd_setup() {
 
 # ── refresh ──────────────────────────────────────────────────────────────────
 # Re-apply what a bundle OWNS, from the freshly staged tree, for bundles that are
-# already installed. Deliberately skips install_pkgs: packages are pacman's job
-# and an update must not turn into a network operation, while config/theme/skill
-# deployment and the bundle's own setup.sh are idempotent by contract (packs.md).
+# already installed. Deliberately skips install_pkgs AND pre.sh: packages are
+# pacman's job and an update must not turn into a network operation — the same
+# reason pre.sh (repo enablement, `pacman -Sy`, AUR builds) stays out too — while
+# config/theme/skill deployment and the bundle's own setup.sh are idempotent by
+# contract (packs.md).
 #
 # This is the missing link update-system.md kept flagging: without it a bundle's
 # migrations only ever ran at install time, so an M1/M2 marker layout or a legacy

@@ -8,11 +8,11 @@ description: >-
   Monitors and the night light are w-displays; reopening windows at login is w-session.
 sources:
   - path: .claude/library/package-hyprland.md
-    sha256: 1de62a5b2513cb022e41927e13e7d3299516829de92ecfa18dd87e5678ae9207
+    sha256: ab8c62f0ff8e9573e02a1e88ca5e65dc364decfcc6d645dcd9280c8b3795eb9c
   - path: .claude/library/quickshell.md
     sha256: da1b14d9d934188dd9b49ece41af8b58ab8d5abe06c6172e198e1c5ade171759
   - path: .claude/library/quickshell-bar.md
-    sha256: 76dc9b56a2cdf3a879e737a653ea5bc330722c1eb346e64f917765823a1abf5c
+    sha256: aa1d0f91c3880bc788ffcffe8d42730ee12a4d7fdabecfdc59e275a643f332ed
   - path: .claude/library/w-bar.md
     sha256: 763c1acafab94122e8a18c1c3f0b149eef2e54978f352f7ec4162b8241bdd787
   - path: .claude/library/quickshell-assistant.md
@@ -124,6 +124,7 @@ quick reference.
 | `Super+Shift+1..0` | Move window to workspace |
 | `Super+arrows` / `Super+Shift+arrows` | Move focus / move window |
 | `Super+I` / `Super+Shift+I` / `Super+Ctrl+I` | Screenshot output / region / window |
+| `Super+Alt+I` / `Super+Ctrl+Alt+I` | Screenshot output / window, saved straight to a file |
 | `Super+Shift+D` | Do Not Disturb on/off |
 | `Super+Shift+N` | Night light on/off (off ↔ scheduled) — **w-displays** |
 | `Super+S` / `Super+Shift+S` | Scratchpad toggle / send window |
@@ -206,11 +207,50 @@ Everything shell-side is one Quickshell instance:
 ## Screenshots
 
 `w-screenshot` is the capture tool (region/window/output/full × annotate/copy/save).
-By default `Super+Shift+I` takes a region screenshot and opens the annotator
-(`Super+I` the whole output, `Super+Ctrl+I` the focused window); saved images go to
-`Screenshots/` inside the user's Pictures folder — `$(xdg-user-dir PICTURES)/Screenshots`,
-never a literal `~/Pictures`: the folder is named in the system language (`~/Изображения`
-on a Russian system) and follows a language change (`w-userdirs`, skill **w-input**).
+`Super+Shift+I` takes a region screenshot, `Super+I` the whole output, `Super+Ctrl+I`
+the focused window; all three open the annotator, whose Save button asks where.
+Adding `Alt` skips the annotator and writes the PNG immediately, no dialog:
+`Super+Alt+I` (output) and `Super+Ctrl+Alt+I` (window) — tokens
+`screenshot_screen_save` / `screenshot_window_save`, rebindable and unbindable like
+any other (skill **w-desktop** → hotkeys, `w-hotkeys set <token> ""`). Saved images go
+to `Screenshots/` inside the user's Pictures folder — `$(xdg-user-dir
+PICTURES)/Screenshots`, never a literal `~/Pictures`: the folder is named in the
+system language (`~/Изображения` on a Russian system) and follows a language change
+(`w-userdirs`, skill **w-input**).
+
+The annotator is **Flameshot**: one frozen full-monitor overlay where the region is
+both selected and drawn on, with the toolbar beside the selection — no second window.
+On Wayland it captures through the XDG screenshot portal (here
+`xdg-desktop-portal-hyprland`, which shells out to `grim`), so it rides the same
+wlr-screencopy path as the rest of W. Its overlay palette/font are the w-style
+`flameshot` axis; its window rules are `/usr/share/w/hypr/rules.d/flameshot.lua`.
+
+**Satty**, the previous annotator, is still installed as the rollback:
+`screenshot ANNOTATOR` (`flameshot` | `satty`) decides, is read at the moment of each
+capture, and needs no reload or relogin. The key is **user-scope**, so the write needs
+the user layer — `w-conf set --user screenshot ANNOTATOR satty`, undone with
+`w-conf unset --user screenshot ANNOTATOR`; a plain `w-conf set` targets /etc/w and
+fails without root. If a user reports the overlay misbehaving (wrong monitor,
+decorated window, slow to appear), that key is the first thing to try.
+
+Two details that look like bugs and are not. **The bar drops below the windows**
+while a region or window capture is open — no window can draw above a `top` layer,
+so otherwise the bar would cover the selection and eat clicks in its strip;
+w-screenshot asks for it via the `quickshell:barlower` global shortcut and the bar
+restores itself when the overlay closes. A whole-monitor capture skips this (its
+selection never reaches past the bar, and moving the layer there is a visible
+flicker). **The shortcut cheat-sheet does not appear for a window capture** —
+Flameshot centres it on the monitor with no say in the matter, where it would land
+on the toolbar beside the preselected window, so `showHelp` is turned off for that
+mode only.
+
+On the first-ever capture w-screenshot writes the XDG screenshot permission
+(`PermissionStore` table `screenshot`, host row) to `yes`, so the one-time GTK
+"allow screenshots?" dialog never interrupts. It only ever writes an ABSENT row —
+a user who revoked the permission on purpose keeps that, and their captures will
+fail until they allow it again. One exception the key does not cover: `full --annotate` — a canvas
+across ALL monitors — always uses satty, because a Flameshot overlay is one window on
+one monitor by construction. `--copy` and `--save` never open either tool.
 
 ## Desktop tools (via `w-mcp`)
 

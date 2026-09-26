@@ -1,22 +1,27 @@
 #!/usr/bin/env bash
 # w-screenshot — W Linux screen capture front-end (Wayland/Hyprland)
 #
-# A thin orchestrator over the native wlr-screencopy stack, in the w-dns /
-# w-wallpaper style:
+# A thin orchestrator over two capture stacks, in the w-dns / w-wallpaper style.
+#
+# ANNOTATING captures (the default action, and what all three keybinds do) go to
+# Flameshot: one frozen full-monitor overlay in which the region is dragged AND
+# drawn on, with the toolbar next to the selection. No second window opens.
+#   • flameshot — capture + selection + annotation in one surface. It reaches the
+#                 screen through the XDG screenshot portal, which on W is
+#                 xdg-desktop-portal-hyprland shelling out to grim — the same
+#                 wlr-screencopy path everything else here uses.
+#   • satty     — the previous annotator, kept as the rollback: `w-conf set --user
+#                 screenshot ANNOTATOR satty` swaps it back in on the next
+#                 keypress, no redeploy. Also the only option for `full`.
+#
+# NON-annotating captures (--copy, --save) stay on the direct stack, which has no
+# UI to open and is as fast as the compositor allows:
 #   • grim   — capture (same wlroots screencopy path hyprlock already uses)
-#   • slurp  — interactive region/window selection
-#   • satty  — annotation UI (its own toolbar does copy-to-clipboard / save-to
-#              -file; palette + font themed by w-style's `satty` axis)
-#   • wl-copy (wl-clipboard) — clipboard for the quick, non-annotated grabs
+#   • slurp  — interactive region selection
+#   • wl-copy (wl-clipboard) — clipboard for the quick grabs
 #
 # Modes cover every capture case: a selected region, the focused window, the
-# focused output, or every output at once. The default action is `annotate`
-# (pipe the grab into satty); --copy and --save skip satty for a one-shot grab.
-#
-# The save path is passed to satty at RUNTIME (--output-filename) rather than
-# baked into its config, because w-style renders that config into /etc/skel as
-# root at install time where the user's $HOME is not yet known; only w-screenshot,
-# running as the user, can resolve the real Screenshots directory.
+# focused output, or every output at once.
 #
 # NOTE (future session): video recording is intentionally out of scope for now.
 # It will be added here behind a `record` subcommand (wf-recorder / wl-screenrec)
@@ -36,14 +41,18 @@ pictures_dir() {
 }
 SCREENSHOT_DIR="$(pictures_dir)/Screenshots"
 FILENAME_FMT="W-%Y-%m-%d_%H-%M-%S.png"   # strftime; shared by satty + --save
+FLAMESHOT_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/flameshot/flameshot.ini"
 
 err()  { echo "w-screenshot: $*" >&2; }
 note() { command -v notify-send >/dev/null 2>&1 && notify-send -a "W Screenshot" "$@" || true; }
 
-# Notification text is a GRAPHICAL surface, so it follows the system language
-# (config-i18n.md); err()/usage() above stay English like every other w-* CLI.
-# W_I18N_LIB is a dev/test seam, the same one W_CONF_LIB is: it lets this CLI be
-# sourced from a checkout on a machine with no W installed (scripts/check/tests).
+# W_CONF_LIB / W_I18N_LIB are the dev/test seams every w-* CLI has: they let this
+# CLI be sourced from a checkout on a machine with no W installed
+# (scripts/check/tests). Notification text is a GRAPHICAL surface, so it follows
+# the system language (config-i18n.md); err()/usage() stay English like every
+# other w-* CLI.
+# shellcheck source=../lib/w/w-conf-lib.sh
+source "${W_CONF_LIB:-/usr/lib/w/w-conf-lib.sh}"
 # shellcheck source=../lib/w/w-i18n-lib.sh
 source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
 
@@ -55,14 +64,19 @@ Usage: w-screenshot <mode> [action]
 Info: Capture the screen — region/window/output, annotate/copy/save.
 
 Modes:
-  region    Select a rectangular region (slurp)
+  region    Select a rectangular region
   window    Capture the focused window (Hyprland geometry)
   output    Capture the focused monitor
   full      Capture all monitors
 
 Actions (default: annotate):
-  --annotate   Open the capture in satty (its toolbar copies/saves)
-  --copy       Copy the capture straight to the clipboard (wl-copy)
+  --annotate   Select and draw in one frozen overlay (Flameshot; its toolbar
+               copies, saves or pins). Back to the two-step satty stack:
+               \`w-conf set --user screenshot ANNOTATOR satty\`; return with
+               \`w-conf unset --user screenshot ANNOTATOR\`.
+               \`full --annotate\` is always satty: a Flameshot overlay is one
+               window on one monitor.
+  --copy       Copy the capture straight to the clipboard (wl-copy), no UI
   --save       Save the capture to $SCREENSHOT_DIR and notify
 
 Exit codes:
@@ -71,11 +85,168 @@ Exit codes:
   2  Usage error
 
 Examples:
-  w-screenshot region                # select area → annotate in satty
+  w-screenshot region                # drag an area and draw on it in place
   w-screenshot output --copy         # focused monitor → clipboard
   w-screenshot full --save           # every monitor → PNG file
 EOF
 }
+
+# ── Flameshot (annotating captures) ───────────────────────────────────────────
+
+# Set <key>=<value> under [General] in flameshot's ini, leaving every other key
+# untouched — flameshot REWRITES this file itself (last colour, last tool, button
+# set), so a wholesale render would throw the user's own state away. Same shape as
+# w-style's patch_gtk_key, kept here because the w-style `flameshot` axis patches
+# the very same file for the theme half. An unchanged value is not rewritten at
+# all: flameshot watches this file, and a no-op touch makes a running instance
+# reload for nothing.
+flameshot_set() {
+  local key="$1" value="$2" f="$FLAMESHOT_CONFIG"
+  if [[ ! -f "$f" ]]; then
+    install -Dm644 /dev/stdin "$f" <<EOF
+[General]
+$key=$value
+EOF
+    return
+  fi
+  if grep -q "^$key=" "$f"; then
+    grep -qxF "$key=$value" "$f" || sed -i "s|^$key=.*|$key=$value|" "$f"
+  elif grep -q '^\[General\]' "$f"; then
+    sed -i "0,/^\[General\]/s||[General]\n$key=$value|" "$f"
+  else
+    printf '[General]\n%s=%s\n' "$key" "$value" >>"$f"
+  fi
+}
+
+# Where the toolbar's Save dialog OPENS. This is w-screenshot's to set, not the
+# w-style axis's: that axis renders into /etc/skel as root at install time, where
+# the target user's $HOME — and therefore their PICTURES folder — is unknown. Only
+# this script, running as the user at the moment of the capture, can resolve it,
+# and it re-resolves on every run so a folder renamed by a language change
+# (w-userdirs) is picked up without a relogin.
+#
+# savePathFixed stays FALSE: once an annotation UI is on screen, pressing its Save
+# button and being asked where and under what name is the expected desktop
+# behaviour — the dialog opens already pointing at Screenshots, so the common case
+# is still one Enter. Saving with no questions asked is what the two
+# `w-screenshot <mode> --save` keybinds are for, and those never open a UI at all.
+flameshot_seed_config() {
+  flameshot_set savePath "$SCREENSHOT_DIR"
+  flameshot_set savePathFixed false
+}
+
+# xdg-desktop-portal 1.20+ gates the Screenshot portal behind a one-time
+# "Allow taking screenshots?" dialog drawn by xdg-desktop-portal-gtk; the answer
+# is remembered in the permission store and applies to every unsandboxed app.
+# Without this, the very first capture on a fresh account blocks on a GTK dialog
+# nobody asked for — after which the machine behaves exactly as it does now.
+#
+# Answering it on the user's behalf is not a boundary being removed. W's other
+# capture path (grim, right below) talks to wlr-screencopy directly and has never
+# asked, and anything already running as this user can do the same — the portal
+# prompt is a real boundary only for sandboxed apps, and those get their own
+# app-id row, untouched here (this writes the empty-string HOST row only).
+#
+# A decision already on record is never overwritten, in either direction: if the
+# row exists — because the user answered the dialog once, or revoked the
+# permission later on purpose — it is left exactly as it is. The lookup IS the
+# stamp, which is why there is no state file to keep in step with it.
+flameshot_allow_portal() {
+  local store=(--session --dest org.freedesktop.impl.portal.PermissionStore
+               --object-path /org/freedesktop/impl/portal/PermissionStore)
+  local lookup
+  # `({'': ['yes']}, <byte 0x00>)` when the host row is set, `({}, …)` when the
+  # table exists but the row does not, and an error when neither does.
+  lookup=$(gdbus call "${store[@]}" \
+             --method org.freedesktop.impl.portal.PermissionStore.Lookup \
+             screenshot screenshot 2>/dev/null) || lookup=""
+  if [[ "$lookup" == *"'':"* ]]; then return 0; fi
+  gdbus call "${store[@]}" \
+    --method org.freedesktop.impl.portal.PermissionStore.SetPermission \
+    screenshot true screenshot "" "['yes']" >/dev/null 2>&1 || true
+}
+
+# Flameshot numbers monitors the way Qt does — by the order the compositor
+# announces the wl_outputs, which is Hyprland's monitor-id order. `.id` itself is
+# NOT that index: ids are handed out monotonically and go sparse after a hotplug,
+# so what Qt agrees with is the focused monitor's POSITION in the id-sorted list.
+flameshot_screen_index() { jq 'sort_by(.id) | map(.focused) | index(true) // 0' <<<"$1"; }
+
+# Open the frozen overlay on the focused monitor, optionally with the selection
+# already drawn (window/output modes). No task flags are passed on purpose: with
+# one, flameshot strips Save/Copy/Pin from the toolbar and leaves only Accept —
+# the full toolbar, where the user picks the action after drawing, is exactly the
+# UI we want.
+flameshot_annotate() {
+  local mode="$1" mons n win region="" rc=0
+  command -v flameshot >/dev/null 2>&1 || { err "flameshot is not installed"; exit 1; }
+  mons=$(hyprctl -j monitors) || { err "could not reach Hyprland"; exit 1; }
+  n=$(flameshot_screen_index "$mons")
+
+  # An initial selection is monitor-LOCAL and in PHYSICAL pixels: flameshot puts
+  # it inside the capture widget (whose origin is the monitor's top-left) after
+  # dividing by the screen's device pixel ratio. hyprctl speaks logical
+  # coordinates for positions and sizes, hence the × scale; .width/.height are
+  # already the physical mode. A window hanging off the monitor's top or left edge
+  # is clamped — a negative origin would put the handle outside the widget.
+  case "$mode" in
+    region) ;;   # no preselection: the user drags it, which is the whole point
+    output)
+      region=$(jq -r 'first(.[] | select(.focused)) | "\(.width)x\(.height)+0+0"' <<<"$mons")
+      ;;
+    window)
+      win=$(hyprctl -j activewindow)
+      if [[ -n $(jq -r '.address // empty' <<<"$win") ]]; then
+        region=$(jq -r --argjson w "$win" '
+          first(.[] | select(.focused)) as $m
+          | ((($w.at[0] - $m.x) * $m.scale) | round) as $x
+          | ((($w.at[1] - $m.y) * $m.scale) | round) as $y
+          | ((($w.size[0]) * $m.scale) | round) as $sw
+          | ((($w.size[1]) * $m.scale) | round) as $sh
+          | "\($sw)x\($sh)+\([$x, 0] | max)+\([$y, 0] | max)"' <<<"$mons")
+      else
+        err "no focused window; falling back to region select"
+      fi
+      ;;
+  esac
+
+  # Ask the bar to drop below the windows for the captures whose selection can
+  # reach into its strip — no window can ever draw above a `top` layer, so left
+  # alone the bar swallows clicks and covers the toolbar up there (Bar.qml carries
+  # the other half). `output` is deliberately left out: its selection already
+  # covers the monitor, nothing is dragged through the bar, and moving the layer
+  # under an overlay that looks just like the frozen desktop is a visible flicker
+  # for nothing. Dispatched BEFORE the launch, so the bar is down before the
+  # overlay maps; Quickshell clears the request when the overlay goes away.
+  # `hyprctl dispatch` takes Lua since Hyprland 0.55 — the bare `global ns:name`
+  # form is a parse error now (same call shape w-session uses for its curtain).
+  case "$mode" in
+    region|window)
+      hyprctl dispatch 'hl.dsp.global("quickshell:barlower")' >/dev/null 2>&1 || true ;;
+  esac
+
+  # Flameshot centres its shortcut cheat-sheet on the MONITOR, and offers no say
+  # in where it lands — only whether it shows at all. With a window preselected,
+  # that box can come down right on top of the toolbar that just appeared beside
+  # the selection: two windows side by side put the toolbar near the middle of the
+  # screen, which is exactly where the box is. The other two modes never collide —
+  # nothing is selected yet, or the selection is the whole monitor and the toolbar
+  # goes to its edge — so the cheat-sheet is kept where it earns its keep and
+  # dropped only where it is in the way.
+  if [[ "$mode" == window ]]; then flameshot_set showHelp false
+  else                             flameshot_set showHelp true; fi
+
+  flameshot_allow_portal
+  flameshot_seed_config
+  local args=(screen --number "$n" --edit)
+  if [[ -n "$region" ]]; then args+=(--region "$region"); fi
+  flameshot "${args[@]}" || rc=$?
+  # 2 = flameshot's E_ABORTED: Esc, i.e. the user changed their mind. Not an
+  # error, the same contract a cancelled slurp selection has below.
+  if [[ $rc -ne 0 && $rc -ne 2 ]]; then err "flameshot exited with $rc"; exit 1; fi
+}
+
+# ── grim/slurp (non-annotating captures, and the satty annotator) ─────────────
 
 # Build the grim argument array for a mode into the global GRIM=().
 # Region/window pass a "-g X,Y WxH" geometry; output uses "-o <name>" (correct
@@ -108,9 +279,6 @@ build_grim() {
     full)
       GRIM=(grim)
       ;;
-    *)
-      usage; exit 2
-      ;;
   esac
 }
 
@@ -119,11 +287,25 @@ main() {
   case "$1" in -h|--help|help) usage; exit 0 ;; esac
 
   local mode="$1" action="${2:---annotate}"
+  case "$mode"   in region|window|output|full) ;; *) usage; exit 2 ;; esac
+  case "$action" in --annotate|--copy|--save)  ;; *) usage; exit 2 ;; esac
+
+  # Both annotators save there, and neither creates the folder itself.
+  mkdir -p "$SCREENSHOT_DIR"
+
+  # Which annotator is a RUNTIME choice, re-read on every capture: `w-conf set
+  # screenshot ANNOTATOR satty` is in effect on the next keypress, with no render
+  # and no relogin. `full` is not offered to flameshot — its overlay is one window
+  # on one monitor by construction, so a canvas spanning every output has no
+  # flameshot form and stays on satty whatever the key says.
+  if [[ "$action" == "--annotate" && "$mode" != full ]] &&
+     [[ "$(wconf_get screenshot ANNOTATOR flameshot)" == flameshot ]]; then
+    flameshot_annotate "$mode"
+    return
+  fi
+
   local GRIM
   build_grim "$mode"
-
-  # satty saves there too, and does not create the folder itself.
-  mkdir -p "$SCREENSHOT_DIR"
   case "$action" in
     --annotate)
       "${GRIM[@]}" - | satty --filename - \
@@ -137,9 +319,6 @@ main() {
       local out; out="$SCREENSHOT_DIR/$(date +"$FILENAME_FMT")"
       "${GRIM[@]}" "$out"
       note "$(w_t screenshot.saved)" "$out"
-      ;;
-    *)
-      usage; exit 2
       ;;
   esac
 }

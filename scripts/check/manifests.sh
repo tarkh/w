@@ -118,6 +118,15 @@ chk_manifests() {
       fi
     done
 
+    # pre.sh changes the machine (repos, `pacman -Sy`, hardware-variant packages)
+    # before setup.sh even runs — the same asymmetry as above, one-directional
+    # only: a teardown.sh with no pre.sh is normal (it may exist for setup.sh).
+    if [[ -f "$bdir/pre.sh" && ! -f "$bdir/teardown.sh" ]]; then
+      echo "  packs/$bname: has pre.sh but no teardown.sh"
+      echo "    (pre.sh changes the machine — repos, packages — and needs a declared undo)"
+      rc=1
+    fi
+
     bm="$bdir/manifest"
     [[ -f "$bm" ]] || continue
     n=0

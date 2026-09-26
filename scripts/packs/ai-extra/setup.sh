@@ -20,14 +20,20 @@ set -uo pipefail   # NOT -e: keep going on non-fatal steps
 info() { echo -e "  \033[1;35m->\033[0m $*"; }
 warn() { echo -e "  \033[1;33mWARN:\033[0m $*" >&2; }
 
-# ── 1. Ollama — base + GPU backend (mirrors mod_gpu's vendor detection) ──────
+# ── 1. Ollama — base + GPU backend (via the shared w-gpu-lib.sh seam) ────────
 # Repo-only packages (no AUR), so a plain pacman is enough — pkgs.txt cannot list a
 # fixed name because the right backend depends on the machine.
 info "Detecting GPU vendor for the Ollama backend package..."
-gpu_lines="$(lspci -nn 2>/dev/null | grep -Ei 'VGA compatible controller|3D controller|Display controller' || true)"
+GPU_LIB="${W_GPU_LIB:-/usr/lib/w/w-gpu-lib.sh}"
 ollama_pkg="ollama"
-echo "$gpu_lines" | grep -qi '\[10de:' && ollama_pkg="ollama-cuda"
-echo "$gpu_lines" | grep -qi '\[1002:' && ollama_pkg="ollama-rocm"
+if [[ -r "$GPU_LIB" ]]; then
+  # shellcheck source=/dev/null
+  source "$GPU_LIB"
+  w_gpu_has nvidia && ollama_pkg="ollama-cuda"
+  w_gpu_has amd    && ollama_pkg="ollama-rocm"
+else
+  warn "w-gpu-lib.sh missing — cannot detect GPU, installing CPU-only ollama backend."
+fi
 
 # Arch packages Ollama as base + backend, not as competing builds: `ollama` is the
 # binary, `ollama-cuda`/`ollama-rocm` are GPU backends that DEPEND on it and pull

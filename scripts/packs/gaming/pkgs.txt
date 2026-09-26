@@ -1,0 +1,76 @@
+# gaming bundle — packages (repo + AUR names; w-pack installs via yay, repo +
+# AUR in one pass, as the build user; pacman fallback if yay is absent). One
+# per line; '#' comments and blank lines ignored.
+#
+# The GPU-vendor lib32 stack (lib32-mesa, lib32-vulkan-{radeon,intel},
+# lib32-nvidia-utils/580xx/470xx) is deliberately NOT here — it depends on the
+# machine's actual GPU and has to land BEFORE steam resolves its virtual
+# lib32-vulkan-driver dependency, so it is installed by pre.sh via
+# w_gpu_lib32_packages, ahead of this list. See pre.sh / w-gpu-lib.sh.
+
+# ── Client and runtime (multilib) ─────────────────────────────────────────
+# steam: the client itself, pulls steam-devices (controller udev rules) and
+# the Steam Runtime (Pressure Vessel/Soldier containers) as its own deps.
+# umu-launcher: the open compatibility layer Valve's own tooling and both
+# Lutris and Heroic delegate Proton launches through — one Proton resolution
+# path shared by all three launchers instead of three divergent ones.
+steam
+umu-launcher
+
+# ── Launchers (extra + AUR) ───────────────────────────────────────────────
+# lutris: official Arch package, the catch-all launcher (GOG/Amazon/native
+# installers/emulation) via community install-scripts.
+# heroic-games-launcher-bin: Epic/GOG native API client — Lutris's own Epic
+# script is fragile (Epic changes its API without notice); Heroic talks to it
+# directly and stays maintained against that (see meta.conf).
+lutris
+heroic-games-launcher-bin
+
+# ── Proton tooling (AUR + extra) ──────────────────────────────────────────
+# protonplus: GTK4 GUI to install/manage GE-Proton, Luxtorpeda, Boxtron etc
+# on top of the stock Proton versions Steam ships.
+# protontricks: winetricks, but resolves the right Proton prefix for a given
+# Steam AppID — the escape hatch for the "one DLL/font a game needs" class of
+# fix that GE-Proton alone does not cover.
+protonplus
+protontricks
+
+# ── System Wine (extra + multilib) ────────────────────────────────────────
+# Not what games run under (that's Proton, bundled per-title by Steam) — this
+# is what Lutris's non-Steam installers and winetricks itself need: a system
+# Wine + its 32-bit dependency chain (vkd3d translates D3D12 to Vulkan; wine
+# and winetricks need their own gnutls, independent of Proton's).
+wine
+winetricks
+vkd3d
+lib32-vkd3d
+lib32-gnutls
+
+# ── Overlay / compositor / mode (extra + multilib) ────────────────────────
+# mangohud: FPS/frametime/GPU-CPU overlay, themed from the active W theme
+# (wstyle axis lands in Session 4) — lib32 needed because most games run as
+# 32-bit Proton/Wine processes.
+# gamescope: Valve's micro-compositor — nested Wayland session for games that
+# need it (HDR, FSR upscaling, frame-rate limiting, input isolation). Not
+# forced on anyone; a launch-option choice documented in ai/SKILL.md (S5).
+# gamemode: CPU governor/priority bump for the process tree while a game
+# runs, bridged into w-power by w-gamemode-hook below.
+mangohud
+lib32-mangohud
+gamescope
+gamemode
+lib32-gamemode
+
+# ── Kernel-side ────────────────────────────────────────────────────────────
+# ntsync-autoload: loads the ntsync kernel module (NT synchronization
+# primitives) at boot via a modules-load.d drop-in — the single biggest
+# real-world Proton/Wine performance win of the last few years. Built into
+# W's kernels (linux/linux-zen/linux-lts all ship ntsync.ko); this package
+# only handles the autoload wiring.
+ntsync-autoload
+
+# ── Scheduler (installed, NOT enabled) ────────────────────────────────────
+# scx-scheds: ships scx_lavd (a game-tuned sched_ext scheduler) as an
+# available choice. W does not switch the machine's scheduler on install —
+# see setup.sh for the one-line how-to-try it printed at the end.
+scx-scheds

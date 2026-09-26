@@ -16,6 +16,7 @@
 // reflected without a shell restart. `screen: modelData` is also what makes monitor
 // selection deterministic — without it Quickshell picked an arbitrary screen.
 import Quickshell
+import Quickshell.Hyprland
 import Quickshell.Wayland
 import QtQuick
 import qs.core
@@ -26,6 +27,42 @@ Scope {
     // Screens the bar should render on: reactive to Quickshell.screens, Displays.primary
     // and BarConfig.monitorCfg (BarConfig.barOn reads both through Displays.isPrimary).
     readonly property var barScreens: Quickshell.screens.filter(s => BarConfig.barOn(s.name))
+
+    // A screenshot annotator's capture overlay is a full-monitor WINDOW, and no
+    // window can draw above a `top` layer — Hyprland has no rule for it either
+    // (layer_rule's `order` is about space reservation, not z-order). So the bar
+    // would sit on top of the overlay: a selection reaching into the bar's strip
+    // renders under it, buttons included, and clicks up there hit the bar.
+    //
+    // While such an overlay is up, drop to `bottom`. The exclusive zone is
+    // independent of the layer, so nothing reflows and the bar still occupies —
+    // and is captured in — exactly the same strip; it simply stops being above
+    // the overlay.
+    //
+    // TWO conditions, not one. The overlay's toplevel is what makes this
+    // self-healing — if the annotator crashes, its window is gone and the bar
+    // comes back by itself — but a toplevel cannot say WHICH capture is running,
+    // and one of them does not want the bar moved at all. A whole-monitor capture
+    // arrives with its selection already covering the monitor: nothing is ever
+    // dragged through the bar's strip, so there is nothing to gain — while
+    // re-creating the layer surface underneath an overlay that looks exactly like
+    // the desktop it froze is a flicker you can see. So w-screenshot asks for the
+    // drop explicitly, and only for the captures that need it.
+    //
+    // A request that never gets an overlay (the portal refused, say) leaves the
+    // flag set; the next capture then behaves as it did before this split and
+    // clears it on the way out. Benign by construction, so no timer guards it.
+    property bool lowerRequested: false
+    readonly property bool overlayOpen: Hyprland.toplevels.values.some(
+        t => t && t.wayland && t.wayland.appId === "flameshot")
+    readonly property bool captureOverlay: overlayOpen && lowerRequested
+    onOverlayOpenChanged: if (!overlayOpen) lowerRequested = false
+
+    GlobalShortcut {
+        appid: "quickshell"
+        name: "barlower"
+        onPressed: root.lowerRequested = true
+    }
 
     Variants {
         model: root.barScreens
@@ -54,7 +91,7 @@ Scope {
             exclusiveZone:  BarConfig.height
 
             WlrLayershell.namespace: "quickshell:bar"
-            WlrLayershell.layer:     WlrLayer.Top
+            WlrLayershell.layer:     root.captureOverlay ? WlrLayer.Bottom : WlrLayer.Top
             // None: the bar has no keyboard input of its own, and OnDemand made it a
             // focus candidate — with follow_mouse=1 merely hovering the bar handed it
             // the keyboard, and leaving it over an empty workspace left the focus stuck

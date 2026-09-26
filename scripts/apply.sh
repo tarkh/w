@@ -15,6 +15,7 @@ MODULES="$SRC/scripts/install/modules"
 
 source "$SRC/scripts/install/lib/deploy.sh"
 source "$SRC/scripts/install/lib/pac.sh"
+source "$SRC/scripts/install/lib/gpu.sh"
 source "$SRC/scripts/install/lib/aurbuild.sh"
 source "$SRC/scripts/install/lib/modules.sh"
 

@@ -95,6 +95,10 @@ M.actions = {
   { id = "screenshot_screen", cat = "system", def = "SUPER + I",          dsp = function() return hl.dsp.exec_cmd("w-screenshot output") end },
   { id = "screenshot_region", cat = "system", def = "SUPER + SHIFT + I",  dsp = function() return hl.dsp.exec_cmd("w-screenshot region") end },
   { id = "screenshot_window", cat = "system", def = "SUPER + CTRL + I",   dsp = function() return hl.dsp.exec_cmd("w-screenshot window") end },
+  -- Straight to a PNG in Screenshots, no annotator and no dialog — the "just
+  -- grab it" pair, next to their annotating twins on the same letter.
+  { id = "screenshot_screen_save", cat = "system", def = "SUPER + ALT + I",        dsp = function() return hl.dsp.exec_cmd("w-screenshot output --save") end },
+  { id = "screenshot_window_save", cat = "system", def = "SUPER + CTRL + ALT + I", dsp = function() return hl.dsp.exec_cmd("w-screenshot window --save") end },
   { id = "dnd",               cat = "system", def = "SUPER + SHIFT + D",  dsp = function() return hl.dsp.exec_cmd("w-notify dnd toggle") end },
   { id = "nightlight",        cat = "system", def = "SUPER + SHIFT + N",  dsp = function() return hl.dsp.exec_cmd("w-nightlight toggle") end },
 

@@ -183,11 +183,20 @@ jq                 # JSON helper used by yazi plugins/previews
 # defaults + profile pin: see package-firefox.md.
 firefox
 
-# Screen capture (apply.sh --screencapture) — native wlr-screencopy stack, driven
-# by the w-screenshot script. grim (above, shared with w-theme) captures; slurp
-# selects a region/window; satty is the GTK4 annotation UI (chrome themed by the
-# gtk axis, palette/font by the w-style `satty` axis). wl-clipboard = wl-copy for
-# quick grabs; libnotify = notify-send confirmations. See w-screenshot.md.
+# Screen capture (apply.sh --screencapture) — driven by the w-screenshot script.
+# flameshot is the default ANNOTATOR: select and draw in one frozen full-monitor
+# overlay, no second window. Qt6; it reaches the screen through the XDG screenshot
+# portal, i.e. xdg-desktop-portal-hyprland calling grim — the same wlr-screencopy
+# path as the rest of W, no X11 anywhere. Its overlay palette/font come from the
+# w-style `flameshot` axis, its settings dialog from the `qt` axis.
+flameshot
+# The direct stack, used for the UI-less captures (--copy/--save) and for the
+# satty annotator, which stays installed as the rollback (`w-conf set screenshot
+# ANNOTATOR satty`) and serves `full --annotate`, which flameshot cannot: grim
+# (above, shared with w-theme) captures; slurp selects a region; satty is the GTK4
+# annotation window (chrome themed by the gtk axis, palette/font by the w-style
+# `satty` axis). wl-clipboard = wl-copy for quick grabs; libnotify = notify-send
+# confirmations. See w-screenshot.md.
 slurp
 satty
 wl-clipboard

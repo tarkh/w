@@ -8,6 +8,58 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.19.0
+
+- **Screenshots are now annotated in the same window you select in.**
+  `Super+Shift+I` (region), `Super+I` (screen) and `Super+Ctrl+I` (window) freeze
+  the display and let you drag the area and draw on it in one surface, with the
+  toolbar next to the selection — no second window opens. Flameshot does the
+  annotating; it captures through the same Wayland path as the rest of W and
+  wears your active theme. For region and window captures the bar steps below
+  the overlay instead of covering the strip you are dragging through. The
+  clipboard and plain-save captures are unchanged and still open nothing.
+
+  Satty, the annotator this replaces, stays installed. If the overlay misbehaves
+  for you — wrong monitor, slow to appear — switch back without reinstalling:
+
+  ```
+  w-conf set --user screenshot ANNOTATOR satty
+  ```
+
+  `w-conf unset --user screenshot ANNOTATOR` returns to Flameshot. One case
+  always uses Satty and ignores the setting: a single capture spanning every
+  monitor, which has no Flameshot equivalent.
+
+- **Two new keybinds save the screenshot straight to a file.** `Super+Alt+I`
+  (screen) and `Super+Ctrl+Alt+I` (window) write a PNG into your Screenshots
+  folder with no annotator and no dialog. Rebindable like any other key, e.g.
+  `w-hotkeys set screenshot_screen_save "SUPER + F12"`.
+
+- **New W-Pack: gaming.** Steam, Lutris and Heroic on one shared
+  Proton/Wine/MangoHud/gamemode foundation, plus ProtonPlus, protontricks,
+  gamescope, `ntsync` autoloading, and the game-tuned `scx_lavd` scheduler
+  (installed, not enabled). Off by default, ~4–5 GiB:
+
+  ```
+  w-pack install gaming
+  ```
+
+  The pack enables the `multilib` repository and installs the 32-bit graphics
+  stack your GPU actually needs before Steam resolves its Vulkan dependency —
+  left to the resolver it picks the wrong provider and breaks Vulkan on
+  AMD/Intel. Your game library is kept out of `@home` snapshots (it runs to
+  hundreds of gigabytes and re-downloads from the storefronts), and the MangoHud
+  overlay (`Shift_F12`) and the Heroic window are dressed in your active W
+  colours. **Log out and back in once after installing** — the pack adds your
+  account to the `gamemode` group, and group membership only applies to new
+  sessions.
+
+- **`w-pack` bundles can declare a `pre.sh`** — a root step that runs before the
+  package list, for what a package list cannot express: enabling a repository,
+  syncing a fresh database, pinning a hardware-specific package ahead of a
+  virtual dependency. Only bundle authors are affected; `w-pack refresh` still
+  never runs it.
+
 ## v0.18.1
 
 - **Fixed: locking at the exact moment of a suspend no longer freezes

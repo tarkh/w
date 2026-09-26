@@ -1,0 +1,19 @@
+# gaming bundle — config ownership (deploy.sh SDK + w-reset).
+# TSV: <path>	<class>. Absolute path → config/root<path> (always managed);
+# home-relative → config/skel/<path> (none in this session — Session 4 adds
+# the per-user layer). class: managed = overwrite (W owns it).
+
+# gamemoded config: general knobs (screensaver inhibit, split-lock, renice/
+# ioprio — the latter two gated by group membership added in Session 4) +
+# the [custom] start/end hooks bridging into w-power.
+/etc/gamemode.ini	managed
+
+# The bridge script itself. Runs AS THE PLAYER (gamemoded is a user-session
+# daemon) — see the file's own header for why that means no polkit here.
+/usr/lib/w/w-gamemode-hook	managed
+
+# Window rule (Hyprland drop-in, require()d by hyprland.lua with a wildcard):
+# floats Steam's utility windows and keeps Lutris/Heroic modals out of the
+# tiling layout. Vendor layer: a user overrides it property by property from
+# ~/.config/hypr/rules.d/. w-pack reloads running sessions on install/remove.
+/usr/share/w/hypr/rules.d/gaming.lua	managed

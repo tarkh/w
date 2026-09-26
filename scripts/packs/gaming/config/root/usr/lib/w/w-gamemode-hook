@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# w-gamemode-hook — bridges gamemoded's [custom] start/end hooks into w-power.
+# Shipped by the `gaming` W-Pack, wired from /etc/gamemode.ini.
+#
+# Helper, not a command: the only caller is gamemoded. It lives in /usr/lib/w
+# (off PATH, not a `w-*` tool). gamemoded is a per-session USER daemon (not a
+# system service), so these hooks already run as the player's own account —
+# `w-power profile` (PPD via user D-Bus) needs no polkit here, unlike most of
+# w-power's other actuators.
+#
+# start: remember the profile + auto-switch state, force `performance` with
+#        auto-switch suspended (a game finishing on battery must not fight the
+#        auto-switch back to balanced mid-session).
+# end:   restore exactly what start saved, then forget it. No state file (end
+#        without a matching start, or a second end) is a no-op — never guess.
+#
+# No `w-power` on PATH (bundle removed, or a stripped-down PATH under
+# gamemoded) → exit 0 silently: a missing power-management hook must not be
+# the reason a game fails to launch.
+
+set -uo pipefail
+
+STATE="${XDG_RUNTIME_DIR:-/tmp}/w-gamemode.state"
+
+command -v w-power >/dev/null 2>&1 || exit 0
+
+case "${1:-}" in
+  start)
+    profile="$(w-power status --porcelain 2>/dev/null | sed -n 's/^PROFILE=//p')"
+    auto="$(w-power status --porcelain 2>/dev/null | sed -n 's/^AUTO_PROFILE=//p')"
+    [[ -n "$profile" ]] || exit 0
+    printf 'PROFILE=%s\nAUTO_PROFILE=%s\n' "$profile" "${auto:-off}" > "$STATE"
+    w-power profile auto off >/dev/null 2>&1 || true
+    w-power profile performance >/dev/null 2>&1 || true
+    ;;
+  end)
+    [[ -f "$STATE" ]] || exit 0
+    # shellcheck disable=SC1090  # our own just-written state file
+    source "$STATE"
+    w-power profile "${PROFILE:-balanced}" >/dev/null 2>&1 || true
+    w-power profile auto "${AUTO_PROFILE:-off}" >/dev/null 2>&1 || true
+    rm -f "$STATE"
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+
+exit 0

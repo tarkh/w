@@ -6,46 +6,23 @@
 # Same reasoning as sensors.sh (hardware probe on the live system). Runs in the
 # firstboot stage (apply --all); the final firstboot reboot activates early-KMS.
 #
-# Owns: vendor detection (lspci), driver-package install, and — for NVIDIA — the
-# generation→driver mapping plus Hyprland/Wayland glue (modeset, early-KMS,
-# session env, suspend services). Driver packages are hardware-specific, so they
-# are installed imperatively here (like lm_sensors in sensors.sh), NOT listed in
-# packages/pacman.txt (which installs unconditionally on every machine).
+# Detection (vendor id, NVIDIA codename→driver mapping) lives in the shared
+# w-gpu-lib.sh seam (sourced by apply.sh via lib/gpu.sh — see gaming-plan.md
+# Session 1), because packs/ai-extra and packs/comfyui need the exact same
+# classifier and a third copy would have been the drift this project gates
+# away. This module stays the owner of INSTALLATION and the NVIDIA/Hyprland
+# glue (modeset, early-KMS, session env, suspend services). Driver packages
+# are hardware-specific, so they are installed imperatively here (like
+# lm_sensors in sensors.sh), NOT listed in packages/pacman.txt (which installs
+# unconditionally on every machine).
 #
-# NOTE: 64-bit only for now. lib32-* (multilib) variants for native Steam/Wine are
-# deliberately deferred to a future gaming stack — they need the multilib repo.
+# NOTE: 64-bit only here. lib32-* (multilib) for native Steam/Wine lives in
+# w_gpu_lib32_packages — it belongs to the `gaming` pack (gaming-plan.md), not
+# to this module: multilib itself is a repo the pack's pre.sh enables, and this
+# module runs long before any pack does.
 # NOTE: a `w-gpu status` CLI (show GPUs/active driver/modeset state) is a future
 # add; the module is self-contained without it.
 # See package-gpu.md, installer.md (Session B), package-hyprland.md (env-hyprland).
-
-# All display-class controllers (VGA 0300, 3D 0302, Display 0380), one per line,
-# in `lspci -nn` form so both the vendor id ([10de:…]) and the chip codename
-# (e.g. "AD104 [GeForce RTX 4070]") are available to the callers below.
-gpu_lines() {
-  lspci -nn 2>/dev/null \
-    | grep -Ei 'VGA compatible controller|3D controller|Display controller' || true
-}
-
-# NVIDIA chip codename → generation → correct package for our DKMS-on-zen setup.
-# lspci pulls the codename from pci.ids (hwdata); its prefix is the nouveau family
-# code, which matches the Arch driver table verbatim. Echoes "<repo>:<pkg>":
-#   official:nvidia-open-dkms  — Turing and newer (upstream-recommended, extra repo)
-#   aur:nvidia-580xx-dkms      — Volta/Pascal/Maxwell (legacy, still supported)
-#   aur:nvidia-470xx-dkms      — Kepler (legacy, unsupported branch)
-#   nouveau:                   — Fermi and older → no proprietary driver, mesa only
-# The mainline nvidia branch (580+) dropped everything below Turing, hence the AUR
-# legacy branches. Missing codename (brand-new card not yet in pci.ids) falls
-# through to nvidia-open-dkms — safe, since the newest cards REQUIRE the open modules.
-nvidia_pick_driver() {
-  local code="$1"
-  case "$code" in
-    GB*|AD*|GA*|TU*)   echo "official:nvidia-open-dkms" ;;
-    GV*|GP*|GM*)       echo "aur:nvidia-580xx-dkms"     ;;
-    GK*)               echo "aur:nvidia-470xx-dkms"     ;;
-    GF*|GT*|G[0-9]*)   echo "nouveau:"                  ;;
-    *)                 echo "official:nvidia-open-dkms" ;;   # unknown → newest/open
-  esac
-}
 
 # Merge a module list into mkinitcpio.conf's MODULES=(...), preserving any existing
 # unmanaged entries and staying idempotent (re-running never duplicates tokens).
@@ -69,7 +46,7 @@ gpu_setup_nvidia() {
   info "NVIDIA GPU detected (chip: ${codename:-unknown})."
 
   local pick repo pkg
-  pick=$(nvidia_pick_driver "$codename"); repo="${pick%%:*}"; pkg="${pick#*:}"
+  pick=$(w_gpu_nvidia_driver "$codename"); repo="${pick%%:*}"; pkg="${pick#*:}"
 
   if [[ "$repo" == "nouveau" ]]; then
     echo "  WARN: NVIDIA $codename is Fermi-or-older — no supported proprietary driver." >&2
@@ -139,7 +116,7 @@ mod_gpu() {
   info "Detecting GPU(s)..."
   command -v lspci &>/dev/null || w_pac -S --needed --noconfirm pciutils
 
-  local lines; lines=$(gpu_lines)
+  local lines; lines=$(w_gpu_lines)
   if [[ -z "$lines" ]]; then
     echo "  WARN: no display controller reported by lspci — installing generic mesa only." >&2
   else
@@ -151,25 +128,21 @@ mod_gpu() {
   info "Installing generic Mesa + Vulkan loader..."
   w_pac -S --needed --noconfirm mesa vulkan-icd-loader
 
-  local has_intel=0 has_amd=0 has_nvidia=0
-  echo "$lines" | grep -qi '\[8086:' && has_intel=1
-  echo "$lines" | grep -qi '\[1002:' && has_amd=1
-  echo "$lines" | grep -qi '\[10de:' && has_nvidia=1
+  local has_intel=0
+  w_gpu_has intel && has_intel=1
 
   if [[ "$has_intel" == "1" ]]; then
     info "Intel GPU detected — installing vulkan-intel + intel-media-driver (VA-API)..."
     w_pac -S --needed --noconfirm vulkan-intel intel-media-driver
   fi
 
-  if [[ "$has_amd" == "1" ]]; then
+  if w_gpu_has amd; then
     info "AMD GPU detected — installing vulkan-radeon + AMDGPU TOP"
     w_pac -S --needed --noconfirm vulkan-radeon libva-mesa-driver amdgpu_top
   fi
 
-  if [[ "$has_nvidia" == "1" ]]; then
-    local codename
-    codename=$(echo "$lines" | grep -i '\[10de:' \
-      | grep -oiE '\b(GB|AD|GA|TU|GV|GP|GM|GK|GF|GT)[0-9]{2,3}\b' | head -1 || true)
+  if w_gpu_has nvidia; then
+    local codename; codename=$(w_gpu_nvidia_codename)
     gpu_setup_nvidia "$codename" "$has_intel"
   else
     # Idempotency: a machine without NVIDIA must not carry stale nvidia glue (e.g.

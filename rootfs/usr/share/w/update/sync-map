@@ -198,6 +198,12 @@ rootfs/usr/share/w/update/*		--updatesys
 rootfs/usr/bin/w-sync		--updatesys
 rootfs/etc/systemd/user/w-sync-check.*	--updatesys
 
+# The GPU vendor detector is a shared seam consumed by mod_gpu AND by two packs
+# (ai-extra, comfyui) that source it directly — a change to the detection logic
+# has to replay driver installation, not just land on disk ("copy is not
+# activation" rule, same as the Plymouth theme above).
+rootfs/usr/lib/w/w-gpu-lib.sh	--gpu
+
 # ── any other rootfs change → drop files down (+ theme re-render) ────────────────
 rootfs/*			--rootfs
 

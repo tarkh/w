@@ -7,7 +7,7 @@ sources:
   - path: .claude/library/security.md
     sha256: 3ec7c64f94e8053341ba52ded39be6b779d58ea1284c8db81f32c45f0697e12c
   - path: .claude/library/quickshell-bar.md
-    sha256: 76dc9b56a2cdf3a879e737a653ea5bc330722c1eb346e64f917765823a1abf5c
+    sha256: aa1d0f91c3880bc788ffcffe8d42730ee12a4d7fdabecfdc59e275a643f332ed
 ---
 
 **Hub → Network** holds the settings you change rarely and want to find without

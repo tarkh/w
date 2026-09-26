@@ -11,13 +11,13 @@ description: >-
   that is not lit.
 sources:
   - path: .claude/library/w-power.md
-    sha256: 940356f6554a008dbc7035b3b9945bf742428fb27fb9daefe165b9f480558114
+    sha256: eebff106ab709f77a24affe9666690495e7d556311281f76a42aefde4d969d34
   - path: .claude/library/w-kbdlight.md
     sha256: d17c2a2a0ecf20c3a464a254d778e0873def9ebb8833b4362e08eb9869dec506
   - path: .claude/library/quickshell-powermenu.md
     sha256: d4e8525acfe0c22fb0184845c221fe0536a9e731b8b0b1dbf553af3efa65c85a
   - path: .claude/library/quickshell-bar.md
-    sha256: 76dc9b56a2cdf3a879e737a653ea5bc330722c1eb346e64f917765823a1abf5c
+    sha256: aa1d0f91c3880bc788ffcffe8d42730ee12a4d7fdabecfdc59e275a643f332ed
   - path: .claude/library/package-hyprlock.md
     sha256: c86fee0f613668f1ab38d2e71cb332df9f4758492c2b80bf7cebf9853856b22b
 tools:
