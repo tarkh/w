@@ -1,0 +1,440 @@
+#!/usr/bin/env bash
+# w-record — W Linux screen recording front-end (Wayland/Hyprland)
+#
+# The moving-picture sibling of w-screenshot, and deliberately a separate CLI:
+# a still is one shot that is over before the command returns, a recording is a
+# state the machine is IN, with a start, a stop and a length. One `w-*` tool per
+# concern is the house rule (w-dns, w-wallpaper, w-nightlight), and the shape of
+# the two verbs has nothing in common.
+#
+# What they DO share lives in /usr/lib/w/w-capture-lib.sh: the save-folder
+# resolution, the focused-window/output geometry, and the themed slurp selection.
+# A still and a recording of "the focused window" must never disagree about what
+# that window is.
+#
+#   • wf-recorder — the backend, and the video twin of grim: it captures through
+#                   wlr-screencopy, the same protocol grim and hyprlock already
+#                   use, so no portal, no PipeWire session and no privileged
+#                   helper are involved. Encoding is ffmpeg's, on the CPU or —
+#                   see ENCODER — on the GPU through VAAPI.
+#   • slurp       — region selection, in W's colours (w-capture-lib).
+#   • pactl       — resolves which audio device the track comes from.
+#   • libnotify   — start/stop confirmations (the server is Quickshell).
+#
+# There is no `full` mode, and that is the protocol's doing rather than a gap:
+# wlr-screencopy works one output at a time, so a single file spanning every
+# monitor has no form here. It is the same asymmetry w-screenshot already
+# documents for `full --annotate`.
+#
+# Deployed by --rootfs and re-deployed by --screencapture, which owns the whole
+# screen-capture concern (one module, both halves).
+
+set -euo pipefail
+
+# W_*_LIB are the dev/test seams every w-* CLI has: they let this CLI be sourced
+# from a checkout on a machine with no W installed (scripts/check/tests).
+# Notification text is a GRAPHICAL surface, so it follows the system language
+# (config-i18n.md); err()/usage() stay English like every other w-* CLI.
+# shellcheck source=../lib/w/w-conf-lib.sh
+source "${W_CONF_LIB:-/usr/lib/w/w-conf-lib.sh}"
+# shellcheck source=../lib/w/w-i18n-lib.sh
+source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
+# shellcheck source=../lib/w/w-capture-lib.sh
+source "${W_CAPTURE_LIB:-/usr/lib/w/w-capture-lib.sh}"
+
+RECORD_DIR="$(w_capture_userdir VIDEOS Videos)/Screencasts"
+FILENAME_FMT="W-%Y-%m-%d_%H-%M-%S"        # strftime; the extension comes from FORMAT
+
+# Runtime state lives in $XDG_RUNTIME_DIR/w/ — the same per-session, tmpfs-backed,
+# 0700 directory w-authd and w-ssh already use. It is the right home for exactly
+# this: a fact that is true of one logged-in session and must not survive a
+# reboot, because the process it describes does not either.
+STATE_DIR="${XDG_RUNTIME_DIR:-/tmp}/w"
+STATE="$STATE_DIR/record.state"
+LOCK="$STATE_DIR/record.lock"
+LOG="$STATE_DIR/record.log"
+
+VAAPI_NODE="${W_VAAPI_NODE:-/dev/dri/renderD128}"   # seam: tests fake a render node
+
+# The CPU path's colour conversion, spelled out. Left to itself, wf-recorder 0.6
+# on ffmpeg 8+ lets swscale squeeze RGB into limited range (16-235) while tagging
+# the stream full-range (yuvj420p, pc): every player trusts the tag, never
+# expands the levels, and the whole recording reads as if under a pale haze —
+# black lands at 15, white at ~221. Converting explicitly and tagging to match
+# fixes it; limited-range BT.709 is what every player and browser handles
+# natively. The VAAPI path needs none of this: wf-recorder's own scale_vaapi
+# converts to full range and tags it so, and measures true.
+CPU_COLOUR=(-x yuv420p -F "scale=out_color_matrix=bt709:out_range=limited"
+            -p color_range=tv -p colorspace=bt709 -p color_primaries=bt709 -p color_trc=bt709)
+
+# wf-recorder picks its codec from the defaults, never from the container: asked
+# for .webm it still offers h264/aac, and the muxer refuses the header. WebM takes
+# VP9 + Opus, and libvpx's default "good" deadline is tuned for files, not for a
+# live screen — realtime at the fastest preset is what keeps up with motion.
+WEBM_CODEC=(-c libvpx-vp9 -C libopus -p deadline=realtime -p cpu-used=8 -p row-mt=1)
+
+err()  { echo "w-record: $*" >&2; }
+note() { command -v notify-send >/dev/null 2>&1 && notify-send -a "W Record" "$@" || true; }
+
+usage() {
+  if w_help w-record; then return 0; fi
+  cat <<EOF
+Usage: w-record <mode> [action] | stop | status [--porcelain] | get [KEY] | set KEY VALUE
+
+Info: Record the screen — region/window/monitor, one key to start and stop.
+
+Modes:
+  region    Select a rectangular region
+  window    Record the focused window (Hyprland geometry)
+  output    Record the focused monitor
+
+Actions (default: toggle):
+  --toggle  Start recording, or stop the one already running. This is what the
+            keybinds do: the same chord begins and ends the take.
+  --start   Start only; fail if a recording is already running
+
+Commands:
+  stop      Stop the running recording and finish the file
+  status    Report whether a recording is running, of what, and for how long
+  get       Print every setting as KEY=value (+ BACKENDS), or one value
+  set       Change one setting for your account
+
+Settings (in effect from the next recording):
+  RECORDER  wf (wf-recorder; gsr arrives with an optional W-Pack)
+  ENCODER   auto | cpu | vaapi — where the encoding happens
+  AUDIO     system | mic | none — what lands on the audio track
+  FORMAT    mp4 | mkv | webm; webm always encodes on the CPU
+  FRAMERATE constant frame rate, 1-240; 30 by default
+  WINDOW_MASK yes | no — paint the corners of a \`window\` recording black instead
+            of the wallpaper behind them; yes always encodes on the CPU
+
+Exit codes:
+  0  Success, or the user cancelled the selection
+  1  Runtime error
+  2  Usage error
+
+Examples:
+  w-record output                    # focused monitor; press again to stop
+  w-record region --start            # drag an area, start, fail if busy
+  w-record stop                      # finish the file and notify
+  w-record status --porcelain        # machine-readable state
+  w-record set AUDIO mic             # narrate instead of the desktop's sound
+EOF
+}
+
+# ── State ─────────────────────────────────────────────────────────────────────
+
+# The state file is this CLI's own KEY=value dump, not a w-conf subsystem: it
+# describes a live process, so nothing about it is layered, configurable or
+# persistent. Hence a two-line reader instead of the config library.
+state_get() { # <KEY>
+  [[ -f "$STATE" ]] || return 0
+  sed -n "s/^$1=//p" "$STATE" | head -1
+}
+
+backend_bin() { # <RECORDER>
+  case "$1" in wf) echo wf-recorder ;; gsr) echo gpu-screen-recorder ;; esac
+}
+
+# The recording's PID if one is genuinely running, empty otherwise. Both halves
+# matter. A state file can outlive its process (the session was killed
+# mid-recording), and a bare PID can have been recycled by something unrelated
+# since — reporting either as "recording" would be the same lie, and would make
+# the toggle stop a process that is not ours. /proc/<pid>/comm is truncated to 15
+# characters by the kernel, which `gpu-screen-recorder` exceeds, so the
+# comparison is against the truncation rather than the full name.
+running_pid() {
+  local pid comm want
+  pid=$(state_get PID)
+  [[ -n "$pid" && -d "/proc/$pid" ]] || return 0
+  comm=$(cat "/proc/$pid/comm" 2>/dev/null || true)
+  want=$(backend_bin "$(state_get RECORDER)")
+  [[ -n "$want" && "$comm" == "${want:0:15}" ]] || return 0
+  echo "$pid"
+}
+
+# ── Audio ─────────────────────────────────────────────────────────────────────
+
+# One track, one device (see record.conf). `system` has to spell the default
+# SINK's monitor out: wf-recorder hands a NULL device to PulseAudio, whose idea
+# of the default RECORDING device is the microphone — so a bare `--audio` would
+# quietly capture the room instead of the desktop. Arch builds wf-recorder with
+# the pulse backend only, and W's pipewire-pulse answers to these names.
+audio_device() { # <system|mic|none>
+  local sink
+  case "$1" in
+    system)
+      sink=$(pactl get-default-sink 2>/dev/null || true)
+      [[ -n "$sink" ]] && echo "$sink.monitor"
+      ;;
+    mic) pactl get-default-source 2>/dev/null || true ;;
+  esac
+}
+
+# ── Settings (get / set) ──────────────────────────────────────────────────────
+
+# The front-end's view of the `record` layer. The Hub reads and writes through
+# here rather than through `w-conf`, because the one rule that spans two keys —
+# no hardware WebM — belongs to the tool that enforces it at start, and a
+# setter that accepted the pair would only move the refusal to the next keypress.
+SETTINGS=(RECORDER ENCODER AUDIO FORMAT FRAMERATE WINDOW_MASK)
+declare -A SETTING_DEFAULT=([RECORDER]=wf [ENCODER]=auto [AUDIO]=system [FORMAT]=mp4 [FRAMERATE]=30 [WINDOW_MASK]=no)
+
+setting() { wconf_get record "$1" "${SETTING_DEFAULT[$1]}"; }
+
+# Backends that are both supported by this CLI and installed — what RECORDER may
+# be set to. Only wf today (gsr waits for its W-Pack, see cmd_start), which is why
+# the Hub hides the choice until this lists more than one.
+SUPPORTED_BACKENDS=(wf)
+backends() {
+  local r out=""
+  for r in "${SUPPORTED_BACKENDS[@]}"; do
+    command -v "$(backend_bin "$r")" >/dev/null 2>&1 && out+="${out:+,}$r"
+  done
+  echo "$out"
+}
+
+cmd_get() { # [KEY]
+  if [[ $# -eq 1 ]]; then
+    [[ -n "${SETTING_DEFAULT[$1]+x}" ]] || { err "unknown setting: $1 (${SETTINGS[*]})"; exit 2; }
+    setting "$1"; return
+  fi
+  local k
+  for k in "${SETTINGS[@]}"; do echo "$k=$(setting "$k")"; done
+  echo "BACKENDS=$(backends)"
+}
+
+cmd_set() { # <KEY> <VALUE>
+  local k="$1" v="$2"
+  case "$k" in
+    RECORDER)  [[ ",$(backends)," == *",$v,"* ]] || { err "RECORDER: '$v' is not an available backend ($(backends))"; exit 2; } ;;
+    ENCODER)   [[ "$v" =~ ^(auto|cpu|vaapi)$ ]] || { err "ENCODER: auto | cpu | vaapi"; exit 2; } ;;
+    AUDIO)     [[ "$v" =~ ^(system|mic|none)$ ]] || { err "AUDIO: system | mic | none"; exit 2; } ;;
+    FORMAT)    [[ "$v" =~ ^(mp4|mkv|webm)$ ]]    || { err "FORMAT: mp4 | mkv | webm"; exit 2; } ;;
+    FRAMERATE) [[ "$v" =~ ^[1-9][0-9]*$ ]] && (( v <= 240 )) || { err "FRAMERATE: a whole number, 1-240"; exit 2; } ;;
+    WINDOW_MASK) [[ "$v" =~ ^(yes|no)$ ]]            || { err "WINDOW_MASK: yes | no"; exit 2; } ;;
+    *)         err "unknown setting: $k (${SETTINGS[*]})"; exit 2 ;;
+  esac
+  # Same refusal cmd_start makes, made here so the pair can never be stored.
+  if [[ ( "$k" == ENCODER && "$v" == vaapi && "$(setting FORMAT)" == webm ) ||
+        ( "$k" == FORMAT && "$v" == webm && "$(setting ENCODER)" == vaapi ) ]]; then
+    err "ENCODER=vaapi cannot write FORMAT=webm (use cpu or auto)"; exit 1
+  fi
+  wconf_set record "$k" "$v" user
+}
+
+# ── Start ─────────────────────────────────────────────────────────────────────
+
+# Spawn the backend detached and print its PID. stdio is redirected because this
+# process is about to exit and the child must not hold a keybind's pipe open;
+# stderr is kept in a log because it is the only place a backend explains itself,
+# and a failed start has to be able to quote it.
+spawn() { # <bin> <args...>
+  local bin="$1"; shift
+  "$bin" "$@" >"$LOG" 2>&1 </dev/null &
+  echo $!
+}
+
+# Did it survive its own start-up? A backend that cannot reach the compositor,
+# open the render node or negotiate the muxer dies within the first frames, and
+# that window is the only chance to still pick a different encoder. A death after
+# it is a real recording ending, and belongs to `stop`. The wait delays the
+# notification, never the capture — recording began at spawn.
+settled() { # <pid>
+  sleep 1
+  [[ -d "/proc/$1" ]]
+}
+
+cmd_start() { # <mode>
+  local mode="$1" recorder encoder audio format framerate bin mask=""
+  recorder=$(setting RECORDER)
+  encoder=$(setting ENCODER)
+  audio=$(setting AUDIO)
+  format=$(setting FORMAT)
+  framerate=$(setting FRAMERATE)
+
+  bin=$(backend_bin "$recorder")
+  [[ -n "$bin" ]] || { err "unknown RECORDER '$recorder' (expected wf or gsr)"; exit 1; }
+  # gsr is documented in record.conf as reserved for an optional W-Pack that does
+  # not exist yet. Saying so is the honest answer; half-written argv for an
+  # untested backend would not be.
+  [[ "$recorder" == wf ]] || { err "RECORDER=$recorder is not supported yet (its W-Pack is not released)"; exit 1; }
+  command -v "$bin" >/dev/null 2>&1 || { err "$bin is not installed"; exit 1; }
+  # Refused before the region is drawn, not after: explicit vaapi is never
+  # second-guessed, and there is no hardware WebM path to honour it with.
+  [[ "$encoder" == vaapi && "$format" == webm ]] && { err "ENCODER=vaapi cannot write FORMAT=webm (use cpu or auto)"; exit 1; }
+
+  # Geometry first, because region select is interactive and must not be done
+  # holding the lock — `stop` has to stay answerable while the user is dragging.
+  local geom="" out=""
+  case "$mode" in
+    region)
+      geom=$(w_capture_select_region) || { err "selection cancelled"; exit 0; }
+      ;;
+    window)
+      # --clamp is load-bearing, not defensive: an untrimmed rectangle makes
+      # wf-recorder throw the region away and record the WHOLE screen (single
+      # monitor) or give up on resolving the output (several). W's default border
+      # already puts a maximised window at -2,-2, so that is the ordinary case.
+      geom=$(w_capture_window_geom --clamp)
+      if [[ -z "$geom" ]]; then
+        err "no focused window; falling back to region select"
+        geom=$(w_capture_select_region) || { err "selection cancelled"; exit 0; }
+      fi
+      ;;
+    output)
+      # Always explicit, never inferred: with several monitors and no -o,
+      # wf-recorder asks which one on stdin — and a keybind has no stdin to
+      # answer with, so it would simply hang.
+      out=$(w_capture_output_name)
+      [[ -n "$out" ]] || { err "could not resolve focused output"; exit 1; }
+      ;;
+  esac
+
+  mkdir -p "$RECORD_DIR" "$STATE_DIR"
+  local file
+  file="$RECORD_DIR/$(date +"$FILENAME_FMT").$format"
+
+  local -a args=(-f "$file" -r "$framerate")
+  [[ -n "$geom" ]] && args+=(-g "$geom")
+  [[ -n "$out" ]]  && args+=(-o "$out")
+  local adev; adev=$(audio_device "$audio")
+  [[ -n "$adev" ]] && args+=("--audio=$adev")
+
+  # VAAPI is opt-in per machine, not per attempt: `auto` only reaches for the GPU
+  # when this box actually has a render node. h264_vaapi is the one hardware
+  # codec worth wiring by default — it is what every VAAPI driver implements and
+  # what every player accepts. Which is also why WebM stays on the CPU: h264 is
+  # not a WebM codec, and VP9 encode is the part of VAAPI drivers least often there.
+  local -a cpu=("${CPU_COLOUR[@]}")
+  [[ "$format" == webm ]] && cpu+=("${WEBM_CODEC[@]}")
+  # A window's rounded corners are painted black by a mask overlaid inside wf-recorder's
+  # own filter graph (-F takes a full chain: the mask is a movie= source). Only the
+  # CPU path can run it — the VAAPI graph works on GPU surfaces — so a mask that
+  # applies forces the CPU, even past an explicit ENCODER=vaapi.
+  if [[ "$mode" == window && -n "$geom" && "$(setting WINDOW_MASK)" == yes ]] &&
+     w_capture_window_mask "$STATE_DIR/record.mask.png"; then
+    mask="$STATE_DIR/record.mask.png"
+    local i
+    for i in "${!cpu[@]}"; do
+      [[ "${cpu[i]}" == -F ]] && cpu[i + 1]="movie=${mask}[m];[in][m]overlay=format=auto,${cpu[i + 1]}"
+    done
+  fi
+  local -a enc=("${cpu[@]}")
+  local used="cpu"
+  if [[ -z "$mask" && "$format" != webm ]] && [[ "$encoder" == vaapi || ( "$encoder" == auto && -e "$VAAPI_NODE" ) ]]; then
+    enc=(-c h264_vaapi -d "$VAAPI_NODE"); used="vaapi"
+  fi
+
+  # Serialise the decision and the launch. The toggle already checked upstream,
+  # but two chords pressed together can both get past that check; only a lock
+  # held across "look, then spawn" makes a second recorder impossible.
+  exec 9>"$LOCK"
+  flock 9
+  [[ -z "$(running_pid)" ]] || { err "already recording (see \`w-record status\`)"; exit 1; }
+
+  local pid; pid=$(spawn "$bin" "${enc[@]}" "${args[@]}")
+  if ! settled "$pid"; then
+    # The GPU path is the one failure worth retrying: a driver that advertises
+    # VAAPI it cannot actually encode with is common, and the user asked for a
+    # recording, not for a lecture about their driver. `vaapi` set explicitly is
+    # a different request and is NOT second-guessed.
+    if [[ "$used" == vaapi && "$encoder" == auto ]]; then
+      note "$(w_t record.cpu_fallback)"
+      used="cpu"
+      pid=$(spawn "$bin" "${cpu[@]}" "${args[@]}")
+    fi
+    if ! settled "$pid"; then
+      err "$bin failed to start; last output:"
+      tail -n 5 "$LOG" >&2 || true
+      note "$(w_t record.failed)"
+      rm -f "$file"
+      exit 1
+    fi
+  fi
+
+  printf 'PID=%s\nRECORDER=%s\nMODE=%s\nFILE=%s\nSTARTED=%s\nAUDIO=%s\nENCODER=%s\n' \
+    "$pid" "$recorder" "$mode" "$file" "$(date +%s)" "$audio" "$used" >"$STATE"
+  flock -u 9
+  note "$(w_t record.started)" "$mode → $(basename "$file")"
+}
+
+# ── Stop ──────────────────────────────────────────────────────────────────────
+
+cmd_stop() {
+  local pid; pid=$(running_pid)
+  if [[ -z "$pid" ]]; then
+    rm -f "$STATE"          # a stale file, if any: nothing is running either way
+    err "not recording"
+    return 0
+  fi
+  local file; file=$(state_get FILE)
+
+  # SIGINT, and never SIGKILL. wf-recorder treats INT/TERM/HUP alike — it leaves
+  # its loop and lets ffmpeg write the container's trailer — and until that
+  # trailer is on disk the file is unplayable. So the wait below is bounded but
+  # never escalated: a backend still running after it is a bug to report, not one
+  # to paper over with -9 and a truncated recording.
+  kill -INT "$pid" 2>/dev/null || true
+  local i=0
+  while [[ -d "/proc/$pid" && $i -lt 100 ]]; do sleep 0.1; i=$((i + 1)); done
+  if [[ -d "/proc/$pid" ]]; then
+    err "backend (pid $pid) did not finish within 10s; leaving it alone"
+    return 1
+  fi
+  rm -f "$STATE"
+
+  if [[ -s "$file" ]]; then
+    note "$(w_t record.stopped)" "$file"
+  else
+    err "recording produced no file"
+    note "$(w_t record.failed)"
+    return 1
+  fi
+}
+
+# ── Status ────────────────────────────────────────────────────────────────────
+
+cmd_status() { # [--porcelain]
+  local pid elapsed=0 started
+  pid=$(running_pid)
+  started=$(state_get STARTED)
+  [[ -n "$pid" && -n "$started" ]] && elapsed=$(( $(date +%s) - started ))
+
+  if [[ "${1:-}" == --porcelain ]]; then
+    printf 'RECORDING\t%s\n' "$([[ -n "$pid" ]] && echo 1 || echo 0)"
+    [[ -n "$pid" ]] || return 0
+    printf 'PID\t%s\nMODE\t%s\nFILE\t%s\nELAPSED\t%s\nAUDIO\t%s\nENCODER\t%s\n' \
+      "$pid" "$(state_get MODE)" "$(state_get FILE)" "$elapsed" \
+      "$(state_get AUDIO)" "$(state_get ENCODER)"
+    return 0
+  fi
+
+  if [[ -z "$pid" ]]; then echo "not recording"; return 0; fi
+  printf 'recording %s for %02d:%02d (%s, audio: %s) -> %s\n' \
+    "$(state_get MODE)" $((elapsed / 60)) $((elapsed % 60)) \
+    "$(state_get ENCODER)" "$(state_get AUDIO)" "$(state_get FILE)"
+}
+
+main() {
+  [[ $# -ge 1 ]] || { usage; exit 2; }
+  case "$1" in
+    -h|--help|help) usage; exit 0 ;;
+    stop)   [[ $# -eq 1 ]] || { usage; exit 2; }; cmd_stop; return ;;
+    status) [[ $# -eq 1 || ( $# -eq 2 && "$2" == --porcelain ) ]] || { usage; exit 2; }
+            cmd_status "${2:-}"; return ;;
+    get)    [[ $# -le 2 ]] || { usage; exit 2; }; shift; cmd_get "$@"; return ;;
+    set)    [[ $# -eq 3 ]] || { usage; exit 2; }; cmd_set "$2" "$3"; return ;;
+  esac
+
+  local mode="$1" action="${2:---toggle}"
+  case "$mode"   in region|window|output) ;; *) usage; exit 2 ;; esac
+  case "$action" in --toggle|--start)     ;; *) usage; exit 2 ;; esac
+  [[ $# -le 2 ]] || { usage; exit 2; }
+
+  mkdir -p "$STATE_DIR"
+  if [[ "$action" == --toggle && -n "$(running_pid)" ]]; then cmd_stop; return; fi
+  cmd_start "$mode"
+}
+
+main "$@"

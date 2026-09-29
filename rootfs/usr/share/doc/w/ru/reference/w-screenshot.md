@@ -11,6 +11,7 @@ summary: Снимок экрана — область/окно/монитор, �
 
 ```
 Использование: w-screenshot <режим> [действие]
+                            | get [KEY] | set KEY VALUE
 
 Info: Снимок экрана — область/окно/монитор, разметить/скопировать/сохранить.
 
@@ -24,12 +25,23 @@ Info: Снимок экрана — область/окно/монитор, ра
   --annotate   Выделить и рисовать в одном застывшем оверлее (Flameshot; его
                панель копирует, сохраняет или прикалывает снимок). Вернуть
                прежнюю двухшаговую связку с satty:
-               `w-conf set --user screenshot ANNOTATOR satty`; обратно —
-               `w-conf unset --user screenshot ANNOTATOR`.
+               `w-screenshot set ANNOTATOR satty`; обратно —
+               `w-screenshot set ANNOTATOR flameshot`.
                У `full --annotate` всегда satty: оверлей Flameshot — одно
                окно на одном мониторе.
   --copy       Скопировать снимок в буфер обмена (wl-copy), без интерфейса
   --save       Сохранить снимок в $SCREENSHOT_DIR и уведомить
+
+Команды:
+  get          Вывести настройки как KEY=value или одно значение
+  set          Изменить настройку для своей учётной записи
+
+Настройки (действуют со следующего снимка):
+  ANNOTATOR      flameshot | satty — редактор, который открывает `--annotate`
+  WINDOW_SHADOW  yes | no — снимок `window` получает прозрачные скруглённые
+                 углы; yes добавляет ещё мягкую тень. Во Flameshot не
+                 действует (он сохраняет собственный кадр): только
+                 `--copy`/`--save` и satty.
 
 Коды выхода:
   0  Успех или пользователь отменил выделение
@@ -40,6 +52,8 @@ Info: Снимок экрана — область/окно/монитор, ра
   w-screenshot region                # выделить область и сразу рисовать на ней
   w-screenshot output --copy         # монитор в фокусе → буфер обмена
   w-screenshot full --save           # все мониторы → PNG-файл
+  w-screenshot set ANNOTATOR satty   # размечать в satty со следующего снимка
+  w-screenshot set WINDOW_SHADOW no  # снимок окна: скруглённые углы, без тени
 ```
 
 Эта страница генерируется из собственной справки команды (w-docs-refgen). Живая

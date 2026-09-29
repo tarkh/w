@@ -1,8 +1,8 @@
 # w-style module: flameshot (user-scope) — screenshot annotation UI theming.
 # Flameshot is a Qt6 app, so its settings dialog is already themed live by the
 # `qt` axis (band 400). This axis owns what the CAPTURE OVERLAY exposes through
-# flameshot's own config: the UI accent, the colour the dim around the selection
-# is drawn in, the annotation palette, the text-annotation font, and the handful
+# flameshot's own config: the UI accents, how deep the dim around the selection
+# is, the annotation palette, the text-annotation font, and the handful
 # of behavioural defaults that make flameshot behave like the rest of W.
 #
 # Unlike every other axis here this one PATCHES keys instead of rendering the
@@ -56,11 +56,16 @@ render_user() {
   load_font "$(resolve_theme_file "$theme_dir" font.conf)"
   echo "w-style: rendering flameshot config..."
 
-  # Interface. uiColor paints the toolbar accent and the selection handles;
-  # contrastUiColor is what the area OUTSIDE the selection is dimmed with, so it
-  # has to be the theme's surface — a fixed dark tint would fight a light theme.
+  # Interface. uiColor paints the toolbar accent and the selection handles,
+  # contrastUiColor the toolbar's secondary tone (active-button icons).
+  # The dim OUTSIDE the selection is not themeable: flameshot hardcodes it black
+  # (capturewidget.cpp: QColor(0, 0, 0, m_opacity)), only its depth is a key.
+  # 166/255 = 65 % — the same neutral black slurp dims with (w-capture-lib), so
+  # screenshot and screen-recording selection read as one system; flameshot's own
+  # 190 buries the desktop the user is trying to aim at.
   patch_flameshot_key uiColor         "$W_PRIMARY"
   patch_flameshot_key contrastUiColor "$W_SURFACE"
+  patch_flameshot_key contrastOpacity 166
   patch_flameshot_key fontFamily      "$W_FONT_UI"
 
   # Annotation colours: the brand accent is the default pen, the rest are the

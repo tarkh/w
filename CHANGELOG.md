@@ -8,6 +8,59 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.20.0
+
+- **Screen recording.** `Super+Ctrl+R` records the current screen,
+  `Super+Alt+R` a region you drag out, `Super+Ctrl+Alt+R` the focused window.
+  Each chord is a toggle: the same keys that start a take end it. While
+  recording, the bar shows a pulsing dot and the elapsed time; click it to stop,
+  right-click it to open the capture settings. Recordings land in your Videos
+  folder. Encoding uses the GPU when the machine has one and falls back to the CPU
+  with a notification, so a take never silently fails. Sound comes from the
+  system output by default (`AUDIO=mic` or `none` to change it); MP4, MKV and WebM
+  are supported. Recording all monitors at once is not possible — pick one.
+  The update installs `wf-recorder` and `imagemagick` for you.
+
+  **One step by hand:** your own bar config does not pick up the new indicator
+  block on its own. To make the bar show it, reset that file to the shipped
+  default:
+
+  ```
+  w-reset quickshell .config/quickshell/w/config/bar.json
+  ```
+
+  This replaces your `bar.json` (the bar layout) with the shipped one — the
+  current copy is backed up first — so if you have customised the bar, you may
+  prefer to add the `recording` block by hand instead.
+
+- **Screen capture settings in the Hub.** Hub → Displays has a new
+  "Screen capture" tab: encoder, sound, format, frame rate and screenshot
+  annotator, all changeable from the keyboard. The same settings are available as
+  `w-record get|set` and `w-screenshot get|set`, and, as everywhere in W, as
+  `w-conf set --user record KEY VALUE`.
+
+- **Window screenshots and recordings now have rounded corners and a shadow.**
+  With no annotator (`--copy`, `--save`) or in Satty, a window screenshot gets
+  transparent rounded corners matching your theme and a soft macOS-style shadow.
+  Turn the shadow off with `w-conf set --user screenshot WINDOW_SHADOW no`.
+  Window recordings can paint the corners black too
+  (`w-conf set --user record WINDOW_MASK yes`); that is off by default because
+  it forces CPU encoding for window takes. Flameshot captures are unchanged.
+  Themes with square windows get no mask.
+
+- **Active-window screenshots include the window border.** The capture used to cut
+  the frame off along the straight edges, because the border is drawn outside the
+  window's own rectangle. This has been so since window screenshots arrived in
+  v0.19.0; it also applies to window recordings and to the Flameshot preselection.
+
+- **The selection overlay looks the same for screenshots and recordings:** no fill,
+  a 1 px frame and a neutral 65 % dim (Flameshot's dim is now the same depth).
+  The overlay fades out instantly, so it no longer ends up in the capture.
+
+- **Satty opens at the size of your capture instead of a fixed 70 % window.**
+  It is capped at 80 % of the screen: a small region no longer opens as a huge
+  window, and a full-screen capture still fits with margin.
+
 ## v0.19.0
 
 - **Screenshots are now annotated in the same window you select in.**

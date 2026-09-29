@@ -60,7 +60,7 @@ cfg() { jq -r "$1" "$W_BAR_JSON"; }
   ids="$(catalog_tsv < /dev/null | cut -f1)"
   dupes="$(sort <<< "$ids" | uniq -d)"
   [ -z "$dupes" ]
-  [ "$(wc -l <<< "$ids")" -eq 19 ]
+  [ "$(wc -l <<< "$ids")" -eq 20 ]
 }
 
 @test "shipped bar.json: nested items name their parent zone" {
@@ -259,5 +259,5 @@ hyprctl_stub() { # <json>
   while IFS=$'\t' read -r id state; do
     [ "$state" = "$(block_state eDP-1 "$id")" ]
   done < <(block_states eDP-1)
-  [ "$(block_states eDP-1 | wc -l)" -eq 19 ]
+  [ "$(block_states eDP-1 | wc -l)" -eq 20 ]
 }

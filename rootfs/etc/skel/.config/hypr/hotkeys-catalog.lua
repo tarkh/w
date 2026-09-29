@@ -99,6 +99,14 @@ M.actions = {
   -- grab it" pair, next to their annotating twins on the same letter.
   { id = "screenshot_screen_save", cat = "system", def = "SUPER + ALT + I",        dsp = function() return hl.dsp.exec_cmd("w-screenshot output --save") end },
   { id = "screenshot_window_save", cat = "system", def = "SUPER + CTRL + ALT + I", dsp = function() return hl.dsp.exec_cmd("w-screenshot window --save") end },
+  -- Screen RECORDING, on R for record. Each chord is a toggle: the same keys that
+  -- start the take end it, because a recording nobody can stop with the key that
+  -- started it is a trap. The letter cannot mirror the I-family's modifier ladder
+  -- — SUPER+R is resize_mode and SUPER+SHIFT+R is reload — so the three live on
+  -- the three combinations those two leave free.
+  { id = "record_screen",     cat = "system", def = "SUPER + CTRL + R",       dsp = function() return hl.dsp.exec_cmd("w-record output") end },
+  { id = "record_region",     cat = "system", def = "SUPER + ALT + R",        dsp = function() return hl.dsp.exec_cmd("w-record region") end },
+  { id = "record_window",     cat = "system", def = "SUPER + CTRL + ALT + R", dsp = function() return hl.dsp.exec_cmd("w-record window") end },
   { id = "dnd",               cat = "system", def = "SUPER + SHIFT + D",  dsp = function() return hl.dsp.exec_cmd("w-notify dnd toggle") end },
   { id = "nightlight",        cat = "system", def = "SUPER + SHIFT + N",  dsp = function() return hl.dsp.exec_cmd("w-nightlight toggle") end },
 

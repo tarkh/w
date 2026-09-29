@@ -73,6 +73,7 @@ W machine with `w-info`.
 - [`w-pack`](reference/w-pack.md) — Install and inspect optional W software bundles (packs).
 - [`w-pointer`](reference/w-pointer.md) — Manage mouse, touchpad and swipe-gesture settings of the Wayland session.
 - [`w-power`](reference/w-power.md) — Power profiles, idle policy (lock/display/suspend), lid/power key, charge limit.
+- [`w-record`](reference/w-record.md) — Record the screen — region/window/monitor, one key to start and stop.
 - [`w-reset`](reference/w-reset.md) — Force-restore any W module's or bundle's config to its default.
 - [`w-rollback`](reference/w-rollback.md) — Roll the system back to a btrfs snapshot, on either boot path.
 - [`w-screenshot`](reference/w-screenshot.md) — Capture the screen — region/window/output, annotate/copy/save.

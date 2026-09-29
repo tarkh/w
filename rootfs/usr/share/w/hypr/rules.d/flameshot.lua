@@ -68,11 +68,11 @@ hl.window_rule({
 -- logical coordinates, so a HiDPI panel scales the dialog along with
 -- everything else and only its share of the screen varies — about 26% of the
 -- width of a 40" 4K at scale 1, about 52% of a 1080p laptop: never full-screen,
--- never a postage stamp. A percentage (satty's 70%) is right for an annotation
--- canvas and wrong here: 70% of a 40" 4K is a 2.7k-wide file browser, 70% of a
--- 13" laptop is the whole screen. 1000x640 fits the places sidebar, the file
--- list, and flameshot's long "Files of type" combo — it filters on every mime
--- type QImageWriter supports, so that label runs long.
+-- never a postage stamp. A percentage (satty's 80% ceiling) is right for an
+-- annotation canvas and wrong here: 80% of a 40" 4K is a 3k-wide file browser,
+-- 80% of a 13" laptop is very nearly the whole screen. 1000x640 fits the places
+-- sidebar, the file list, and flameshot's long "Files of type" combo — it
+-- filters on every mime type QImageWriter supports, so that label runs long.
 --
 -- min_size only guards the floor so the dialog cannot be shrunk into
 -- uselessness, and there is deliberately NO max_size: a user who wants it

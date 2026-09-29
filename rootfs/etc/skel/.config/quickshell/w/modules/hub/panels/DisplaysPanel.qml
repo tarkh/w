@@ -1,9 +1,10 @@
 // W Linux — Hub Displays panel (Этап 3 session tab + Ф5 login-screen tab of the monitor plan
-// + the night-light scope).
-// A segmented switch (Session | Login screen | Night light) at the top picks what is being
-// edited. The first two are two configs behind ONE row layout: the row/dropdown markup below
-// is shared verbatim, only the data source and what a mutation does differ. The third shares
-// nothing with them and lives in its own file (NightLightSection.qml, see below).
+// + the night-light and screen-capture scopes).
+// A segmented switch (Session | Login screen | Night light | Screen capture) at the top picks
+// what is being edited. The first two are two configs behind ONE row layout: the row/dropdown markup below
+// is shared verbatim, only the data source and what a mutation does differ. The third and
+// fourth share nothing with them and live in their own files (NightLightSection.qml,
+// CaptureSection.qml, see below).
 //
 // Session scope: one section per live output (from `hyprctl monitors all`, via `w-monitor
 // list --porcelain`) with the five contracted settings (mode/scale/rotation/position/
@@ -36,6 +37,11 @@
 // It has no outputs, no staging and no polkit — every key is user-scope — so it is a
 // sibling file loaded on demand rather than more markup here, and it borrows only this
 // panel's dropdown overlay. See NightLightSection.qml and w-nightlight.md.
+//
+// Screen-capture scope: a front-end over `w-record get|set` + `w-screenshot get|set`,
+// the same sibling-file shape as night light (CaptureSection.qml, w-record.md). The
+// bar's recording indicator deep-links straight here: the Hub hands `{ scope: "capture" }`
+// in as `navArgs`.
 //
 // Loaded by the Hub via HubRegistry (Loader{source:"panels/DisplaysPanel.qml"}); as a
 // subdir file it is not a module type, so shared hub components come in via `import
@@ -92,7 +98,8 @@ Item {
     // rowItem()/activateField()/focusFieldInput() for this panel to drive it.
     property string focusRegion: "scope"   // "scope" | "actions" | "content"
     property int focusIdx: 0
-    readonly property int scopeIdx: ["session", "greeter", "night"].indexOf(root.scope)
+    readonly property var scopes: ["session", "greeter", "night", "capture"]
+    readonly property int scopeIdx: root.scopes.indexOf(root.scope)
     readonly property string nightMode: nightLoader.item ? nightLoader.item.mode : "off"
 
     readonly property var fieldRowProp: ({ primary: "header", res: "resRow", freq: "freqRow", scale: "scaleRow",
@@ -109,6 +116,9 @@ Item {
             }
             return arr;
         }
+        if (root.scope === "capture")
+            return (captureLoader.item ? captureLoader.item.fields : [])
+                .map(f => ({ kind: "capture", field: f, key: "capture:" + f }));
         const arr = [];
         for (let i = 0; i < root.outputs.length; i++) {
             const fields = ["primary", "res", "freq", "scale", "rot"];
@@ -135,6 +145,7 @@ Item {
     function contentItemFor(d) {
         if (!d) return null;
         if (d.kind === "night") return nightLoader.item ? nightLoader.item.rowItem(d.field) : null;
+        if (d.kind === "capture") return captureLoader.item ? captureLoader.item.rowItem(d.field) : null;
         const sect = outputRepeater.itemAt(d.section);
         return sect ? sect[d.rowProp] : null;
     }
@@ -153,8 +164,8 @@ Item {
 
     function moveH(delta) {
         if (root.focusRegion === "scope") {
-            const i = Math.max(0, Math.min(2, root.scopeIdx + delta));
-            root.scope = ["session", "greeter", "night"][i];
+            const i = Math.max(0, Math.min(root.scopes.length - 1, root.scopeIdx + delta));
+            root.scope = root.scopes[i];
             root.focusIdx = i;
             return;
         }
@@ -211,7 +222,9 @@ Item {
             if (root.focusRegion === "content") {
                 const d = root.contentDesc[root.focusIdx];
                 if (d) {
-                    if (d.kind === "night") {
+                    if (d.kind === "capture") {
+                        if (captureLoader.item) captureLoader.item.activateField(d.field);
+                    } else if (d.kind === "night") {
                         if (nightLoader.item) {
                             if (d.field === "mode") nightLoader.item.activateField("mode");
                             else nightLoader.item.focusFieldInput(d.field);
@@ -232,8 +245,19 @@ Item {
     // Which config the rows below reflect. "session" = today's live/`w-monitor` behaviour;
     // "greeter" = staged edits against the login-screen config (see file header);
     // "night" = the night-light settings, which have no per-output rows at all and are
-    // rendered entirely by NightLightSection.qml (the Repeater's model goes empty).
+    // rendered entirely by NightLightSection.qml (the Repeater's model goes empty);
+    // "capture" = recording/screenshot settings, likewise (CaptureSection.qml).
     property string scope: "session"
+
+    // Deep-link arguments from the Hub (Hub.push / Overlays.open opts.args). Reacting to
+    // the property's arrival rather than onCompleted: the Hub assigns it from the Loader's
+    // onLoaded, after this item is complete (quickshell-hub.md, navArgs order traps).
+    property var navArgs: null
+    onNavArgsChanged: if (root.navArgs && root.scopes.indexOf(root.navArgs.scope) >= 0) {
+        root.scope = root.navArgs.scope;
+        root.focusRegion = "scope";
+        root.focusIdx = root.scopeIdx;
+    }
 
     // Per-tab documentation for the header's "?" (contract in HubRegistry): the login
     // screen is a separate config with its own staging rules, and the night light is a
@@ -242,6 +266,7 @@ Item {
         switch (root.scope) {
         case "greeter": return { page: "guide/displays.md", anchor: "the-login-screen-has-its-own-layout" };
         case "night":   return { page: "guide/displays.md", anchor: "night-light" };
+        case "capture": return { page: "guide/desktop.md", anchor: "screen-recording" };
         }
         return { page: "guide/displays.md", anchor: "the-monitor-layout" };
     }
@@ -571,6 +596,12 @@ Item {
                 focused: root.focusRegion === "scope" && root.focusIdx === 2
                 onClicked: { root.scope = "night"; root.focusRegion = "scope"; root.focusIdx = 2; }
             }
+            Pill {
+                label: Strings.t("disp.scope.capture")
+                active: root.scope === "capture"
+                focused: root.focusRegion === "scope" && root.focusIdx === 3
+                onClicked: { root.scope = "capture"; root.focusRegion = "scope"; root.focusIdx = 3; }
+            }
         }
 
         Column {
@@ -705,11 +736,29 @@ Item {
                 function onRequestFocusReturn() { root.forceActiveFocus(); }
             }
 
+            // Screen capture: same sibling-file shape as night light, same single
+            // owner of the roving index — the section only reads back its field.
+            Loader {
+                id: captureLoader
+                width: col.width
+                active: root.scope === "capture"
+                visible: active
+                source: "CaptureSection.qml"
+                onLoaded: item.menuLayer = menuLayer
+            }
+            Binding {
+                target: captureLoader.item
+                property: "focusedField"
+                value: (root.scope === "capture" && root.focusRegion === "content" && root.contentDesc[root.focusIdx])
+                       ? root.contentDesc[root.focusIdx].field : ""
+                when: captureLoader.status === Loader.Ready
+            }
+
             Repeater {
                 id: outputRepeater
-                // The night scope has no per-output rows; an empty model is cheaper and
-                // clearer than wrapping every section in a visibility gate.
-                model: root.scope === "night" ? [] : root.outputs
+                // The night and capture scopes have no per-output rows; an empty model is
+                // cheaper and clearer than wrapping every section in a visibility gate.
+                model: root.scope === "night" || root.scope === "capture" ? [] : root.outputs
                 Column {
                     id: sect
                     required property var modelData

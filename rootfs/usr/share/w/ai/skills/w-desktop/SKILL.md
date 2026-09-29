@@ -3,26 +3,32 @@ name: w-desktop
 description: >-
   The W Linux desktop: the Hyprland (Wayland) compositor with a Lua config, the
   uwsm-managed systemd session, the single Quickshell UI (bar, launcher, notifications,
-  OSD, lock, greeter), key bindings, and screenshots. Load this for anything about
-  the desktop, window management, keybindings, the bar/launcher, or the shell UI.
+  OSD, lock, greeter), key bindings, and screen capture (screenshots + recording).
+  Load this for anything about the desktop, window management, keybindings, screen
+  recording or screencasts, the bar/launcher, or the shell UI.
   Monitors and the night light are w-displays; reopening windows at login is w-session.
 sources:
   - path: .claude/library/package-hyprland.md
-    sha256: ab8c62f0ff8e9573e02a1e88ca5e65dc364decfcc6d645dcd9280c8b3795eb9c
+    sha256: c92b52f0550275cb15123ea3a4c6ab875cce6c889732ca4f326e2176d43cf84e
   - path: .claude/library/quickshell.md
     sha256: da1b14d9d934188dd9b49ece41af8b58ab8d5abe06c6172e198e1c5ade171759
   - path: .claude/library/quickshell-bar.md
-    sha256: aa1d0f91c3880bc788ffcffe8d42730ee12a4d7fdabecfdc59e275a643f332ed
+    sha256: a3f19c6d40c72a88088a144b1d2a179f809e1a8bc8027c52536053bf8d8b406e
   - path: .claude/library/w-bar.md
     sha256: 763c1acafab94122e8a18c1c3f0b149eef2e54978f352f7ec4162b8241bdd787
   - path: .claude/library/quickshell-assistant.md
     sha256: b296b0e3249a090498c07b6ccdcc39eb754df404119b9dd026a9584fd7abe185
   - path: .claude/library/quickshell-keyboard.md
     sha256: 0f132daff3b5514e1f520397d9489286c4fec4a03b654d94b6c7f564f0b1f0bc
+  - path: .claude/library/w-screenshot.md
+    sha256: 5430715546b83096e21b72ed6af7c29d77dc6ffde66ebd6b0652f95d29da662b
+  - path: .claude/library/w-record.md
+    sha256: 67d0b8fb1bfc8c72f3d70f26271b196d88d18d3b07445560ac96d51905446f03
 tools:
   - w_desktop_context
   - w_notify
   - w_screenshot
+  - w_record
   - w_launch_app
   - w_hypr_windows
   - w_hypr_dispatch
@@ -68,7 +74,10 @@ Since Hyprland 0.55 the compositor config is **Lua**, not the old hyprlang `.con
   W float). A broken file shows in `hyprctl configerrors` and does not affect the rest.
   Find an app's class with `hyprctl clients -j` (it often differs from the binary name).
   For a dialog-sized float use `size = { "min(800, monitor_w * 0.9)", "min(790, monitor_h * 0.9)" }`
-  — Hyprland does not clamp a too-large floating window to the monitor.
+  — Hyprland does not clamp a too-large floating window to the monitor. `max_size` and
+  `min_size` take the same expressions (the wiki says only `move`/`size` do, but they do):
+  a rule with `max_size` and no `size` lets the app keep the size it asked for and only
+  caps it — that is how W sizes satty's annotation canvas at 80% of the monitor.
 - ⚠️ The dispatch syntax changed: `hyprctl dispatch` now takes a Lua expression, e.g.
   `hyprctl dispatch 'hl.dsp.global("quickshell:launcher")'`. The old
   `dispatch global quickshell:launcher` form no longer works.
@@ -125,6 +134,7 @@ quick reference.
 | `Super+arrows` / `Super+Shift+arrows` | Move focus / move window |
 | `Super+I` / `Super+Shift+I` / `Super+Ctrl+I` | Screenshot output / region / window |
 | `Super+Alt+I` / `Super+Ctrl+Alt+I` | Screenshot output / window, saved straight to a file |
+| `Super+Ctrl+R` / `Super+Alt+R` / `Super+Ctrl+Alt+R` | Record output / region / window — each a start/stop toggle |
 | `Super+Shift+D` | Do Not Disturb on/off |
 | `Super+Shift+N` | Night light on/off (off ↔ scheduled) — **w-displays** |
 | `Super+S` / `Super+Shift+S` | Scratchpad toggle / send window |
@@ -227,11 +237,18 @@ wlr-screencopy path as the rest of W. Its overlay palette/font are the w-style
 
 **Satty**, the previous annotator, is still installed as the rollback:
 `screenshot ANNOTATOR` (`flameshot` | `satty`) decides, is read at the moment of each
-capture, and needs no reload or relogin. The key is **user-scope**, so the write needs
-the user layer — `w-conf set --user screenshot ANNOTATOR satty`, undone with
-`w-conf unset --user screenshot ANNOTATOR`; a plain `w-conf set` targets /etc/w and
-fails without root. If a user reports the overlay misbehaving (wrong monitor,
+capture, and needs no reload or relogin. Set it with `w-screenshot set ANNOTATOR satty`
+(back: `… flameshot`) or in Hub → Displays → Screen capture → Editor; the key is
+**user-scope**, so a plain `w-conf set` (which targets /etc/w) is the wrong tool. If a user reports the overlay misbehaving (wrong monitor,
 decorated window, slow to appear), that key is the first thing to try.
+
+**Window shot outline.** A `window` capture taken with `--copy`/`--save` or opened in
+Satty gets transparent rounded corners (radius = live window rounding + border) and,
+with `screenshot WINDOW_SHADOW=yes` (default; `w-screenshot set WINDOW_SHADOW no`, or
+Hub → Screen capture → Add window shadow), a soft macOS-style drop shadow on a
+transparent margin. **Flameshot never gets it** — it takes and saves its own frame, so
+for a dressed window shot use `window --save`/`--copy` or switch to Satty. A translucent
+window still shows what is behind it: the capture is the composited monitor.
 
 Two details that look like bugs and are not. **The bar drops below the windows**
 while a region or window capture is open — no window can draw above a `top` layer,
@@ -251,6 +268,76 @@ a user who revoked the permission on purpose keeps that, and their captures will
 fail until they allow it again. One exception the key does not cover: `full --annotate` — a canvas
 across ALL monitors — always uses satty, because a Flameshot overlay is one window on
 one monitor by construction. `--copy` and `--save` never open either tool.
+
+## Screen recording
+
+`w-record` is the video half of the same subsystem, and a separate CLI because a
+recording is a *state* the machine is in: `w-record <region|window|output>` (default
+action `--toggle`), plus `w-record stop` and `w-record status [--porcelain]`. The
+binds are on **R**: `Super+Ctrl+R` (output), `Super+Alt+R` (region),
+`Super+Ctrl+Alt+R` (window) — tokens `record_screen` / `record_region` /
+`record_window`. Each is a toggle: the chord that started the take ends it. They do
+not mirror the I-family ladder because `Super+R` is `resize_mode` and
+`Super+Shift+R` is `reload`. Files go to `Screencasts/` inside `$(xdg-user-dir
+VIDEOS)`, named `W-<date>_<time>.<FORMAT>`.
+
+The backend is **wf-recorder** — the video twin of `grim`, on the same
+wlr-screencopy path, so no portal, no PipeWire session, no privileged helper.
+`gpu-screen-recorder` is deliberately NOT installed (its `gsr-kms-server` carries a
+`cap_sys_admin` file capability); `RECORDER=gsr` is reserved for a future pack and
+errors cleanly today. `wl-screenrec` is AUR-only.
+
+Settings are the `record` w-conf subsystem, all **user-scope**, read when a recording
+STARTS — a running one keeps what it started with. Change them with `w-record set KEY
+VALUE` (it validates, and refuses `ENCODER=vaapi` + `FORMAT=webm` in either order);
+`w-record get` prints them all plus `BACKENDS`. The GUI is **Hub → Displays → Screen
+capture**, which a right-click on the bar's recording dot opens directly:
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `AUDIO` | `system` | the default sink's monitor — everything audible. `mic` swaps in the microphone, `none` is silent. One track, one source: system + mic together is not offered. |
+| `ENCODER` | `auto` | GPU (VAAPI) when a render node exists, falling back to the CPU with a notification if the driver cannot actually encode. `vaapi` set explicitly is not second-guessed; `cpu` is the escape hatch. |
+| `FORMAT` | `mp4` | `mp4`/`mkv` are h264; `webm` is VP9 + Opus and always encodes on the CPU (`ENCODER=vaapi` with `webm` is refused). |
+| `FRAMERATE` | `30` | constant, not VFR — editors and browsers handle VFR mp4 unevenly. 1–240; the Hub offers 15/24/30/60/120. |
+| `WINDOW_MASK` | `no` | `yes` paints the rounded corners of a `window` recording black (a video has no alpha) instead of the wallpaper. Only matters when the theme rounds windows (`W_GEO_WINDOW_ROUNDING` > 0). Needs a CPU filter, so `window` then always encodes on the CPU, even past `ENCODER=vaapi`. |
+| `RECORDER` | `wf` | see above. |
+
+If a user asks why their recording has no sound, `AUDIO` is the key; if they ask why
+the room is audible instead of the desktop, they are on `mic`.
+
+Four things that look like bugs and are not. **There is no all-monitors mode** —
+wlr-screencopy works one output at a time, the same reason `full --annotate` has no
+Flameshot form. **Recording a window records the rectangle it occupied at the start**
+and does not follow it: wlr-screencopy captures a screen region, not a window
+surface, so tell the user to record the monitor if the layout will change. **The
+cursor is always in the recording** — wf-recorder hardcodes it, there is no flag.
+And **the file is unplayable until the recording is stopped properly**: only
+`w-record stop` (or the keybind) lets ffmpeg write the container trailer, so
+`kill -9` on the backend truncates the take. `stop` waits up to 10s and never
+escalates to `SIGKILL` for exactly that reason.
+
+State lives in `$XDG_RUNTIME_DIR/w/record.state` (`PID`, `MODE`, `FILE`, `STARTED`,
+`AUDIO`, `ENCODER`) with `record.log` beside it — that log is where the backend
+explains a failed start. Liveness is PID **and** `/proc/<pid>/comm`, so a state file
+left behind by a killed session reads as "not recording" rather than stopping
+whatever inherited the PID.
+
+While a take runs, the bar shows a **recording block** — a pulsing red dot and the
+elapsed time — just left of the Do Not Disturb button; left-clicking it stops the
+recording, right-clicking opens the capture settings. It exists only while something records, so "no dot" means nothing is
+recording. On an install older than the block it is missing from the user's
+`bar.json` (see the bar section above for `w-reset`).
+
+A recording that looks washed out, as if under a pale haze, is the colour-range bug
+W already fixes on the CPU path (explicit limited-range BT.709 conversion + matching
+tags); if a user reports it, check they are on the current `w-record`.
+
+`w-record` and `w-screenshot` share `/usr/lib/w/w-capture-lib.sh` (save folders,
+window/output geometry, the `slurp` selection). The selection is drawn like
+Flameshot's: a 1 px frame in the live theme's accent, nothing over the selected
+area, and plain black at 65 % around it for BOTH tools, because
+Flameshot's overlay cannot be tinted (its dim colour is hardcoded, only the depth is
+configurable) — so the dim can not be made to follow the theme, by design.
 
 ## Desktop tools (via `w-mcp`)
 
@@ -276,6 +363,14 @@ polkit prompt is involved; the host's tool-approval covers them.
   Interactive region select (`Super+Ctrl+S`) is deliberately not exposed here.
   **Capturing is not analyzing:** take the shot, report the path, and do not read the
   image back unless asked to look at it.
+- **`w_record`** — `status` / `start` / `stop` for a screen RECORDING (output or
+  window; interactive region select is not exposed, it would block on a selection
+  nobody is there to drag). A recording runs until stopped and takes the desktop's
+  audio with it, so never start one unasked and say plainly when one is running.
+  `start` uses `--start`, not the toggle, so "begin" can never silently end a take
+  the user is in the middle of. `status` and `stop` are always safe — `stop` on an
+  idle session is a no-op, and it is the answer when someone says they are recording
+  by accident.
 - **`w_launch_app`** — open an application into the session via `uwsm app` (e.g.
   `firefox`, `ghostty`). Program name + simple args only, no shell syntax. Prefer
   this over a raw privileged command for launching apps.

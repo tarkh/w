@@ -277,6 +277,34 @@ def register(mcp):
         return err if err != "(no output)" else "(capture ran but no file was found — is a Wayland session active?)"
 
     @tool(mcp, domain=DOMAIN)
+    def w_record(
+        action: Annotated[Literal["status", "start", "stop"], desc("status = report whether a recording is running; start = begin one; stop = finish the file")] = "status",
+        mode: Annotated[Literal["output", "window"], desc("what to record when action=start: output = focused monitor, window = focused window")] = "output",
+    ) -> str:
+        """Start, stop or inspect a screen RECORDING (Tier 1: user-scope), saved into
+        Screencasts/ in the user's Videos folder.
+
+        Unlike a screenshot it runs until stopped and captures the desktop's AUDIO
+        too, so never start one unasked and say plainly when one is running. `status`
+        and `stop` are always safe: `stop` on an idle session is a no-op, and it is
+        the answer when someone is recording by accident."""
+        if action == "status":
+            return run(["w-record", "status"], timeout=10)
+        if action == "start":
+            # --start rather than the keybinds' toggle: a model that meant "begin"
+            # must never silently END the take the user is in the middle of.
+            err = run(["w-record", mode, "--start"], timeout=30)
+            state = run(["w-record", "status"], timeout=10)
+            return state if state.startswith("recording") else err
+        # Read the path before stopping: `stop` notifies the desktop but prints
+        # nothing, and after it the state file is gone.
+        porcelain = run(["w-record", "status", "--porcelain"], timeout=10)
+        path = next((l.split("\t", 1)[1] for l in porcelain.splitlines()
+                     if l.startswith("FILE\t")), "")
+        err = run(["w-record", "stop"], timeout=20)
+        return f"stopped, saved: {path}" if path else err
+
+    @tool(mcp, domain=DOMAIN)
     def w_launch_app(
         command: Annotated[str, desc("program name + simple arguments, e.g. 'firefox' or 'code /home/u/p'; no shell syntax (pipes, redirects, globs, quotes)")],
     ) -> str:

@@ -5,11 +5,13 @@ order: 4
 summary: Windows, workspaces, popups, notifications, screenshots and session restore.
 sources:
   - path: .claude/library/package-hyprland.md
-    sha256: ab8c62f0ff8e9573e02a1e88ca5e65dc364decfcc6d645dcd9280c8b3795eb9c
+    sha256: c92b52f0550275cb15123ea3a4c6ab875cce6c889732ca4f326e2176d43cf84e
   - path: .claude/library/quickshell.md
     sha256: da1b14d9d934188dd9b49ece41af8b58ab8d5abe06c6172e198e1c5ade171759
   - path: .claude/library/w-screenshot.md
-    sha256: 24a2008239b8083d729aa3a1e26f220d1d5a1d448f8f5825c5275ee38b7f88eb
+    sha256: 5430715546b83096e21b72ed6af7c29d77dc6ffde66ebd6b0652f95d29da662b
+  - path: .claude/library/w-record.md
+    sha256: 67d0b8fb1bfc8c72f3d70f26271b196d88d18d3b07445560ac96d51905446f03
 ---
 
 W desktop = the Hyprland compositor with the Quickshell UI on top. Both are
@@ -97,8 +99,67 @@ your theme, and every key here is rebindable in **Hub → Hotkeys** — includin
 unbinding the two you do not want.
 
 The editor is Flameshot. W also ships the older one, Satty, for the case where
-Flameshot misbehaves on your hardware — `w-conf set --user screenshot ANNOTATOR
-satty` switches over for the next capture, and `w-conf unset --user screenshot
-ANNOTATOR` switches back. Whichever is
-set, `w-screenshot` carries the full set of modes for scripts and the CLI,
+Flameshot misbehaves on your hardware — pick it under **Hub → Displays → Screen
+capture → Editor** (or `w-screenshot set ANNOTATOR satty`), and it opens from the
+next capture on. Whichever is set, `w-screenshot` carries the full set of modes for scripts and the CLI,
 including the ones with no editor at all (`--copy`, `--save`).
+
+A **window** shot taken without an editor (`--copy`, `--save`) or opened in Satty comes
+out with transparent rounded corners, and — **Hub → Displays → Screen capture → Add
+window shadow**, *Yes* by default — a soft shadow like on macOS
+(`w-screenshot set WINDOW_SHADOW no` turns the shadow off). Flameshot saves its own
+frame, so it gets neither; for the finished look use the instant window keybind or
+pick Satty. A translucent window still shows what is behind it: what is captured is
+the finished picture of the monitor, not the window's own surface.
+
+## Screen recording
+
+Three more keys, on <kbd>R</kbd> for record. Each one is a switch rather than a
+button: press it to start, press it again to finish.
+
+| Key | Records |
+| --- | --- |
+| <kbd>Super+Ctrl+R</kbd> | the monitor you are on |
+| <kbd>Super+Alt+R</kbd> | an area you drag |
+| <kbd>Super+Ctrl+Alt+R</kbd> | the focused window |
+
+Files land in the `Screencasts` folder inside your videos folder, named
+`W-<date>_<time>.mp4`. A notification confirms the start, and the one at the end
+carries the finished path. You can also stop a take from a terminal with
+`w-record stop`, and ask what is going on with `w-record status`.
+
+While a take is running, the bar shows a pulsing red dot and the time recorded so
+far, just left of the Do Not Disturb bell. Click it to stop; right-click it to
+open the recording settings. It disappears the moment the recording ends, so no
+dot means nothing is being recorded.
+
+**Sound is recorded by default** — everything you can hear, the same mix that
+comes out of your speakers. Your microphone is *not* in it. One track holds one
+source, so the desktop and the microphone cannot both be on it.
+
+Everything about the next take is set in **Hub → Displays → Screen capture**:
+
+| Setting | Choices |
+| --- | --- |
+| Encoding | Auto (the graphics card when it can, else the processor), Processor, Graphics card |
+| Sound | Desktop sound, Microphone, No sound |
+| Format | MP4 (plays everywhere), MKV (survives a crash mid-take), WebM (for the web) |
+| Frame rate | 15, 24, 30, 60 or 120 frames per second |
+
+WebM is always encoded on the processor, so it and *Graphics card* exclude each
+other — the Hub offers only the combinations that work. A change applies from the
+next recording; one already running keeps what it started with. The same settings
+from a terminal:
+
+```sh
+w-record get                  # every setting and its current value
+w-record set AUDIO mic        # narrate instead of the desktop's sound
+w-record set FRAMERATE 60
+w-record set WINDOW_MASK yes  # window recordings: black rounded corners, CPU encode
+```
+
+Two things worth knowing before a long take. Recording a **window** records the
+rectangle it occupies at the moment you start, so a window you then move or
+resize will not be followed — record the monitor if the layout is going to
+change. And there is no all-monitors mode: Wayland hands over one screen at a
+time, so a single file spanning every monitor is not something that can be made.

@@ -23,43 +23,36 @@
 # Modes cover every capture case: a selected region, the focused window, the
 # focused output, or every output at once.
 #
-# NOTE (future session): video recording is intentionally out of scope for now.
-# It will be added here behind a `record` subcommand (wf-recorder / wl-screenrec)
-# plus a Quickshell bar indicator — see essentials.md roadmap.
+# Moving pictures are w-record's job, not a mode here: a still is over before the
+# command returns, a recording is a state the machine is in. The two share their
+# geometry and their selection UI through w-capture-lib.sh, nothing else.
 
 set -euo pipefail
 
-# The user's PICTURES folder as xdg-user-dirs names it (~/Pictures on an English
-# system, ~/Изображения on a Russian one — and wherever the user moved it), never a
-# literal name. `xdg-user-dir` answers with the home itself when nothing is
-# configured yet (a session that received the subsystem and has not logged in
-# again) or the folder was deleted; a screenshot does not belong loose in the
-# home, so both cases — and a system without the package — fall back to ~/Pictures.
-pictures_dir() {
-  local d; d="$(xdg-user-dir PICTURES 2>/dev/null || true)"
-  if [[ -n "$d" && "$d" != "$HOME" ]]; then echo "$d"; else echo "$HOME/Pictures"; fi
-}
-SCREENSHOT_DIR="$(pictures_dir)/Screenshots"
+# W_*_LIB are the dev/test seams every w-* CLI has: they let this CLI be sourced
+# from a checkout on a machine with no W installed (scripts/check/tests).
+# Notification text is a GRAPHICAL surface, so it follows the system language
+# (config-i18n.md); err()/usage() stay English like every other w-* CLI.
+# shellcheck source=../lib/w/w-conf-lib.sh
+source "${W_CONF_LIB:-/usr/lib/w/w-conf-lib.sh}"
+# shellcheck source=../lib/w/w-i18n-lib.sh
+source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
+# Save folders, focused-window/output geometry and the themed slurp selection —
+# every question w-record has to answer the same way this does.
+# shellcheck source=../lib/w/w-capture-lib.sh
+source "${W_CAPTURE_LIB:-/usr/lib/w/w-capture-lib.sh}"
+
+SCREENSHOT_DIR="$(w_capture_userdir PICTURES Pictures)/Screenshots"
 FILENAME_FMT="W-%Y-%m-%d_%H-%M-%S.png"   # strftime; shared by satty + --save
 FLAMESHOT_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/flameshot/flameshot.ini"
 
 err()  { echo "w-screenshot: $*" >&2; }
 note() { command -v notify-send >/dev/null 2>&1 && notify-send -a "W Screenshot" "$@" || true; }
 
-# W_CONF_LIB / W_I18N_LIB are the dev/test seams every w-* CLI has: they let this
-# CLI be sourced from a checkout on a machine with no W installed
-# (scripts/check/tests). Notification text is a GRAPHICAL surface, so it follows
-# the system language (config-i18n.md); err()/usage() stay English like every
-# other w-* CLI.
-# shellcheck source=../lib/w/w-conf-lib.sh
-source "${W_CONF_LIB:-/usr/lib/w/w-conf-lib.sh}"
-# shellcheck source=../lib/w/w-i18n-lib.sh
-source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
-
 usage() {
   if w_help w-screenshot; then return 0; fi
   cat <<EOF
-Usage: w-screenshot <mode> [action]
+Usage: w-screenshot <mode> [action] | get [KEY] | set KEY VALUE
 
 Info: Capture the screen — region/window/output, annotate/copy/save.
 
@@ -72,12 +65,22 @@ Modes:
 Actions (default: annotate):
   --annotate   Select and draw in one frozen overlay (Flameshot; its toolbar
                copies, saves or pins). Back to the two-step satty stack:
-               \`w-conf set --user screenshot ANNOTATOR satty\`; return with
-               \`w-conf unset --user screenshot ANNOTATOR\`.
+               \`w-screenshot set ANNOTATOR satty\`; return with
+               \`w-screenshot set ANNOTATOR flameshot\`.
                \`full --annotate\` is always satty: a Flameshot overlay is one
                window on one monitor.
   --copy       Copy the capture straight to the clipboard (wl-copy), no UI
   --save       Save the capture to $SCREENSHOT_DIR and notify
+
+Commands:
+  get          Print the settings as KEY=value, or one value
+  set          Change a setting for your account
+
+Settings (in effect from the next capture):
+  ANNOTATOR      flameshot | satty — the editor \`--annotate\` opens
+  WINDOW_SHADOW  yes | no — a \`window\` capture gets transparent rounded corners;
+                 yes also adds a soft drop shadow. Not applied in Flameshot, which
+                 saves its own frame: only \`--copy\`/\`--save\` and satty.
 
 Exit codes:
   0  Success or user-cancelled selection
@@ -88,6 +91,8 @@ Examples:
   w-screenshot region                # drag an area and draw on it in place
   w-screenshot output --copy         # focused monitor → clipboard
   w-screenshot full --save           # every monitor → PNG file
+  w-screenshot set ANNOTATOR satty   # annotate in satty from the next capture
+  w-screenshot set WINDOW_SHADOW no  # window shots: rounded corners, no shadow
 EOF
 }
 
@@ -178,7 +183,7 @@ flameshot_screen_index() { jq 'sort_by(.id) | map(.focused) | index(true) // 0' 
 # the full toolbar, where the user picks the action after drawing, is exactly the
 # UI we want.
 flameshot_annotate() {
-  local mode="$1" mons n win region="" rc=0
+  local mode="$1" mons n geom region="" rc=0
   command -v flameshot >/dev/null 2>&1 || { err "flameshot is not installed"; exit 1; }
   mons=$(hyprctl -j monitors) || { err "could not reach Hyprland"; exit 1; }
   n=$(flameshot_screen_index "$mons")
@@ -187,23 +192,22 @@ flameshot_annotate() {
   # it inside the capture widget (whose origin is the monitor's top-left) after
   # dividing by the screen's device pixel ratio. hyprctl speaks logical
   # coordinates for positions and sizes, hence the × scale; .width/.height are
-  # already the physical mode. A window hanging off the monitor's top or left edge
-  # is clamped — a negative origin would put the handle outside the widget.
+  # already the physical mode.
   case "$mode" in
     region) ;;   # no preselection: the user drags it, which is the whole point
     output)
       region=$(jq -r 'first(.[] | select(.focused)) | "\(.width)x\(.height)+0+0"' <<<"$mons")
       ;;
     window)
-      win=$(hyprctl -j activewindow)
-      if [[ -n $(jq -r '.address // empty' <<<"$win") ]]; then
-        region=$(jq -r --argjson w "$win" '
+      # Same rectangle grim and w-record get (border included), clamped to the
+      # monitor so no handle starts outside the widget.
+      geom=$(w_capture_window_geom --clamp)
+      if [[ -n "$geom" ]]; then
+        region=$(jq -r --arg g "$geom" '
           first(.[] | select(.focused)) as $m
-          | ((($w.at[0] - $m.x) * $m.scale) | round) as $x
-          | ((($w.at[1] - $m.y) * $m.scale) | round) as $y
-          | ((($w.size[0]) * $m.scale) | round) as $sw
-          | ((($w.size[1]) * $m.scale) | round) as $sh
-          | "\($sw)x\($sh)+\([$x, 0] | max)+\([$y, 0] | max)"' <<<"$mons")
+          | ($g | capture("^(?<x>-?[0-9]+),(?<y>-?[0-9]+) (?<w>[0-9]+)x(?<h>[0-9]+)$")
+                | map_values(tonumber)) as $r
+          | "\((($r.w) * $m.scale) | round)x\((($r.h) * $m.scale) | round)+\((($r.x - $m.x) * $m.scale) | round)+\((($r.y - $m.y) * $m.scale) | round)"' <<<"$mons")
       else
         err "no focused window; falling back to region select"
       fi
@@ -252,27 +256,32 @@ flameshot_annotate() {
 # Region/window pass a "-g X,Y WxH" geometry; output uses "-o <name>" (correct
 # scaling); full grabs everything. A cancelled selection exits 0 (not an error).
 build_grim() {
+  local geom name win="" radius
+  DRESS=()
   case "$1" in
     region)
-      local geom
-      geom=$(slurp -d) || { err "selection cancelled"; exit 0; }
+      geom=$(w_capture_select_region) || { err "selection cancelled"; exit 0; }
       GRIM=(grim -g "$geom")
       ;;
     window)
-      local win geom
-      win=$(hyprctl -j activewindow)
-      if [[ -n $(jq -r '.address // empty' <<<"$win") ]]; then
-        geom=$(jq -r '"\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"' <<<"$win")
-        GRIM=(grim -g "$geom")
-      else
+      # Deliberately NOT --clamp: grim happily captures a window hanging off the
+      # edge of its monitor whole, and the whole window is what was asked for.
+      # Only w-record and flameshot have to trim.
+      geom=$(w_capture_window_geom)
+      if [[ -z "$geom" ]]; then
         err "no focused window; falling back to region select"
-        geom=$(slurp -d) || { err "selection cancelled"; exit 0; }
-        GRIM=(grim -g "$geom")
+        geom=$(w_capture_select_region) || { err "selection cancelled"; exit 0; }
+      else win=1; fi
+      GRIM=(grim -g "$geom")
+      # Round the corners (and cast the shadow) — only for a real window; the
+      # region-select fallback above has no outline to follow.
+      if [[ -n "$win" ]]; then
+        radius=$(w_capture_window_radius)
+        [[ -z "$radius" ]] || DRESS=("$radius" "$(cut -dx -f1 <<<"${geom#* }")" "$(wconf_get screenshot WINDOW_SHADOW yes)")
       fi
       ;;
     output)
-      local name
-      name=$(hyprctl -j monitors | jq -r 'first(.[] | select(.focused)) | .name')
+      name=$(w_capture_output_name)
       [[ -n "$name" ]] || { err "could not resolve focused output"; exit 1; }
       GRIM=(grim -o "$name")
       ;;
@@ -282,9 +291,47 @@ build_grim() {
   esac
 }
 
+# The captured PNG on stdout — dressed (rounded corners, shadow) when build_grim
+# found a window outline to follow, byte-for-byte grim's otherwise.
+grab() {
+  if [[ ${#DRESS[@]} -gt 0 ]]; then "${GRIM[@]}" - | w_capture_window_dress "${DRESS[@]}"
+  else "${GRIM[@]}" -; fi
+}
+
+# ── Settings (get / set) ──────────────────────────────────────────────────────
+
+# The Hub's way into the `screenshot` layer — the same get/set shape as
+# w-record's, so the two halves of one subsystem answer the Hub alike and the
+# value check lives in the CLI rather than in QML.
+SETTINGS=(ANNOTATOR WINDOW_SHADOW)
+declare -A SETTING_DEFAULT=([ANNOTATOR]=flameshot [WINDOW_SHADOW]=yes)
+setting() { wconf_get screenshot "$1" "${SETTING_DEFAULT[$1]}"; }
+
+cmd_get() { # [KEY]
+  if [[ $# -eq 1 ]]; then
+    [[ -n "${SETTING_DEFAULT[$1]+x}" ]] || { err "unknown setting: $1 (${SETTINGS[*]})"; exit 2; }
+    setting "$1"; return
+  fi
+  local k
+  for k in "${SETTINGS[@]}"; do echo "$k=$(setting "$k")"; done
+}
+
+cmd_set() { # <KEY> <VALUE>
+  case "$1" in
+    ANNOTATOR)     [[ "$2" =~ ^(flameshot|satty)$ ]] || { err "ANNOTATOR: flameshot | satty"; exit 2; } ;;
+    WINDOW_SHADOW) [[ "$2" =~ ^(yes|no)$ ]]          || { err "WINDOW_SHADOW: yes | no"; exit 2; } ;;
+    *)             err "unknown setting: $1 (${SETTINGS[*]})"; exit 2 ;;
+  esac
+  wconf_set screenshot "$1" "$2" user
+}
+
 main() {
   [[ $# -ge 1 ]] || { usage; exit 2; }
-  case "$1" in -h|--help|help) usage; exit 0 ;; esac
+  case "$1" in
+    -h|--help|help) usage; exit 0 ;;
+    get) [[ $# -le 2 ]] || { usage; exit 2; }; shift; cmd_get "$@"; return ;;
+    set) [[ $# -eq 3 ]] || { usage; exit 2; }; cmd_set "$2" "$3"; return ;;
+  esac
 
   local mode="$1" action="${2:---annotate}"
   case "$mode"   in region|window|output|full) ;; *) usage; exit 2 ;; esac
@@ -308,16 +355,16 @@ main() {
   build_grim "$mode"
   case "$action" in
     --annotate)
-      "${GRIM[@]}" - | satty --filename - \
+      grab | satty --filename - \
         --output-filename "$SCREENSHOT_DIR/$FILENAME_FMT"
       ;;
     --copy)
-      "${GRIM[@]}" - | wl-copy
+      grab | wl-copy
       note "$(w_t screenshot.copied)"
       ;;
     --save)
       local out; out="$SCREENSHOT_DIR/$(date +"$FILENAME_FMT")"
-      "${GRIM[@]}" "$out"
+      grab >"$out"
       note "$(w_t screenshot.saved)" "$out"
       ;;
   esac

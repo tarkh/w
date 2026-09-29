@@ -1,0 +1,29 @@
+# record.schema — which layer may decide each key of the `record` subsystem.
+#
+# Read by /usr/lib/w/w-conf-lib.sh (and its Python twin) during the load
+# pass; a user-layer assignment to a `system` key is dropped with a warning, and
+# `wconf_set` refuses to write it in the first place. See w-conf.md.
+#
+# Format: <KEY>\t<scope>       scope: system | user | both
+#   system — root domain: the admin (or fleet policy) decides, per machine.
+#   user   — the logged-in user may override it in ~/.config/w/record.conf.
+#   both   — either layer may speak; the usual priority order applies.
+#
+# Every key here is `user`, on the same reasoning as screenshot.schema: a
+# recording is one person's capture of their own screen inside their own
+# graphical session, and none of these keys reaches past it. A fleet that wants
+# to pin a codec or forbid the audio track still can — policy.d sits above the
+# user layer.
+#
+# RECORDER is the one that looks like it should be `system`, since which backends
+# exist IS a machine-level fact. It is not: the backend a user may choose is
+# bounded by what is installed, which the filesystem already enforces, and
+# w-record turns an unavailable backend into an error rather than trusting the
+# key. Scope would add a second gate over the same fact.
+
+RECORDER	user
+ENCODER	user
+AUDIO	user
+FORMAT	user
+FRAMERATE	user
+WINDOW_MASK	user

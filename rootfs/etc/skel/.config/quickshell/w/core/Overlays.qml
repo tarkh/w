@@ -101,6 +101,10 @@ Singleton {
     // open(name, { route }); the Hub reads it on show to jump straight to a panel,
     // then it is consumed. Cleared on plain toggle/open so those land at the root.
     property var pendingRoute: null
+    // Arguments for that route (open(name, { route, args })), handed to the panel as
+    // its `navArgs` — e.g. { route: "displays", args: { scope: "capture" } } opens a
+    // tab rather than the panel's default one. Consumed together with the route.
+    property var pendingArgs: null
 
     // Temporary self-eclipse for the CURRENT popup: it stays logically open (current
     // is unchanged, so its state/navigation persist) but hides its surface + scrim +
@@ -132,8 +136,13 @@ Singleton {
     // leaves a fully clean screen (the prompt would otherwise sit under the scrim).
     readonly property bool scrimActive: root.blurGroup.indexOf(root.current) >= 0 && !root.suspended
 
-    function toggle(name) { root.suspended = false; root.pendingRoute = null; root.current = (root.current === name) ? "" : name; }
+    function toggle(name) { root.suspended = false; root.pendingRoute = null; root.pendingArgs = null; root.current = (root.current === name) ? "" : name; }
     // open("hub", { route: "appearance/theme" }) deep-links; opts is optional.
-    function open(name, opts) { root.suspended = false; root.pendingRoute = (opts && opts.route !== undefined) ? opts.route : null; root.current = name; }
+    function open(name, opts) {
+        root.suspended = false;
+        root.pendingRoute = (opts && opts.route !== undefined) ? opts.route : null;
+        root.pendingArgs = (opts && opts.args !== undefined) ? opts.args : null;
+        root.current = name;
+    }
     function close(name)  { if (root.current === name) { root.suspended = false; root.current = ""; } }
 }

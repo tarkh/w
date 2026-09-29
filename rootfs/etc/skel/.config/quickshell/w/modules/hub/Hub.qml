@@ -122,6 +122,11 @@ Scope {
     // The loaded panel receives them as `navArgs` if it declares the property.
     property var navArgs: []
     readonly property var currentArgs: navArgs.length ? navArgs[navArgs.length - 1] : null
+    // A deep-link into the route that is ALREADY loaded (the Hub was closed on that very
+    // panel) keeps the Loader's source, so its onLoaded never fires again — hand the new
+    // arguments over here instead.
+    onCurrentArgsChanged: if (panelLoader.item && panelLoader.item.navArgs !== undefined)
+        panelLoader.item.navArgs = root.currentArgs
 
     // Registry entry for the current route (null on the root), giving the panel source
     // + title for the Loader and breadcrumb.
@@ -218,11 +223,14 @@ Scope {
     // first segment never resolves and we open at root; the wiring is here for later
     // phases (Overlays.open("hub", { route: "appearance" })).
     function applyDeepLink() {
-        const r = Overlays.pendingRoute;
+        const r = Overlays.pendingRoute, a = Overlays.pendingArgs;
         Overlays.pendingRoute = null;
+        Overlays.pendingArgs = null;
         root.navDir = 1;
-        root.navStack = (r && HubRegistry.find(String(r).split("/")[0])) ? [String(r)] : [];
-        root.navArgs = root.navStack.map(() => null);   // a deep-link carries no arguments
+        // Arguments before the stack — same ordering rule as push().
+        const ok = r && HubRegistry.find(String(r).split("/")[0]);
+        root.navArgs = ok ? [a] : [];
+        root.navStack = ok ? [String(r)] : [];
     }
 
     // Rebuild the nav stack only on a REAL open (active false→true), not on a

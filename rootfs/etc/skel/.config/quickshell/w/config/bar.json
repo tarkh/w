@@ -19,6 +19,8 @@
 
   "_comment_notifications": "Block type \"notifications\" is the Do Not Disturb indicator + toggle. State comes from ~/.local/state/w/notifications.json (written by `w-notify`), so the glyph flips whichever surface changed it — this block, the Hub panel, a hotkey or the AI. It stays visible by default even when DND is off (hideWhenIdle: true collapses it to 'only while silenced') because a silent desktop with no visible cause is how notifications get missed for days; while DND is on the glyph+label switch to highColor. Multi-glyph icon: { idle, dnd } (built-in defaults: idle \\uf09a1, dnd \\uf09a2). showText shows the DND deadline (HH:mm) or 'On'. Left-click toggles DND (`w-notify dnd toggle`), right-click opens Hub → Notifications, where the history lives. Settings: showIcon, icon (state object), showText, hideWhenIdle, fontSize, textColor/textOpacity, iconColor/iconOpacity, highColor/highOpacity, zone*, plus the shared click-flash/cursor keys.",
 
+  "_comment_recording": "Block type \"recording\" is the screen-recording indicator. It exists only while `w-record` is recording (state: $XDG_RUNTIME_DIR/w/record.state, removed on stop) and is absent otherwise — no hideWhenIdle, since an idle recorder has nothing to say. Liveness is double-checked against /proc/<PID>/comm, so a backend that died never leaves a stuck timer. A pulsing dot (iconColor, default dangerBorder — the theme's red) + elapsed time m:ss (h:mm:ss past the hour). Left-click stops the recording (`w-record stop`); there is no menu on purpose — while the whole screen is recorded a popup would land in the video. Glyph key: \"recording\" (built-in default \\uf111). Settings: showIcon, icon, showText, pulse, fontSize, textColor/textOpacity, iconColor/iconOpacity, zone*, plus the shared click-flash/cursor keys.",
+
   "_comment_interaction": "Every block exposes optional click-flash + cursor controls on its interactive element (the zone for single-unit blocks like clock/volume/cpu/...; each button for multi-button blocks workspaces/apps/tray). They apply wherever present: clickColorLeft / clickColorRight — flash color on LMB / RMB (theme TOKEN name or #RRGGBB); a button with no color set does NOT flash (opt-in per button). clickOpacity — apex alpha 0..1 (default 0.5). clickDuration — full pulse fade-in -> apex -> fade-out, ms (default 300). cursor — hover cursor on that element: pointer | default/arrow | text | crosshair | wait | busy | grab | grabbing | none; omitted = the block's own default (pointer for interactive blocks/buttons, arrow for clock/battery/brightness/kbdBacklight). Setting clickColorRight also makes the element accept RMB (for the flash) on blocks that otherwise ignore it.",
 
   "_comment_button": "Block type \"button\" is a generic launcher: a clickable pill that runs a shell command on left-click (commandLeft) and, optionally, a different one on right-click (commandRight) — run detached via `sh -c`, so any command works (an empty string is a no-op). Reach the shell's own popups through their Hyprland globals, e.g. hyprctl dispatch 'hl.dsp.global(\"quickshell:launcher\")'. Optional label (\"\" = none) and optional icon (\"\" = none): a Nerd Font glyph, a theme-icon name, a /path/to.(png|svg), or the special keyword \"w-logo\" = the active theme's brand SVG (theme-aware + live). Image icons get iconMode tint|solid|original + iconStrength/iconShade/iconLift (like apps/tray); a glyph is colored by iconColor. gap = space between icon and label (drops out when either is absent). Settings: icon, label, gap, iconSize, fontSize, commandLeft, commandRight, iconMode/iconStrength/iconShade/iconLift, textColor/textOpacity, iconColor/iconOpacity, zoneColor/zoneOpacity/zoneBorderColor/zoneBorderOpacity, plus the shared click-flash/cursor keys.",
@@ -279,6 +281,20 @@
         "iconColor": "text", "iconOpacity": 0.85,
         "zoneColor": "inputBg", "zoneOpacity": 0.85,
         "zonePadding": { "right": 4 },
+        "clickColorLeft": "accent",
+        "clickOpacity": 0.5,
+        "clickDuration": 200,
+        "cursor": "pointer"
+      } },
+      { "type": "recording", "id": "recording", "enabled": true, "settings": {
+        "showIcon": true,
+        "icon": "",
+        "showText": true,
+        "pulse": true,
+        "fontSize": 12,
+        "textColor": "text", "textOpacity": 1.0,
+        "iconColor": "dangerBorder", "iconOpacity": 1.0,
+        "zoneColor": "inputBg", "zoneOpacity": 0.85,
         "clickColorLeft": "accent",
         "clickOpacity": 0.5,
         "clickDuration": 200,

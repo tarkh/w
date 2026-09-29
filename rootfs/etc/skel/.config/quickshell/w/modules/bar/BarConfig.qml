@@ -324,6 +324,7 @@ Singleton {
         case "network":        return Qt.resolvedUrl("blocks/Network.qml");
         case "updates":        return Qt.resolvedUrl("blocks/Updates.qml");
         case "notifications":  return Qt.resolvedUrl("blocks/Notifications.qml");
+        case "recording":      return Qt.resolvedUrl("blocks/Recording.qml");
         case "tray":           return Qt.resolvedUrl("blocks/Tray.qml");
         case "zone":           return Qt.resolvedUrl("blocks/Zone.qml");
         default:               return "";

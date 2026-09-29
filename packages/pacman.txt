@@ -117,7 +117,8 @@ noto-fonts-emoji
 # pick icon/folded glyphs for the Quickshell bar config (config/bar.json).
 gucharmap
 
-# Theming (w-style renders GRUB/Plymouth assets; w-theme crossfade via grim)
+# Theming (w-style renders GRUB/Plymouth assets; w-theme crossfade via grim;
+# w-screenshot rounds and shadows window shots, w-record masks window corners)
 imagemagick
 # ImageMagick's SVG delegate — only an optdepend upstream, but the Plymouth logo is
 # rasterised from the theme's vector master at whatever pixel size the panel calls

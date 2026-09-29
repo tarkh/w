@@ -7,7 +7,7 @@ description: >-
   before answering questions about how W is organized or which command to use.
 sources:
   - path: .claude/library/essentials.md
-    sha256: b336f3e105420f8307702339daf3df0d87c5370a4b4b8ca63d48566636d14511
+    sha256: dcce35dc44e6118c6fe82259d887e6219b6f12713232e8779953aa438aaaf795
 ---
 
 # W Overview
@@ -139,7 +139,11 @@ commands — they encode W's conventions and keep the system consistent. Most su
 - Common keybindings (defaults; remappable via the W Hub / `w-hotkeys`): `$mod+D`
   launcher, `$mod+Space` W Hub, `$mod+V` clipboard history, `$mod+L` lock,
   `$mod+Backspace` power menu, `$mod+Shift+I` region screenshot,
+  `$mod+Ctrl+R` start/stop recording the current monitor,
   `$mod+Shift+D` Do Not Disturb, `$mod+Shift+N` night light. `$mod` is the Super key.
+- **Screen capture** is two tools in one subsystem: `w-screenshot` (stills, with an
+  annotation overlay) and `w-record` (video, saved into `Screencasts/` in the user's
+  videos folder, desktop audio included by default). Details: the **w-desktop** skill.
 - **Night light** (blue-light filter, `w-nightlight`): off / on a schedule / always,
   with a night temperature and a night window. Off by default. Details: the
   **w-displays** skill.

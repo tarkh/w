@@ -4,6 +4,11 @@
   "screenshot.copied": { "en": "Copied to clipboard", "ru": "Скопировано в буфер обмена" },
   "screenshot.saved":  { "en": "Saved", "ru": "Сохранено" },
 
+  "record.started":      { "en": "Recording started",  "ru": "Запись началась" },
+  "record.stopped":      { "en": "Recording saved",    "ru": "Запись сохранена" },
+  "record.failed":       { "en": "Recording failed",   "ru": "Запись не удалась" },
+  "record.cpu_fallback": { "en": "GPU encoding unavailable — recording on the CPU", "ru": "Кодирование на GPU недоступно — пишем на CPU" },
+
   "info.header": { "en": "W Linux — available tools (run '<tool> help' for details):", "ru": "W Linux — доступные инструменты (подробности: '<tool> help'):" },
   "info.count":  { "en": "%s tool(s)",                                                 "ru": "инструментов: %s" },
   "info.none":   { "en": "No w-* tools with Info: descriptions found.",                "ru": "Инструментов w-* с описанием Info: не найдено." },
