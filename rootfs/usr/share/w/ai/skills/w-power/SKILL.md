@@ -15,7 +15,7 @@ sources:
   - path: .claude/library/w-kbdlight.md
     sha256: d17c2a2a0ecf20c3a464a254d778e0873def9ebb8833b4362e08eb9869dec506
   - path: .claude/library/quickshell-powermenu.md
-    sha256: d4e8525acfe0c22fb0184845c221fe0536a9e731b8b0b1dbf553af3efa65c85a
+    sha256: 555aa075f90dcf3ab7d9a862f6a9e82418c7ab7aae9b9f4113078c9e9691d9f3
   - path: .claude/library/quickshell-bar.md
     sha256: a3f19c6d40c72a88088a144b1d2a179f809e1a8bc8027c52536053bf8d8b406e
   - path: .claude/library/package-hyprlock.md

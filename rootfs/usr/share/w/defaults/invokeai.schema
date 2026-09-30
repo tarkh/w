@@ -1,0 +1,12 @@
+# invokeai.schema — who may set each key of the `invokeai` subsystem (see w-conf.md).
+# Format: <KEY>\t<scope>   scope: system | user | both
+#
+# Every key is `system`, for the same reason as comfyui.schema: InvokeAI runs on
+# W as ONE machine-wide service under its own account, and where it is installed,
+# which address it answers on and which PyTorch build sits in its virtualenv are
+# root-domain facts a user layer could not act on (the unit is rendered by a root
+# setup step).
+ROOT	system
+LISTEN	system
+PORT	system
+GPU	system

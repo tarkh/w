@@ -8,6 +8,40 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.21.0
+
+- **InvokeAI pack.** `w-pack install invokeai` sets up InvokeAI, an image
+  generation app with a canvas editor, as a service on http://localhost:9090,
+  under its own account. It shares the machine-wide model store with ComfyUI
+  (`/var/lib/w/ai-models`): every model file already there is registered in place
+  — nothing is copied — and deleting a model from InvokeAI's UI can never remove
+  weights ComfyUI uses. The GPU backend (NVIDIA, AMD/ROCm, Intel, or CPU) is
+  picked for your machine; the pack adds a launcher entry and an AI skill. It
+  also installs `opencv` (four small packages) for the canvas's content-aware
+  infill. On a machine with two GPUs (for example an AMD card plus the
+  processor's integrated graphics), set `device: cuda:0` in `invokeai.yaml`,
+  or half the jobs run on the slower one. Removing either AI pack keeps the
+  shared `w-ai` group for the other.
+- **Clicking a notification opens its source.** The window of the app that sent
+  it comes to the front, on its own workspace — Telegram shows the chat, Firefox
+  the tab — instead of staying behind. "Saved" notifications for screenshots and
+  screen recordings now show a preview of the capture, and clicking one opens the
+  file in its default app.
+- **Screenshot editor opens at the size of your screen.** Annotation (satty)
+  used to squeeze every capture into a shorter canvas and open it shrunk; it now
+  opens at its on-screen size, and a region capture opens right over the spot it
+  was taken from.
+- **Super+Enter no longer fails at random.** On systemd 262 the terminal
+  occasionally opened no window at all (about one launch in five in testing).
+  Ghostty now starts in a mode that avoids the race.
+- **Logging out no longer loses your saved session.** If a save dialog stayed
+  open during logout, the background session saver could overwrite the exit
+  snapshot with a half-closed desktop, so windows came back missing or stretched.
+  The saver is now paused for the exit and resumed if you cancel it.
+- **Gaming pack:** a rootless `w-pack setup gaming` no longer misreports its own
+  library subvolumes as plain folders in home snapshots, and the MangoHud config
+  exists right after install instead of at the next login.
+
 ## v0.20.0
 
 - **Screen recording.** `Super+Ctrl+R` records the current screen,

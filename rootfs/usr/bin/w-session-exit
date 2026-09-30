@@ -45,12 +45,26 @@ if [[ -z "${W_SESSION_EXIT_DETACHED:-}" ]] && command -v setsid >/dev/null 2>&1;
   W_SESSION_EXIT_DETACHED=1 setsid -f "$0" "$action" </dev/null >/dev/null 2>&1 && exit 0
 fi
 
+# The snapshot daemon goes first, because from here on the window list is only
+# ever going to be WORSE than the snapshot below. Left running, it sees every
+# closewindow and, once its 2 s debounce is up, overwrites the exact snapshot
+# with whatever is still open: a clean exit outruns it, but a save dialog held
+# for a few seconds does not — and the session came back without the windows
+# that closed first (a whole tab group) and with the survivors stretched over
+# their space. A stopped unit rather than a lock file: nothing to go stale across
+# the reboot, and the next login's graphical-session.target starts it again.
+systemctl --user stop w-session-save.service >/dev/null 2>&1 || true
+
 # Best-effort by construction: `w-session save` is a no-op when the feature is
 # off, and a failure here must never delay or abort a logout the user asked for.
 w-session save >/dev/null 2>&1 || true
 
-# Aborts (and notifies) on its own if anything stayed open.
-w-session close || exit 1
+# Aborts (and notifies) on its own if anything stayed open — the user keeps
+# working, so the session goes back to being recorded.
+if ! w-session close; then
+  systemctl --user start w-session-save.service >/dev/null 2>&1 || true
+  exit 1
+fi
 
 case "$action" in
   logout)   exec uwsm stop ;;

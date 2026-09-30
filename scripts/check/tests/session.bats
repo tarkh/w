@@ -825,3 +825,32 @@ print('under_data=' + repr(ws.LAYOUTS_DIR.startswith(os.environ['XDG_DATA_HOME']
   [[ "$output" == *"files=['x.json']"* ]]
   [[ "$output" == *"under_data=True"* ]]
 }
+
+# ── Graceful exit: the daemon must not outlive the exact snapshot ─────────────
+
+# Stubs that log each call, then run w-session-exit in the foreground.
+exit_run() {
+  local bin="$BATS_TEST_TMPDIR/exitbin" log="$BATS_TEST_TMPDIR/calls"
+  mkdir -p "$bin"; : > "$log"
+  printf '#!/usr/bin/env bash\necho "systemctl $*" >> %s\n' "$log" > "$bin/systemctl"
+  printf '#!/usr/bin/env bash\necho "w-session $*" >> %s\n[ "$1" != close ] || exit %s\n' \
+    "$log" "$1" > "$bin/w-session"
+  chmod 755 "$bin"/*
+  PATH="$bin:$PATH" W_SESSION_EXIT_DETACHED=1 \
+    run "$REPO/rootfs/usr/bin/w-session-exit" "$2"
+  calls=$(tr '\n' ';' < "$log")
+}
+
+@test "a graceful exit stops the daemon before the snapshot a held dialog would outlast" {
+  # A save dialog keeps `close` waiting; a running daemon would overwrite the
+  # exact snapshot with the half-closed session in the meantime.
+  exit_run 0 reboot
+  [ "$status" -eq 0 ]
+  [ "$calls" = "systemctl --user stop w-session-save.service;w-session save;w-session close;systemctl reboot;" ]
+}
+
+@test "a cancelled exit puts the daemon back, because the session goes on" {
+  exit_run 1 shutdown
+  [ "$status" -eq 1 ]
+  [ "$calls" = "systemctl --user stop w-session-save.service;w-session save;w-session close;systemctl --user start w-session-save.service;" ]
+}

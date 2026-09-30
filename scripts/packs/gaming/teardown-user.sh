@@ -90,7 +90,8 @@ for d in ".local/share/Steam" "Games" ".local/share/lutris"; do
   [[ -e "$p" ]] || continue
   size="$(du -sh "$p" 2>/dev/null | cut -f1 || echo '?')"
   info "Kept: $p ($size) — your games/saves, W never deletes them."
-  if btrfs subvolume show "$p" >/dev/null 2>&1; then
+  # Inode 256 = subvolume root; `btrfs subvolume show` needs root (unsetup is rootless).
+  if [[ "$(stat -f -c %T "$p")" == btrfs && "$(stat -c %i "$p")" == 256 ]]; then
     info "  It is a btrfs subvolume; to reclaim the space:"
     info "      btrfs subvolume delete $p"
   fi

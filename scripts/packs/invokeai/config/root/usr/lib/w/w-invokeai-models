@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""w-invokeai-models — register the shared model store in InvokeAI, in place.
+
+Shipped by the `invokeai` W-Pack. Helper, not a command: the callers are the
+unit itself (ExecStartPost= after every start, ExecReload= for
+`systemctl reload invokeai`), which is also where its environment comes from:
+
+  INVOKEAI_HOST / INVOKEAI_PORT   where the engine answers
+  INVOKEAI_ROOT                   the runtime root (skip list lives there)
+  INVOKEAI_MODELS_DIR             InvokeAI's own download tree ($DIR/invokeai)
+  W_AI_MODELS_DIR                 the shared store (ai-models.DIR)
+
+WHY REGISTRATION. InvokeAI keeps its models in a database, not in a directory
+layout, so there is no ComfyUI-style switch to point it at the store. Its native
+answer to "use the files I already have" is an in-place install: the database
+records the file's path, nothing is copied or moved. This does that for every
+model file under the store's class folders, and removes records whose file has
+since been deleted — so the store stays the single truth for both engines.
+
+SAFE BY CONSTRUCTION. InvokeAI deletes model FILES only inside its own
+models_dir ($DIR/invokeai); a model registered from anywhere else is merely
+unregistered when removed in its UI. The ComfyUI-layout folders are outside that
+tree, so nothing here — and nothing a user clicks in InvokeAI — can delete a
+file ComfyUI uses.
+
+TWO PHASES. The foreground part waits for the web port (so the unit turns
+"active" only once the engine answers) and queues the installs, which is fast.
+Hashing and probing a multi-gigabyte file is not, so a detached child follows
+the jobs to the end: a file InvokeAI cannot identify (a ComfyUI-only encoder, a
+custom node's weights) is unregistered again and remembered in a skip list,
+keyed by size and mtime — never re-hashed on the next start, retried only when
+the file changes.
+"""
+
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+# The ai-models contract: the class folders of the store (setup.sh lays out the
+# same list). Only these are registered. Anything else under the store — the
+# Hugging Face cache, InvokeAI's own tree, a ComfyUI custom node's private
+# weights folder — is not a model library, and InvokeAI's probe will happily
+# misfile such a file as a VAE or encoder of the wrong family.
+CLASSES = ("checkpoints", "diffusion_models", "loras", "vae", "clip", "clip_vision",
+           "text_encoders", "controlnet", "embeddings", "upscale_models", "unet",
+           "style_models", "video_models", "inpaint")
+TERMINAL = {"completed", "error", "cancelled"}
+WAIT_PORT = 540          # inside the unit's TimeoutStartSec=600
+WAIT_JOBS = 6 * 3600     # first sync of a large store hashes every file
+
+
+def env(name):
+    value = os.environ.get(name)
+    if not value:
+        sys.exit(f"w-invokeai-models: {name} not set — run through the unit: "
+                 "sudo systemctl reload invokeai")
+    return value
+
+
+HOST = env("INVOKEAI_HOST")
+HOST = "127.0.0.1" if HOST in ("0.0.0.0", "::") else HOST
+API = f"http://{HOST}:{env('INVOKEAI_PORT')}/api"
+STORE = Path(env("W_AI_MODELS_DIR"))
+OWN = Path(env("INVOKEAI_MODELS_DIR"))
+SKIP = Path(env("INVOKEAI_ROOT")) / "w-store-skip.tsv"
+
+
+def call(method, path, body=None):
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(API + path, data=data, method=method,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        raw = r.read()
+    return json.loads(raw) if raw else None
+
+
+def log(msg):
+    print(f"w-invokeai-models: {msg}", flush=True)
+
+
+def fingerprint(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return f"{st.st_size}:{int(st.st_mtime)}"
+
+
+def load_skip():
+    try:
+        rows = SKIP.read_text().splitlines()
+    except OSError:
+        return {}
+    return dict(r.split("\t", 1) for r in rows if "\t" in r)
+
+
+def save_skip(skip):
+    tmp = SKIP.with_suffix(".tmp")
+    tmp.write_text("".join(f"{p}\t{f}\n" for p, f in sorted(skip.items())))
+    tmp.replace(SKIP)
+
+
+def in_store(path):
+    p = Path(path)
+    return p.is_relative_to(STORE) and not p.is_relative_to(OWN)
+
+
+def in_class(path):
+    return any(Path(path).is_relative_to(STORE / c) for c in CLASSES)
+
+
+def wait_port():
+    deadline = time.monotonic() + WAIT_PORT
+    while time.monotonic() < deadline:
+        try:
+            call("GET", "/v1/app/version")
+            return True
+        except (urllib.error.URLError, OSError):
+            time.sleep(2)
+    return False
+
+
+def forget_stale():
+    """Unregister store models whose file is gone or that sit outside the class
+    folders. Only records under the store and outside $DIR/invokeai — for those
+    DELETE unregisters and never removes a file."""
+    for m in call("GET", "/v2/models/missing")["models"]:
+        if in_store(m["path"]):
+            call("DELETE", f"/v2/models/i/{m['key']}")
+            log(f"unregistered (file gone): {m['path']}")
+    for m in call("GET", "/v2/models/")["models"]:
+        path = m["path"]
+        if Path(path).is_absolute() and in_store(path) and not in_class(path):
+            call("DELETE", f"/v2/models/i/{m['key']}")
+            log(f"unregistered (outside the store's class folders): {path}")
+
+
+def queue_installs(skip):
+    jobs = {}
+    for d in (STORE / c for c in CLASSES):
+        if not d.is_dir():
+            continue
+        try:
+            found = call("GET", "/v2/models/scan_folder?" + urllib.parse.urlencode({"scan_path": str(d)}))
+        except urllib.error.HTTPError as e:
+            log(f"cannot scan {d}: HTTP {e.code}")
+            continue
+        for f in found:
+            path = f["path"]
+            if f["is_installed"] or skip.get(path) == fingerprint(path):
+                continue
+            query = urllib.parse.urlencode({"source": path, "inplace": "true"})
+            try:
+                jobs[call("POST", f"/v2/models/install?{query}", {})["id"]] = path
+            except urllib.error.HTTPError as e:
+                if e.code != 409:          # 409: already registered under another path form
+                    log(f"cannot queue {path}: HTTP {e.code}")
+    return jobs
+
+
+def follow(jobs, skip):
+    """Wait for every queued job; unknown or failed files go to the skip list."""
+    deadline = time.monotonic() + WAIT_JOBS
+    added = 0
+    while jobs and time.monotonic() < deadline:
+        time.sleep(3)
+        for job_id, path in list(jobs.items()):
+            try:
+                job = call("GET", f"/v2/models/install/{job_id}")
+            except urllib.error.HTTPError:
+                jobs.pop(job_id)
+                continue
+            if job["status"] not in TERMINAL:
+                continue
+            jobs.pop(job_id)
+            cfg = job.get("config_out") or {}
+            if job["status"] == "completed" and cfg.get("type") != "unknown":
+                added += 1
+                continue
+            if cfg.get("key"):
+                call("DELETE", f"/v2/models/i/{cfg['key']}")
+            skip[path] = fingerprint(path)
+            log(f"skipped (not a model InvokeAI can use): {path}")
+    save_skip(skip)
+    log(f"store sync done: {added} registered, {len(skip)} on the skip list.")
+
+
+def main():
+    if sys.argv[1:] != ["sync"]:
+        sys.exit("usage: w-invokeai-models sync")
+    if not STORE.is_dir():
+        log(f"store {STORE} missing — nothing to register.")
+        return
+    if not wait_port():
+        log("engine did not answer — store not synced (retry: sudo systemctl reload invokeai).")
+        return
+    skip = load_skip()
+    skip = {p: f for p, f in skip.items() if in_class(p) and fingerprint(p) == f}   # changed/deleted → retry
+    forget_stale()
+    jobs = queue_installs(skip)
+    if not jobs:
+        save_skip(skip)
+        log("store sync done: nothing new.")
+        return
+    log(f"queued {len(jobs)} store model(s) for in-place registration.")
+    # Detach: the unit's start (or reload) must not wait for the hashing. The
+    # child stays in the service's cgroup, so stopping the unit ends it too.
+    if os.fork() == 0:
+        os.setsid()
+        follow(jobs, skip)
+
+
+if __name__ == "__main__":
+    main()

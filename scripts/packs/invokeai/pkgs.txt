@@ -1,0 +1,15 @@
+# invokeai bundle — packages (official repos, no AUR).
+#
+# InvokeAI itself is NOT a package: it is `invokeai` on PyPI, and upstream's own
+# manual install puts it into a uv virtualenv — setup.sh does exactly that under
+# the service account (the same "vendor installer over AUR" call as the comfyui
+# pack). uv is a base-system tool (apply.sh --uv, package-python.md), and the venv
+# brings its own uv-managed Python 3.12, so the system Python version never matters.
+#
+# opencv: PatchMatch, the canvas's content-aware infill, is a C++ extension
+# compiled against the system OpenCV (setup.sh step 5b; the compiler comes with
+# base-devel in the base system). Without it InvokeAI still runs and falls back
+# to its other infill methods — but the canvas is the reason to pick InvokeAI,
+# and the package is small (four new dependencies on a W install; VTK and HDF5
+# are optional for it and stay out).
+opencv

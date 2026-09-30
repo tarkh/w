@@ -25,6 +25,20 @@ warn() { echo -e "  \033[1;33mWARN:\033[0m $*" >&2; }
 USER_NAME="${PACK_USER:?}"
 AS_ROOT="${PACK_AS_ROOT:-0}"
 
+# ── 0. Is `w-ai` still another engine's? ──────────────────────────────────────
+# The group is shared by every AI-engine pack (comfyui, invokeai), each declaring
+# it in its own sysusers fragment. While another engine's fragment is installed,
+# the membership still serves that engine — dropping it would lock the account
+# out of the store and the other engine's output. This pack's own fragment is
+# still present here (w-pack removes manifest rows after the teardown scripts).
+other="$(grep -l '^g w-ai' /usr/lib/sysusers.d/w-*.conf 2>/dev/null \
+  | grep -v "/w-comfyui\.conf$" | head -1)"
+if [[ -n "$other" ]]; then
+  other="${other##*/w-}"
+  info "group 'w-ai' is still used by the ${other%.conf} pack — keeping $USER_NAME in it."
+  exit 0
+fi
+
 # ── 1. Remove from group `w-ai` ───────────────────────────────────────────────
 # The counterpart of `usermod -aG w-ai`. Best-effort: if the account is not in
 # the group (already removed, or never added), gpasswd reports it and we move on.

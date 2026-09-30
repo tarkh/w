@@ -23,5 +23,9 @@
 
   "w-comfyui.Name":     { "en": "ComfyUI", "ru": "ComfyUI" },
   "w-comfyui.Comment":  { "en": "Generate images and video with the local ComfyUI engine", "ru": "Генерация изображений и видео на локальном движке ComfyUI" },
-  "w-comfyui.Keywords": { "en": "comfyui;ai;image;video;generation;diffusion;stable-diffusion;generate;", "ru": "комфию;ии;изображения;видео;генерация;диффузия;comfyui;ai;image;video;generation;diffusion;stable-diffusion;generate;" }
+  "w-comfyui.Keywords": { "en": "comfyui;ai;image;video;generation;diffusion;stable-diffusion;generate;", "ru": "комфию;ии;изображения;видео;генерация;диффузия;comfyui;ai;image;video;generation;diffusion;stable-diffusion;generate;" },
+
+  "w-invokeai.Name":     { "en": "InvokeAI", "ru": "InvokeAI" },
+  "w-invokeai.Comment":  { "en": "Generate and edit images on a canvas with the local InvokeAI engine", "ru": "Генерация и редактирование изображений на холсте локального движка InvokeAI" },
+  "w-invokeai.Keywords": { "en": "invokeai;invoke;ai;image;canvas;inpaint;generation;diffusion;stable-diffusion;flux;generate;", "ru": "инвок;ии;изображения;холст;генерация;диффузия;invokeai;invoke;ai;image;canvas;inpaint;generation;diffusion;stable-diffusion;flux;generate;" }
 }

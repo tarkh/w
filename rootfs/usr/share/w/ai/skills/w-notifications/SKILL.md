@@ -8,9 +8,9 @@ description: >-
   miss", silencing a noisy app, or how long a popup stays on screen.
 sources:
   - path: .claude/library/w-notify.md
-    sha256: 871ba696a334881ecee156f79a0bec2338bbead68f9cd30e4920a85e4d156c48
+    sha256: 4e137f71118e540fa892feda1a005413bed4484315a581318b2a88d6645d4346
   - path: .claude/library/quickshell-notifications.md
-    sha256: ce5b064f814484d9f1a45e5b570de19d7e3dd5f0afa9631f75a40e7a775de7da
+    sha256: 2ee857046de5984ccc4c8b0c7cb2aa68c62fc51cdbf0716c3f1fb8006ad455d1
 tools:
   - w_notifications_status
   - w_notifications_history
@@ -44,6 +44,15 @@ hour", "until the meeting ends"), pass `minutes` to `w_notifications_dnd` — an
 indefinite DND is the one people forget they left on and then miss things for days. If
 they ask for silence with no duration, it is fair to say how to end it (the bar's bell
 glyph, `Super+Shift+D`, or asking you again).
+
+## Clicking a popup
+
+Left click opens the source: the shell switches to the sender's workspace and focuses
+its window (or the one it maps within ~3 s, e.g. Telegram restored from the tray), then
+invokes the app's default action so it shows the chat/tab itself. Right click dismisses
+the card, middle click dismisses all. W's own "saved" notifications (screenshot
+`--save`, recording stop) open the file in its default app. If a click raises nothing,
+the app's `desktop-entry` hint does not match its window's app id — not a W setting.
 
 ## History is a record, not a live inbox
 

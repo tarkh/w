@@ -1,0 +1,25 @@
+# invokeai bundle — config ownership (deploy.sh SDK + w-reset).
+# TSV: <path>	<class>. All rows here are absolute → config/root<path> (always
+# managed). No home-relative rows: the per-account half (group membership in
+# `w-ai`) is done by setup-user.sh.
+#
+# Deliberately NOT here: invokeai.service.d/10-w.conf — RENDERED by setup.sh from
+# the `invokeai` and `ai-models` subsystems on install/refresh (a shipped copy
+# would be a second truth fighting w-conf), and $ROOT/data/invokeai.yaml — the
+# engine writes it on first start and it belongs to the admin from then on.
+
+# Unit running the engine; ExecStartPost/ExecReload call w-invokeai-models.
+/etc/systemd/system/invokeai.service	managed
+
+# The `invokeai` service account and the shared `w-ai` model-store group.
+/usr/lib/sysusers.d/w-invokeai.conf	managed
+
+# Shared-store registration (in-place installs) — see the unit header.
+/usr/lib/w/w-invokeai-models	managed
+
+# Launcher helper behind w-invokeai.desktop — starts the service on demand and
+# opens the web interface.
+/usr/lib/w/w-invokeai-open	managed
+
+# Launcher entry. Localized keys written by w-i18n-gen from i18n/apps.json.
+/usr/share/applications/w-invokeai.desktop	managed

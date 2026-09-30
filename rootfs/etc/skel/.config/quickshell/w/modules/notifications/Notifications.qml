@@ -242,17 +242,56 @@ Scope {
         return (s || "").replace(/<[^>]*>/g, "");
     }
 
-    // LMB: invoke the "default" action (open the source), then close unless the
-    // notification asked to stay (resident). With no default action, just dismiss.
+    // LMB opens the source: the sender's window comes forward (switching to its
+    // workspace) and the "default" action tells the app what to show — the chat, the
+    // tab. Raising is the shell's job: the spec's way is an ActivationToken sent before
+    // ActionInvoked, Quickshell never emits one, and Hyprland (focus_on_activate off)
+    // refuses a raise without it — the tab switched while the window stayed behind.
+    // The click is the user's, so the shell raises the window itself. An app with no
+    // window yet (Telegram in the tray) maps one in answer to the action; `pendingKeys`
+    // raises it when it appears. invoke() dismisses unless the notification is
+    // resident; with no default action the card just closes.
     function activate(n) {
         if (!n) return;
         let def = null;
         for (let i = 0; i < n.actions.length; i++)
             if (n.actions[i].identifier === "default") { def = n.actions[i]; break; }
-        // invoke() itself dismisses the notification unless it is resident; with no
-        // default action there's nothing to open, so just close the card.
+        const keys = sourceKeys(n);
+        const win = windowFor(keys);
+        if (win) win.activate();
         if (def) def.invoke();
         else n.dismiss();
+        if (def && !win && keys.length) { pendingKeys = keys; pendingExpiry.restart(); }
+    }
+
+    // What the sender's windows call themselves: the desktop-entry hint (the spec's
+    // app identity, e.g. org.telegram.desktop), its entry's id and StartupWMClass,
+    // lowercased — Wayland app ids are the desktop-file id by convention.
+    function sourceKeys(n) {
+        const keys = [];
+        const add = s => {
+            s = (s || "").toLowerCase().replace(/\.desktop$/, "");
+            if (s && !keys.includes(s)) keys.push(s);
+        };
+        add(n.desktopEntry);
+        const e = (n.desktopEntry || n.appName) ? DesktopEntries.heuristicLookup(n.desktopEntry || n.appName) : null;
+        if (e) { add(e.id); add(e.startupClass); }
+        return keys;
+    }
+
+    function windowFor(keys) {
+        return keys.length ? ToplevelManager.toplevels.values.find(t => keys.includes((t.appId || "").toLowerCase())) || null : null;
+    }
+
+    property var pendingKeys: []
+    Timer { id: pendingExpiry; interval: 3000; onTriggered: root.pendingKeys = [] }
+    Connections {
+        target: ToplevelManager.toplevels
+        enabled: root.pendingKeys.length > 0
+        function onValuesChanged() {
+            const win = root.windowFor(root.pendingKeys);
+            if (win) { root.pendingKeys = []; win.activate(); }
+        }
     }
 
     function dismissAll() {

@@ -5,13 +5,13 @@ order: 4
 summary: Windows, workspaces, popups, notifications, screenshots and session restore.
 sources:
   - path: .claude/library/package-hyprland.md
-    sha256: c92b52f0550275cb15123ea3a4c6ab875cce6c889732ca4f326e2176d43cf84e
+    sha256: 6eb71031cc9bd879d31d999569464acc6673443825e6544cfaa313d255324a3a
   - path: .claude/library/quickshell.md
     sha256: da1b14d9d934188dd9b49ece41af8b58ab8d5abe06c6172e198e1c5ade171759
   - path: .claude/library/w-screenshot.md
-    sha256: 5430715546b83096e21b72ed6af7c29d77dc6ffde66ebd6b0652f95d29da662b
+    sha256: cab923bc52e33ecc3604a6f4786103d095312a01a25b1b2a5ee893a41c67c3ae
   - path: .claude/library/w-record.md
-    sha256: 67d0b8fb1bfc8c72f3d70f26271b196d88d18d3b07445560ac96d51905446f03
+    sha256: 7522ccd5382e3c6717165eddb5e6d2bf4a12dcf6d8b20852bd612143c344ebaa
 ---
 
 W desktop = the Hyprland compositor with the Quickshell UI on top. Both are
@@ -51,8 +51,11 @@ window's titlebar into another turns them into a resizable split. The basics:
   guides.
 - **Clipboard history** (<kbd>Super+V</kbd>) searches what you copied; entries
   persist across reboots.
-- **Notifications** appear in the top-right; **Hub → Notifications** (and the
-  `w-notify` command) manage do-not-disturb and per-app muting.
+- **Notifications** appear in the top-right. A left click opens the source —
+  it switches to the app's workspace, focuses its window (restoring it from the
+  tray) and lets the app show the chat or tab; a right click dismisses one card,
+  a middle click dismisses them all. **Hub → Notifications** (and the `w-notify`
+  command) manage do-not-disturb and per-app muting.
 - **Volume and brightness** popups open from their keys; they show levels
   live like any desktop's OSD.
 
@@ -101,7 +104,8 @@ unbinding the two you do not want.
 The editor is Flameshot. W also ships the older one, Satty, for the case where
 Flameshot misbehaves on your hardware — pick it under **Hub → Displays → Screen
 capture → Editor** (or `w-screenshot set ANNOTATOR satty`), and it opens from the
-next capture on. Whichever is set, `w-screenshot` carries the full set of modes for scripts and the CLI,
+next capture on. Satty shows the shot at its real size, and a selected region opens
+right over the spot you selected, with the toolbars around it. Whichever is set, `w-screenshot` carries the full set of modes for scripts and the CLI,
 including the ones with no editor at all (`--copy`, `--save`).
 
 A **window** shot taken without an editor (`--copy`, `--save`) or opened in Satty comes
@@ -125,7 +129,7 @@ button: press it to start, press it again to finish.
 
 Files land in the `Screencasts` folder inside your videos folder, named
 `W-<date>_<time>.mp4`. A notification confirms the start, and the one at the end
-carries the finished path. You can also stop a take from a terminal with
+carries the finished path — click it to play the video. You can also stop a take from a terminal with
 `w-record stop`, and ask what is going on with `w-record status`.
 
 While a take is running, the bar shows a pulsing red dot and the time recorded so

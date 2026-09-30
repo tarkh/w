@@ -48,10 +48,17 @@ own_dir() {   # create <dir> owned by the account, whichever privilege we hold
   else install -d "$1"; fi
 }
 
+# A btrfs subvolume root always has inode 256. Not `btrfs subvolume show`: its
+# lookup ioctl needs root, so an account catching itself up (`w-pack setup`)
+# was told its own subvolumes were "regular dirs".
+is_subvolume() {
+  [[ "$(stat -f -c %T "$1" 2>/dev/null)" == btrfs && "$(stat -c %i "$1" 2>/dev/null)" == 256 ]]
+}
+
 exclude_from_snapshots() {
   local dir="$1"
   if [[ -e "$dir" ]]; then
-    if btrfs subvolume show "$dir" >/dev/null 2>&1; then
+    if is_subvolume "$dir"; then
       info "$dir already a subvolume — nothing to do."
     else
       warn "$dir already exists as a regular dir — leaving as-is (rides in @home snapshots)."
@@ -128,12 +135,16 @@ heroic_conf="$USER_HOME/.config/heroic"
 heroic_css="$heroic_conf/themes/w.css"
 heroic_themed=0
 
+# mangohud rides along for the same reason (root rendered it into /etc/skel
+# only) — without it the overlay stays unthemed until the next login.
 if [[ -d "$USER_HOME" ]] && command -v w-style >/dev/null; then
-  info "Rendering the Heroic palette for $USER_NAME..."
-  as_user w-style apply heroic \
-    || warn "w-style apply heroic failed (renders at next login instead)."
+  for axis in heroic mangohud; do
+    info "Rendering the $axis palette for $USER_NAME..."
+    as_user w-style apply "$axis" \
+      || warn "w-style apply $axis failed (renders at next login instead)."
+  done
 else
-  info "w-style not available yet — the heroic axis renders at next login."
+  info "w-style not available yet — the heroic/mangohud axes render at next login."
 fi
 
 if [[ ! -s "$heroic_css" ]]; then

@@ -1,0 +1,74 @@
+# InvokeAI as a W service — shipped by the `invokeai` W-Pack.
+#
+# WHAT ACTUALLY RUNS is the 10-w.conf drop-in that setup.sh renders next to this
+# file: it re-emits ExecStart, the environment and the read-write paths from the
+# `invokeai` and `ai-models` subsystems, so the admin can move the engine and the
+# model store to another disk without editing a unit. The values below are the
+# vendor defaults verbatim — kept complete and valid so this file reads as a
+# working unit on its own.
+#
+# Not enabled by installation: W ships it stopped, and the launcher entry starts
+# it on demand (see w-invokeai-open). `systemctl enable invokeai` if you want it
+# at boot.
+#
+# W-owned settings travel as INVOKEAI_* environment variables, never through the
+# engine's invokeai.yaml: InvokeAI merges the file WITHOUT clobbering what the
+# environment set, so the admin's own edits to $ROOT/data/invokeai.yaml can tune
+# the engine (ram, vram, attention_type, …) but cannot silently move the port or
+# the model directory away from what w-conf says.
+#
+# The shared store is wired in by REGISTRATION, not by a path switch: InvokeAI
+# keeps its models in a database and has no ComfyUI-style models directory to
+# point at a foreign layout. w-invokeai-models registers every file of the store
+# "in place" (a path in the database, nothing copied) after each start, and on
+# `systemctl reload invokeai`. Its own downloads land in $DIR/invokeai — the one
+# subtree InvokeAI may delete files from. See pack-invokeai.md.
+
+[Unit]
+Description=InvokeAI image generation engine (W)
+Documentation=https://invoke.ai
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=invokeai
+Group=invokeai
+WorkingDirectory=/var/lib/w/invokeai/data
+Environment=HOME=/var/lib/w/invokeai
+Environment=HF_HOME=/var/lib/w/ai-models/hf
+Environment=INVOKEAI_ROOT=/var/lib/w/invokeai/data
+Environment=INVOKEAI_HOST=127.0.0.1
+Environment=INVOKEAI_PORT=9090
+Environment=INVOKEAI_MODELS_DIR=/var/lib/w/ai-models/invokeai
+Environment=W_AI_MODELS_DIR=/var/lib/w/ai-models
+ExecStart=/var/lib/w/invokeai/app/.venv/bin/invokeai-web --root /var/lib/w/invokeai/data
+# Store registration. `-`: a store the engine could not index must never fail the
+# unit — the web interface works without it. Blocks "activating" until the web
+# port answers and the scan is queued, which is also what makes the unit's
+# active state mean "ready".
+ExecStartPost=-/usr/lib/w/w-invokeai-models sync
+ExecReload=/usr/lib/w/w-invokeai-models sync
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=600
+
+# ── Confinement ───────────────────────────────────────────────────────────────
+# The comfyui unit's set, for the same reasons: PrivateDevices= would hide the
+# GPU and MemoryDenyWriteExecute= breaks PyTorch's runtime kernel compilation.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/w/invokeai /var/lib/w/ai-models
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

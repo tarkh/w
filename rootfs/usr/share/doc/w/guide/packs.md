@@ -5,7 +5,7 @@ order: 10
 summary: What a pack is, the bundles W offers, installing one for the machine and setting it up for your account, and how to undo it.
 sources:
   - path: .claude/library/packs.md
-    sha256: 77e6b1307966e37236394abcd9174756c7b4fee07b79972cb01ad747072f627b
+    sha256: d5e460b0e9aff90d7278ea965859e3e9b53089ba9ce6606881850e52d5d93526
 ---
 
 W installs in two layers. The **base** is everything a working desktop needs and
@@ -69,7 +69,8 @@ it into the desktop — so a pack arrives configured, not merely downloaded.
   very first launch, and follows every later theme change the next time you
   start it. Installing games on a second drive stays each launcher's own
   setting: Steam's **Settings → Storage**, Heroic's **Default Installation
-  Path**, Lutris's **Default installation folder**. Use a Linux filesystem for
+  Path** together with **Set Folder for new Wine Prefixes** (otherwise the
+  prefixes stay in `~/Games`), Lutris's **Default installation folder**. Use a Linux filesystem for
   that drive — games on NTFS or exFAT break under Proton.
 - **virt** — desktop virtualization: libvirt and QEMU/KVM underneath, with
   virt-manager for full control and GNOME Boxes for creating a VM in one click
@@ -84,6 +85,10 @@ it into the desktop — so a pack arrives configured, not merely downloaded.
   The engine is matched to your GPU at install; models are shared machine-wide
   in `/var/lib/w/ai-models`. Open **ComfyUI** from the app menu, or
   `systemctl start comfyui`, and visit `http://127.0.0.1:8188/`.
+- **invokeai** — local image generation with InvokeAI: a canvas, gallery and
+  [web interface](ai.md#invokeai) on `http://127.0.0.1:9090/`, run as a system
+  service. Uses the same shared model store as comfyui, registering its files
+  in place; the two bundles are independent of each other.
 
 **Hub → Packs** lists them with their state and does the whole life cycle —
 installing, setting up and removing. Anything long or privileged opens a terminal

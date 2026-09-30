@@ -385,7 +385,7 @@ cmd_stop() {
   rm -f "$STATE"
 
   if [[ -s "$file" ]]; then
-    note "$(w_t record.stopped)" "$file"
+    w_capture_notify_saved "W Record" "$(w_t record.stopped)" "$file"
   else
     err "recording produced no file"
     note "$(w_t record.failed)"

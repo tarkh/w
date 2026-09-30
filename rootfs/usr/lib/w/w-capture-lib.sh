@@ -32,6 +32,25 @@ w_capture_userdir() { # <XDG_NAME> <fallback-basename>
   if [[ -n "$d" && "$d" != "$HOME" ]]; then echo "$d"; else echo "$HOME/$2"; fi
 }
 
+# ── Notifications ─────────────────────────────────────────────────────────────
+
+# "Saved <file>" whose click opens the file in its default app — the macOS/Windows
+# habit. W's notification server reports a click on the card as the `default`
+# action; hearing it takes `notify-send --wait`, which blocks until the card closes,
+# so the listener runs detached and the capture returns at once. A still rides along
+# as the card's picture (the `image-path` hint). Needs `w_t` (w-i18n-lib) from the
+# caller — both front-ends source it.
+#
+#   w_capture_notify_saved "W Screenshot" "$(w_t screenshot.saved)" "$out"
+w_capture_notify_saved() { # <app> <summary> <file>
+  command -v notify-send >/dev/null 2>&1 || return 0
+  local image=()
+  [[ "$3" == *.png ]] && image=(-h "string:image-path:$3")
+  setsid -f bash -c '[[ "$(notify-send "${@:2}")" == default ]] && exec xdg-open "$1"' _ \
+    "$3" -a "$1" "${image[@]}" --action="default=$(w_t capture.open)" --wait "$2" "$3" \
+    </dev/null >/dev/null 2>&1 || true
+}
+
 # ── Geometry ──────────────────────────────────────────────────────────────────
 
 # A window-geometry token of the ACTIVE theme: `W_GEO_WINDOW_ROUNDING` or

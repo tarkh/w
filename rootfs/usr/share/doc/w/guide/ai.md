@@ -9,7 +9,9 @@ sources:
   - path: .claude/library/ai-integration.md
     sha256: f32aa75761dcd502adb75af9854472c0c4385f7794e9acc932f5c06d7775fa46
   - path: .claude/library/pack-comfyui.md
-    sha256: 4ce59ba5fdc058104eeb36992e34d23136a3377ca9fb75e055e99473f2786258
+    sha256: 39359310301024f530ea09fad70d83c56e60265cfe9951ef5f1ef919a3e4a2ad
+  - path: .claude/library/pack-invokeai.md
+    sha256: 5abb48e8ed21e81603e71e780be300ed84b9e15d335acb58453fd330f70dc41d
 ---
 
 W ships an AI assistant that runs in a terminal and can drive the machine
@@ -145,3 +147,27 @@ opens the browser) or start it yourself with `systemctl start comfyui`.
   at your next login.
 - **The assistant can help** with ComfyUI workflows, model placement and the
   service — load the *comfyui* knowledge pack when asked about local generation.
+
+## InvokeAI
+
+A second, independent generation bundle with a different interface: InvokeAI
+works on a layered **canvas** (inpainting, outpainting, regional prompts) with a
+gallery and boards, where ComfyUI builds a node graph. It runs as a system
+service on `http://127.0.0.1:9090/`; open **InvokeAI** from the app menu or run
+`systemctl start invokeai`.
+
+- **GPU matching:** the PyTorch build is chosen for your hardware at install
+  (`nvidia` / `amd` / `intel` Arc / `cpu`), the same way as for ComfyUI.
+- **Same models as ComfyUI:** every model file in the shared store
+  (`/var/lib/w/ai-models/checkpoints`, `loras`, `vae`, …) is registered in
+  InvokeAI where it lies — nothing is copied. Added a file? Run
+  `sudo systemctl reload invokeai` and it appears after a short check. Files
+  InvokeAI cannot use are skipped quietly.
+- **Its own downloads** from the Model Manager tab go to
+  `/var/lib/w/ai-models/invokeai`. Removing a model inside InvokeAI deletes a
+  file only from there; a shared-store model is just hidden until next start.
+- **Where your results land:** `/var/lib/w/invokeai/data/outputs`, reachable
+  from the file manager with the same `w-ai` group (next login).
+- **Tuning** (memory limits, attention, precision) lives in
+  `/var/lib/w/invokeai/data/invokeai.yaml`; the example file next to it lists
+  every setting.

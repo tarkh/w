@@ -9,7 +9,7 @@ description: >-
   Monitors and the night light are w-displays; reopening windows at login is w-session.
 sources:
   - path: .claude/library/package-hyprland.md
-    sha256: c92b52f0550275cb15123ea3a4c6ab875cce6c889732ca4f326e2176d43cf84e
+    sha256: 6eb71031cc9bd879d31d999569464acc6673443825e6544cfaa313d255324a3a
   - path: .claude/library/quickshell.md
     sha256: da1b14d9d934188dd9b49ece41af8b58ab8d5abe06c6172e198e1c5ade171759
   - path: .claude/library/quickshell-bar.md
@@ -21,9 +21,9 @@ sources:
   - path: .claude/library/quickshell-keyboard.md
     sha256: 0f132daff3b5514e1f520397d9489286c4fec4a03b654d94b6c7f564f0b1f0bc
   - path: .claude/library/w-screenshot.md
-    sha256: 5430715546b83096e21b72ed6af7c29d77dc6ffde66ebd6b0652f95d29da662b
+    sha256: cab923bc52e33ecc3604a6f4786103d095312a01a25b1b2a5ee893a41c67c3ae
   - path: .claude/library/w-record.md
-    sha256: 67d0b8fb1bfc8c72f3d70f26271b196d88d18d3b07445560ac96d51905446f03
+    sha256: 7522ccd5382e3c6717165eddb5e6d2bf4a12dcf6d8b20852bd612143c344ebaa
 tools:
   - w_desktop_context
   - w_notify
@@ -54,6 +54,12 @@ The user session is **systemd-managed via uwsm**: the compositor is the user ser
 journald. Diagnose it with `systemctl --user status wayland-wm@hyprland.service` and
 `journalctl --user -b` (see the `w-diagnostics` skill).
 
+A Hyprland `SIGSEGV` coredump **at exit** with more than one monitor — the greeter's on
+every login, the user's on some logouts; stack `exit` → `~CDRMBackend` →
+`flushAsyncCommitEvents` — is a known upstream aquamarine bug (hyprwm/aquamarine#383).
+It fires after Hyprland has finished, loses nothing, and is not a W fault; don't disable
+coredumps over it. A crash *during* a session is a different matter — investigate it.
+
 This is the *systemd* session. Remembering which **windows** were open and reopening
 them at the next login is a different subsystem — the **w-session** skill.
 
@@ -77,7 +83,8 @@ Since Hyprland 0.55 the compositor config is **Lua**, not the old hyprlang `.con
   — Hyprland does not clamp a too-large floating window to the monitor. `max_size` and
   `min_size` take the same expressions (the wiki says only `move`/`size` do, but they do):
   a rule with `max_size` and no `size` lets the app keep the size it asked for and only
-  caps it — that is how W sizes satty's annotation canvas at 80% of the monitor.
+  caps it — satty's rule caps at 90% of the monitor, and w-screenshot asks satty for the
+  exact size (`--resize`) itself.
 - ⚠️ The dispatch syntax changed: `hyprctl dispatch` now takes a Lua expression, e.g.
   `hyprctl dispatch 'hl.dsp.global("quickshell:launcher")'`. The old
   `dispatch global quickshell:launcher` form no longer works.
@@ -222,7 +229,9 @@ the focused window; all three open the annotator, whose Save button asks where.
 Adding `Alt` skips the annotator and writes the PNG immediately, no dialog:
 `Super+Alt+I` (output) and `Super+Ctrl+Alt+I` (window) — tokens
 `screenshot_screen_save` / `screenshot_window_save`, rebindable and unbindable like
-any other (skill **w-desktop** → hotkeys, `w-hotkeys set <token> ""`). Saved images go
+any other (skill **w-desktop** → hotkeys, `w-hotkeys set <token> ""`). The "Saved"
+notification previews the shot; clicking it opens the file in the default viewer (a
+finished recording's notification likewise opens the video). Saved images go
 to `Screenshots/` inside the user's Pictures folder — `$(xdg-user-dir
 PICTURES)/Screenshots`, never a literal `~/Pictures`: the folder is named in the
 system language (`~/Изображения` on a Russian system) and follows a language change
@@ -240,7 +249,9 @@ wlr-screencopy path as the rest of W. Its overlay palette/font are the w-style
 capture, and needs no reload or relogin. Set it with `w-screenshot set ANNOTATOR satty`
 (back: `… flameshot`) or in Hub → Displays → Screen capture → Editor; the key is
 **user-scope**, so a plain `w-conf set` (which targets /etc/w) is the wrong tool. If a user reports the overlay misbehaving (wrong monitor,
-decorated window, slow to appear), that key is the first thing to try.
+decorated window, slow to appear), that key is the first thing to try. Satty opens the
+capture at its on-screen size (up to 90% of the monitor; larger ones are fitted), and a
+`region` capture opens right over the selected spot, toolbars around it.
 
 **Window shot outline.** A `window` capture taken with `--copy`/`--save` or opened in
 Satty gets transparent rounded corners (radius = live window rounding + border) and,

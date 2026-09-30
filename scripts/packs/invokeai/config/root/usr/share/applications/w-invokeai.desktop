@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=InvokeAI
+Name[ru]=InvokeAI
+Comment=Generate and edit images on a canvas with the local InvokeAI engine
+Comment[ru]=Генерация и редактирование изображений на холсте локального движка InvokeAI
+Exec=/usr/lib/w/w-invokeai-open
+Icon=applications-graphics
+Type=Application
+# The launcher entry, not the engine: it starts invokeai.service on demand (via
+# w-invokeai-open) and opens the web interface. See pack-invokeai.md.
+Categories=Graphics;2DGraphics;
+Keywords=invokeai;invoke;ai;image;canvas;inpaint;generation;diffusion;stable-diffusion;flux;generate;
+Keywords[ru]=инвок;ии;изображения;холст;генерация;диффузия;invokeai;invoke;ai;image;canvas;inpaint;generation;diffusion;stable-diffusion;flux;generate;
