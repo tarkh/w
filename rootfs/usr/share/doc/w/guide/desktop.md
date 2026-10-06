@@ -5,13 +5,15 @@ order: 4
 summary: Windows, workspaces, popups, notifications, screenshots and session restore.
 sources:
   - path: .claude/library/package-hyprland.md
-    sha256: 6eb71031cc9bd879d31d999569464acc6673443825e6544cfaa313d255324a3a
+    sha256: 85f6ab9f832fcc8a6f98530bcab0370dd2a4d226371915b22864c8526292d176
   - path: .claude/library/quickshell.md
     sha256: da1b14d9d934188dd9b49ece41af8b58ab8d5abe06c6172e198e1c5ade171759
   - path: .claude/library/w-screenshot.md
     sha256: cab923bc52e33ecc3604a6f4786103d095312a01a25b1b2a5ee893a41c67c3ae
   - path: .claude/library/w-record.md
-    sha256: 7522ccd5382e3c6717165eddb5e6d2bf4a12dcf6d8b20852bd612143c344ebaa
+    sha256: c7ff443860ecebfc73ec01be9a90b845d1a1110e79f9bdabfde1c5dcd7b0f625
+  - path: .claude/library/package-files.md
+    sha256: 85da1d2fccfd07be804443763a7fdde37727878e1b6c85d3288413f72c23b504
 ---
 
 W desktop = the Hyprland compositor with the Quickshell UI on top. Both are
@@ -38,6 +40,10 @@ window's titlebar into another turns them into a resizable split. The basics:
   in `~/.config/hypr/rules.d/<app>.lua` and win over W's for the same app —
   a file that calls `hl.window_rule({ match = { class = "^(app)$" }, float = true })`,
   then `hyprctl reload`.
+- **Open / Save dialogs** float and open at one size (1000x640). Resize one once
+  and GTK apps keep that size everywhere. If every app's dialog suddenly opens
+  full-height, reset the saved size: `gsettings reset
+  org.gtk.Settings.FileChooser window-size`.
 - The full, rebindable list lives in **Hub → Hotkeys**.
 
 ## The shell surfaces
@@ -46,7 +52,7 @@ window's titlebar into another turns them into a resizable split. The basics:
   blocks (updates, network, audio). Which blocks it shows — and on which
   monitor — is set in **Hub → Appearance → Bar**.
 - **The launcher** (<kbd>Super+D</kbd>) starts apps and carries W actions
-  (lock, screenshot, calendar).
+  (lock, screenshot, screen recording, calendar).
 - **The Hub** (<kbd>Super+Space</kbd>) is the control center — see the other
   guides.
 - **Clipboard history** (<kbd>Super+V</kbd>) searches what you copied; entries

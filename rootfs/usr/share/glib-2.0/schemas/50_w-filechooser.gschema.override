@@ -1,0 +1,6 @@
+# W vendor default for the GTK3 file chooser's first-open size (Open / Save As),
+# shared by every GTK3 app and by xdg-desktop-portal-gtk. GTK saves the user's own
+# size over it on close. Owned by apply.sh --files; see
+# /usr/share/w/hypr/rules.d/dialogs.lua for why the compositor sets no size.
+[org.gtk.Settings.FileChooser]
+window-size=(1000, 640)

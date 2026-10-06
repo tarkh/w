@@ -162,6 +162,13 @@ w_actuate_main() {
       local b="${1:-}"; [[ "$b" =~ ^[a-z0-9-]+$ ]] || die "invalid bundle name"
       CMD=(w-pack install "$b")
       ;;
+    pack-upgrade)
+      # One named bundle's out-of-pacman engine, confirmed by the user upstream of
+      # this call (--yes stands in for the TTY question). Never --force: a busy
+      # engine refuses, and that refusal goes back to the user, not around them.
+      local b="${1:-}"; [[ "$b" =~ ^[a-z0-9-]+$ ]] || die "invalid bundle name"
+      CMD=(w-pack upgrade "$b" --yes)
+      ;;
     monitor-greeter)
       # One validated dispatcher for the greeter's monitor layout (w-monitor greeter),
       # reached by the future Hub Displays panel's "Экран входа" tab. Re-validates

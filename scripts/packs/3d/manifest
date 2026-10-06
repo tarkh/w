@@ -1,0 +1,25 @@
+# 3d bundle — config ownership (deploy.sh SDK + w-reset).
+# TSV: <path>\t<class>. Absolute path → config/root<path> (always managed);
+# home-relative → config/skel/<path>. class: user = seed-if-absent, managed =
+# overwrite (W owns it). A trailing '/' marks a directory tree.
+#
+# Both rows are W's glue, not user state:
+#   env.d/3d.sh — points Blender at the W system-scripts root (session env).
+#   w_integration.py — the startup module in that root: W theme follower +
+#     AI-bridge add-on sync (pack-3d.md).
+#   session-shim.py — loads that module in a session older than the pack
+#     (setup-user.sh links it into the installed Blender version's startup/).
+#
+# Deliberately NOT owned: Blender's own userpref.blend and the per-version
+# config tree (~/.config/blender/<ver>/ — Blender's, the user's), the W theme
+# preset W.xml and the copied add-on (written there by w_integration.py at run
+# time, removed by teardown-user.sh), the uv tool (setup-user.sh), the theme
+# JSON (the blender w-style axis).
+/etc/w/env.d/3d.sh	managed
+/usr/share/w/blender/scripts/startup/w_integration.py	managed
+/usr/share/w/blender/session-shim.py	managed
+
+# Window rule (Hyprland drop-in, require()d by hyprland.lua with a wildcard):
+# sizes Blender's file browser window, which opens at 320x240 on Wayland.
+# w-pack reloads running sessions on install/remove.
+/usr/share/w/hypr/rules.d/3d.lua	managed

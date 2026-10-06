@@ -514,7 +514,7 @@ _mcp_fixture() {
 @test "mcp.d: a drop-in whose REQUIRES is missing is not offered, but is listed" {
   _mcp_fixture
   run mcp_dropins
-  [[ "$output" == "present${US}true${US}--stdio -v${US}ok" ]]
+  [[ "$output" == "present${US}true${US}--stdio -v${US}ok${US}" ]]
   run mcp_dropins all
   [[ "$output" == *"absent${US}python3${US}$HOME/.local/share/w/x/server.py${US}missing"* ]]
 }
@@ -531,7 +531,7 @@ _mcp_fixture() {
   mkdir -p "$USER_ROOT/mcp.d"
   printf 'COMMAND="false"\n' > "$USER_ROOT/mcp.d/present.conf"
   run mcp_dropins
-  [[ "$output" == "present${US}false${US}${US}ok" ]]
+  [[ "$output" == "present${US}false${US}${US}ok${US}" ]]
 }
 
 @test "mcp.d: a bad name or an empty COMMAND is invalid, never offered" {
@@ -542,20 +542,37 @@ _mcp_fixture() {
   [[ "$output" == *"Bad_Name${US}true${US}${US}invalid"* ]]
   [[ "$output" == *"nocmd${US}${US}x${US}invalid"* ]]
   run mcp_dropins
-  [[ "$output" == "present${US}true${US}--stdio -v${US}ok" ]]
+  [[ "$output" == "present${US}true${US}--stdio -v${US}ok${US}" ]]
 }
 
-@test "mcp.d: goose gets one --with-extension per active server" {
+@test "mcp.d: goose gets every active server disabled in a config layer, with its description" {
   _mcp_fixture
-  run goose_mcp_args
-  [[ "$output" == $'--with-extension\ntrue --stdio -v' ]]
+  printf 'DESCRIPTION="Present: does things"\n' >> "$SYS_ROOT/mcp.d/present.conf"
+  layer="$(goose_mcp_layer)"
+  [[ "$layer" == "$XDG_RUNTIME_DIR/w-ai/goose.yaml" ]]
+  python3 -c '
+import json,sys; e=json.load(open(sys.argv[1]))["extensions"]
+assert list(e)==["present"], e
+p=e["present"]
+assert p["enabled"] is False and p["type"]=="stdio", p
+assert p["cmd"]=="true" and p["args"]==["--stdio","-v"], p
+assert p["description"]=="Present: does things", p' "$layer"
+  [[ "$(goose_mcp_names)" == present ]]
+  [[ "$(goose_mcp_hint)" == *"present — Present: does things."* ]]
+}
+
+@test "mcp.d: no active drop-in — no goose layer, no hint" {
+  _mcp_fixture
+  rm "$SYS_ROOT/mcp.d/present.conf"
+  [[ -z "$(goose_mcp_layer)" && -z "$(goose_mcp_hint)" ]]
+  [[ ! -e "$XDG_RUNTIME_DIR/w-ai/goose.yaml" ]]
 }
 
 @test "mcp.d: a server with no ARGS gets no stray argument (goose + codex)" {
   _mcp_fixture
   printf 'COMMAND="true"\n' > "$SYS_ROOT/mcp.d/present.conf"
-  run goose_mcp_args
-  [[ "$output" == $'--with-extension\ntrue' ]]
+  python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["extensions"]["present"]["args"]==[]' \
+    "$(goose_mcp_layer)"
   run codex_mcp_args
   [[ "$output" == $'-c\nmcp_servers.present.command="true"\n-c\nmcp_servers.present.args=[]\n-c\nmcp_servers.present.default_tools_approval_mode="approve"' ]]
 }
@@ -652,4 +669,75 @@ _wmcp_fixture() {
   seed_goose
   [[ "$(grep -c '^GOOSE_TELEMETRY_ENABLED:' "$HOME/.config/goose/config.yaml")" -eq 1 ]]
   grep -q '^GOOSE_TELEMETRY_ENABLED: true$' "$HOME/.config/goose/config.yaml"
+}
+
+# ── On-demand pack servers in goose: the guard plugin + config migration ─────
+# extensionmanager is what loads a disabled mcp.d server; the guard confines it
+# to those servers. Seeded per account, text-edited so the preset's comments
+# survive, and never over a choice the user made by hand.
+_guard_fixture() {
+  HOME="$BATS_TEST_TMPDIR/ghome"; export HOME
+  mkdir -p "$HOME/.config/goose"
+  GUARD="$REPO/rootfs/usr/share/w/ai/hosts/goose/plugins/w-guard/scripts/guard"
+}
+
+@test "guard: a config seeded from the previous preset is migrated once, comments kept" {
+  _guard_fixture
+  # The previous preset, rebuilt from today's: the old extensionmanager block
+  # (byte for byte what accounts seeded before carry) and no scheduler key.
+  python3 - "$SYS_ROOT/hosts/goose/config.yaml" "$HOME/.config/goose/config.yaml" <<'PY'
+import re, sys
+t = open(sys.argv[1], encoding="utf-8").read()
+t, n = re.subn(r"  # Lets the model find.*?    enabled: true\n",
+               "  # Lets the model itself discover/enable/disable extensions at runtime — would\n"
+               "  # let it silently re-enable anything we pin off below, defeating the point of\n"
+               "  # this whole block. Off.\n  extensionmanager:\n    enabled: false\n", t, flags=re.S)
+t, m = re.subn(r"\n  # New in goose 1\.50.*?    bundled: true\n", "\n", t, flags=re.S)
+assert n == 1 and m == 1, (n, m)
+open(sys.argv[2], "w", encoding="utf-8").write(t)
+PY
+  ! _goose_ext_enabled "$HOME/.config/goose/config.yaml" extensionmanager
+  _goose_seed_guard
+  cfg="$HOME/.config/goose/config.yaml"
+  _goose_ext_enabled "$cfg" extensionmanager
+  ! _goose_ext_enabled "$cfg" scheduler
+  grep -q '^# W Linux — Goose preset' "$cfg"
+  [[ "$(readlink "$HOME/.agents/plugins/w-guard")" == "$SYS_ROOT/hosts/goose/plugins/w-guard" ]]
+  grep -qxF '  scheduler:' "$cfg"
+  [[ "$(grep -c '^plugins:' "$cfg")" -eq 1 ]]
+  grep -A1 -xF "  $HOME/.agents/plugins/w-guard:" "$cfg" | grep -qxF '    enabled: true'
+  cp "$cfg" "$BATS_TEST_TMPDIR/first"
+  _goose_seed_guard
+  cmp "$BATS_TEST_TMPDIR/first" "$cfg"
+}
+
+@test "guard: a hand-edited extensionmanager stays off; an existing plugins: map gains one entry" {
+  _guard_fixture
+  printf 'extensions:\n  extensionmanager:\n    enabled: false\n  scheduler:\n    enabled: true\nplugins:\n  /x/other:\n    enabled: true\n' \
+    > "$HOME/.config/goose/config.yaml"
+  _goose_seed_guard
+  cfg="$HOME/.config/goose/config.yaml"
+  ! _goose_ext_enabled "$cfg" extensionmanager
+  _goose_ext_enabled "$cfg" scheduler          # the user's own value, not re-pinned
+  [[ "$(grep -c '^plugins:' "$cfg")" -eq 1 ]]
+  [[ "$(sed -n '/^plugins:/,$p' "$cfg")" == $'plugins:\n  '"$HOME/.agents/plugins/w-guard"$':\n    enabled: true\n  /x/other:\n    enabled: true' ]]
+}
+
+@test "guard: a fresh preset seeds clean — no drift warning for its own keys" {
+  _guard_fixture
+  rm -rf "$HOME/.config/goose"
+  run seed_goose
+  [[ "$output" != *"not in the W preset"* ]]
+  _goose_ext_enabled "$HOME/.config/goose/config.yaml" extensionmanager
+}
+
+@test "guard: only this launch's pack servers pass; a bare goose is not W's to police" {
+  _guard_fixture
+  ask() { printf '{"tool_input":{"extension_name":"%s","action":"%s"}}' "$1" "$2"; }
+  [[ "$(ask code_execution enable | env -u W_AI_MCP_ON_DEMAND "$GUARD")" == '{"decision": "allow"}' ]]
+  [[ "$(ask blender enable  | W_AI_MCP_ON_DEMAND="blender gimp" "$GUARD")" == '{"decision": "allow"}' ]]
+  [[ "$(ask blender disable | W_AI_MCP_ON_DEMAND="blender gimp" "$GUARD")" == '{"decision": "allow"}' ]]
+  [[ "$(ask chatrecall enable | W_AI_MCP_ON_DEMAND="blender" "$GUARD")" == *'"decision": "block"'* ]]
+  [[ "$(ask w-mcp disable    | W_AI_MCP_ON_DEMAND="blender" "$GUARD")" == *'"decision": "block"'* ]]
+  [[ "$(echo garbage | W_AI_MCP_ON_DEMAND="" "$GUARD")" == *'"decision": "block"'* ]]
 }

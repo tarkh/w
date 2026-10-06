@@ -1,0 +1,16 @@
+[Desktop Entry]
+Name=W Terminal
+Name[ru]=Терминал W
+Comment=Terminal selected in W (w-term) — entry for xdg-terminal-exec
+Comment[ru]=Терминал, выбранный в W (w-term), — запись для xdg-terminal-exec
+# Hidden from menus: the launcher already lists the real terminals. No
+# X-TerminalArgDir on purpose — xdg-terminal-exec then cd's itself and w-term keeps
+# the working directory.
+Exec=w-term
+TryExec=w-term
+Icon=utilities-terminal
+Type=Application
+NoDisplay=true
+Categories=System;TerminalEmulator;
+X-TerminalArgExec=-e
+X-TerminalArgHold=--hold

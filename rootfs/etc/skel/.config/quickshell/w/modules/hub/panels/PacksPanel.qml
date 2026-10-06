@@ -40,6 +40,14 @@
 // (name TAB machine TAB user TAB desc) and parsing the pretty output with a regex was
 // one padding change away from breaking.
 //
+// An installed pack whose engine lives outside pacman (comfyui, invokeai) can be
+// behind upstream. That is NOT probed here — it is a network question, and w-update
+// check already asks it (cached 6 h, re-asked after every w-pack upgrade) into the
+// `packs` field of ~/.local/state/w/updates.json, the file the bar watches. Such a
+// row trades its check for the version move as a value badge plus an "Update"
+// button: `sudo w-pack upgrade <b>` in a held terminal, because the tail of that
+// output is the verdict (started on the new version, or rolled back and why).
+//
 // Loaded by the Hub via HubRegistry (Loader{source:"panels/PacksPanel.qml"}); as a
 // subdir file it is not a module type, so the shared hub components (HubRow,
 // HubSection) come in through `import qs.modules.hub`. Scrolls with the shared
@@ -148,6 +156,24 @@ Item {
         }
     }
 
+    // ── Engine upgrades (updates.json `packs`) — bundle → "0.3.1 → 0.3.2[, …]" ───────
+    property var upgrades: ({})
+    FileView {
+        id: updFile
+        path: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state"))
+              + "/w/updates.json"
+        watchChanges: true
+        onFileChanged: reload()
+        onLoaded: {
+            const m = {};
+            try {
+                for (const u of (JSON.parse(updFile.text() || "{}").packs || []))
+                    m[u.bundle] = (m[u.bundle] ? m[u.bundle] + ", " : "") + u.installed + " → " + u.target;
+            } catch (e) {}
+            root.upgrades = m;
+        }
+    }
+
     // ── Packs (w-pack list --porcelain) — catalogue read once on open ────────────────
     ListModel { id: packs }
     Process {
@@ -214,18 +240,24 @@ Item {
                     required property bool onMachine
                     required property bool installed
                     required property bool setUpForMe
+                    readonly property string upgrade: installed ? (root.upgrades[pname] || "") : ""
                     width: col.width
                     icon: "package-x-generic"; glyph: String.fromCodePoint(0xf03d3)  // nf-md-package_variant
                     label: pname
                     sublabel: installed || !onMachine ? pdesc : Strings.t("hub.packs.notSetUp")
-                    done: installed
-                    actionText: installed ? ""
+                    value: upgrade ? Strings.t("hub.packs.upgradeTo").replace("%v%", upgrade) : ""
+                    valueColor: Colors.accentInk
+                    done: installed && !upgrade
+                    actionText: upgrade ? Strings.t("hub.packs.upgrade")
+                              : installed ? ""
                               : onMachine ? Strings.t("hub.packs.setUp")
                                           : Strings.t("hub.install")
                     // Nothing to undo for a bundle that was never put on this machine.
                     removeText: onMachine ? Strings.t("hub.packs.remove") : ""
                     focused: root.focusIndex === index
-                    onActivated: root.runTerm(onMachine
+                    onActivated: root.runTerm(upgrade
+                        ? Term.execHold(["sudo", "w-pack", "upgrade", pname])
+                        : onMachine
                         ? Term.exec(["w-pack", "setup", pname])
                         : Term.exec(["sudo", "w-pack", "install", pname]))
                     onRemoveActivated: root.askRemove(pname, setUpForMe)

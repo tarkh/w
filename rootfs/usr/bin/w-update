@@ -14,6 +14,8 @@
 #   • check              non-root: count repo (checkupdates, own temp DB — never
 #                        `pacman -Sy`) + AUR (yay -Qua), detect a pending reboot,
 #                        write ~/.local/state/w/updates.json (the bar reads it).
+#                        Pack engines (w-pack outdated) ride along in their own
+#                        field, cached for 6 h — never counted, never upgraded here.
 #   • news               fetch + print the latest Arch news items (read before big
 #                        upgrades). Bound to the bar block's right-click.
 #   • interval [min]     show / set the user check-timer period via a systemd
@@ -35,6 +37,8 @@ TIMER_UNIT="w-update-check.timer"
 DROPIN_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/${TIMER_UNIT}.d"
 DROPIN="$DROPIN_DIR/interval.conf"
 DEFAULT_INTERVAL="60min"
+PACKS_CACHE="$STATE_DIR/packs-outdated.tsv"
+PACKS_TTL=21600                                  # 6 h between network probes
 
 err() { echo "w-update: $*" >&2; }
 
@@ -58,8 +62,10 @@ Commands:
                      then refresh status and offer a reboot if the kernel changed.
   plan [--porcelain] Preflight (read-only): what a repo upgrade would touch, pending
                      AUR, kernel/reboot, free disk. Backs the AI-driven upgrade.
-  check              Refresh the update count + reboot flag (non-root, quiet).
-                     Writes $STATE_FILE for the bar block.
+  check [--packs]    Refresh the update count + reboot flag (non-root, quiet).
+                     Writes $STATE_FILE for the bar block. Pack engine
+                     upgrades (w-pack outdated) are probed at most every 6 h;
+                     --packs probes them now.
   status             Print the last known update status + checker state.
   news               Show the latest Arch Linux news (read before upgrading).
   enable             Turn the periodic update checker ON for this user.
@@ -91,9 +97,45 @@ reboot_pending() {
     | awk -F'\t' 'NR > 1 && $5 == "yes" && $6 == "no" { found = 1 } END { exit !found }'
 }
 
+# ── pack engines: what `w-pack outdated` says, cached ─────────────────────────────
+# A pack engine (comfyui, invokeai) lives outside pacman and moves only through
+# `w-pack upgrade` — never through this tool, so it is reported beside the package
+# counts and never inside them. Asking means git ls-remote / PyPI, which an hourly
+# timer has no business doing every hour: the answer is kept in $PACKS_CACHE (only
+# the rows that differ, both sides known) and its mtime is the age. An unreadable
+# target is "offline", not "up to date" — the last answer stays and the next check
+# retries. `w-pack upgrade` forces a probe through w-update-refresh --packs, so a
+# finished upgrade does not keep advertising itself for six hours.
+packs_probe() {                                         # <force:0|1>
+  local rows tmp
+  command -v w-pack >/dev/null 2>&1 || return 0
+  if [[ "$1" -eq 0 && -f "$PACKS_CACHE" ]] \
+     && (( $(date +%s) - $(stat -c %Y "$PACKS_CACHE") < PACKS_TTL )); then return 0; fi
+  rows=$(w-pack outdated --porcelain 2>/dev/null) || return 0
+  awk -F'\t' '$4 == "unknown" { u = 1 } END { exit !u }' <<< "$rows" && return 0
+  mkdir -p "$STATE_DIR"
+  tmp=$(mktemp "$PACKS_CACHE.XXXXXX")
+  awk -F'\t' 'NF >= 4 && $3 != "unknown" && $3 != $4' <<< "$rows" > "$tmp"
+  mv -f "$tmp" "$PACKS_CACHE"
+}
+
+packs_json() {                                          # cache → JSON array body
+  [[ -r "$PACKS_CACHE" ]] || return 0
+  awk -F'\t' 'function s(x) { gsub(/[^A-Za-z0-9._+-]/, "", x); return x }
+    NF >= 4 { printf "%s{\"bundle\":\"%s\",\"component\":\"%s\",\"installed\":\"%s\",\"target\":\"%s\"}",
+              (n++ ? "," : ""), s($1), s($2), s($3), s($4) }' "$PACKS_CACHE"
+}
+
+packs_lines() {                                         # cache → "  b: comp X → Y"
+  [[ -r "$PACKS_CACHE" ]] || return 0
+  awk -F'\t' 'NF >= 4 { printf "  %s: %s %s \342\206\222 %s\n", $1, $2, $3, $4 }' "$PACKS_CACHE"
+}
+
 # ── check: count updates, detect reboot, write the status file (non-root) ────────
 cmd_check() {
-  local repo_out aur_out repo aur reboot tmp
+  local repo_out aur_out repo aur reboot tmp force=0
+  [[ "${1:-}" == --packs ]] && force=1
+  packs_probe "$force" || true
   # checkupdates: syncs a private temp DB (never the system DB) — no root, no
   # partial-upgrade risk. `|| true`: it exits 2 when there are simply no updates.
   repo_out=$(checkupdates 2>/dev/null) || true
@@ -104,8 +146,8 @@ cmd_check() {
 
   mkdir -p "$STATE_DIR"
   tmp=$(mktemp "$STATE_FILE.XXXXXX")
-  printf '{"repo":%d,"aur":%d,"rebootPending":%s,"ts":%d}\n' \
-    "$repo" "$aur" "$reboot" "$(date +%s)" > "$tmp"
+  printf '{"repo":%d,"aur":%d,"rebootPending":%s,"packs":[%s],"ts":%d}\n' \
+    "$repo" "$aur" "$reboot" "$(packs_json)" "$(date +%s)" > "$tmp"
   mv -f "$tmp" "$STATE_FILE"
 }
 
@@ -125,6 +167,10 @@ cmd_status() {
     reboot=$(grep -oP '"rebootPending":\s*\K(true|false)' "$STATE_FILE" 2>/dev/null || echo '?')
     echo "Updates — repo: $repo   AUR: $aur   reboot needed: $reboot"
     echo "Source : $STATE_FILE"
+    if [[ -s "$PACKS_CACHE" ]]; then
+      echo "Pack engine upgrades (not counted above — sudo w-pack upgrade):"
+      packs_lines
+    fi
   else
     echo "Updates — no status yet (run: w-update check)"
   fi
@@ -294,6 +340,15 @@ cmd_upgrade() {
 
   cmd_check || true   # refresh the bar immediately (count → 0, maybe reboot flag)
 
+  # Pack engines are a separate, explicit move (gigabytes, a stopped service) —
+  # say they are waiting, never start them from here.
+  if [[ -s "$PACKS_CACHE" ]]; then
+    echo
+    echo "Also available — pack engine upgrades (not part of this update):"
+    packs_lines
+    echo "Apply with: sudo w-pack upgrade   (or Hub → Packs)"
+  fi
+
   if reboot_pending; then
     echo
     echo "A new kernel was installed — the running kernel's modules are gone."
@@ -313,7 +368,7 @@ cmd_upgrade() {
 case "${1:-upgrade}" in
   upgrade|"")     cmd_upgrade                          ;;
   plan)           cmd_plan "${2:-}"                    ;;
-  check)          cmd_check                            ;;
+  check)          cmd_check "${2:-}"                   ;;
   status)         cmd_status                           ;;
   news)           cmd_news                             ;;
   enable)         cmd_enable                           ;;

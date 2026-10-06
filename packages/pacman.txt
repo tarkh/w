@@ -90,6 +90,8 @@ wiremix
 # Terminal
 ghostty
 foot
+# freedesktop default-terminal launcher; resolves to w-term via /etc/xdg/xdg-terminals.list
+xdg-terminal-exec
 
 # USB
 usbutils

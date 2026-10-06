@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+"""W guard — goose PreToolUse hook on extensionmanager__manage_extensions.
+
+W turns goose's extensionmanager on so pack MCP servers (mcp.d) load on demand
+(w-ai's goose_mcp_layer hands them over disabled). The same tool would also let
+the model switch on every platform extension W pins off in config.yaml — Code
+Mode, skills, chatrecall… — or switch off w-mcp itself. Goose re-adds every
+platform extension to its config on each read, so no config can hide them; this
+hook is the line instead: under w-ai only the launch's own on-demand servers
+(W_AI_MCP_ON_DEMAND, set by w-ai — possibly empty) may be turned on or off.
+
+A bare `goose` (no W_AI_MCP_ON_DEMAND in its environment) is not W's session and
+is let through untouched. Unreadable input under w-ai is refused (fail closed).
+Goose protocol: one JSON decision on stdout.
+"""
+import json
+import os
+import sys
+
+
+def decide(allow, reason=""):
+    print(json.dumps({"decision": "allow"} if allow else {"decision": "block", "reason": reason}))
+    sys.exit(0)
+
+
+if "W_AI_MCP_ON_DEMAND" not in os.environ:
+    decide(True)
+allowed = os.environ["W_AI_MCP_ON_DEMAND"].split()
+try:
+    name = (json.load(sys.stdin).get("tool_input") or {}).get("extension_name", "")
+except (ValueError, AttributeError):
+    name = ""
+if name in allowed:
+    decide(True)
+offer = ", ".join(allowed) if allowed else "none in this session"
+decide(False, f"W policy: only the W pack servers ({offer}) load on demand; "
+              f"'{name}' is pinned by W's goose preset.")

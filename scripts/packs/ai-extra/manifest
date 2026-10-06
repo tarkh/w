@@ -1,0 +1,10 @@
+# ai-extra bundle — config ownership (deploy.sh SDK + w-reset).
+# TSV: <path>	<class>. All rows here are absolute → config/root<path> (always
+# managed).
+#
+# Deliberately NOT here: ollama.service.d/10-w.conf — RENDERED by setup.sh from
+# the `ai-models` subsystem on install/refresh (a shipped copy would be a second
+# truth fighting w-conf).
+
+# The shared `w-ai` model-store group.
+/usr/lib/sysusers.d/w-ai-extra.conf	managed

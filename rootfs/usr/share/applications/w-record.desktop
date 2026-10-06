@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Screen Recording
+Name[ru]=Запись экрана
+Comment=Select a region and record it; launch again to stop
+Comment[ru]=Выделить область и записать её; повторный запуск останавливает запись
+Exec=w-record region
+Icon=camera-video
+Type=Application
+Categories=AudioVideo;Video;
+Keywords=record;recording;screen recording;screencast;video;capture;region;area;
+Keywords[ru]=запись экрана;запись;скринкаст;видео;экран;область;захват;record;recording;screen recording;screencast;video;capture;region;area;

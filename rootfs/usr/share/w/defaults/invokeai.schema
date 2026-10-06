@@ -10,3 +10,4 @@ ROOT	system
 LISTEN	system
 PORT	system
 GPU	system
+VERSION	system

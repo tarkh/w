@@ -27,7 +27,8 @@
 #     pre.sh                         # root step BEFORE packages (repos, hardware-variant pkgs)
 #     pkgs.txt                       # packages (repo + AUR), one per line, # comments
 #     setup.sh                       # post-install tuning (idempotent), like an apply module
-#     manifest                       # config ownership (TSV: <path>\t<class>)
+#     outdated.sh + upgrade.sh       # a payload pacman does not own (see "outdated / upgrade")
+#     manifest                      # config ownership (TSV: <path>\t<class>)
 #     config/skel/<home-rel>         # source for home-relative manifest paths
 #     config/root/<abs>              # source for absolute (system) manifest paths
 #     wstyle/<band>-<token>/module.sh# w-style axis (deployed to w-style modules.d/)
@@ -109,7 +110,7 @@ HYPR_RULES_DIR="${W_PACKS_HYPR_RULES_DIR:-/usr/share/w/hypr/rules.d}"  # Hyprlan
 # Command-line options, defaulted here rather than at the dispatch block below so
 # the functions that read them are also correct when this file is SOURCED (the
 # unit tests drive remove directly, never through the parser).
-ARG_USER=""; PORCELAIN=0; WITH_PACKAGES=0; SHOW_ALL=0
+ARG_USER=""; PORCELAIN=0; WITH_PACKAGES=0; SHOW_ALL=0; ASSUME_YES=0; FORCE=0
 
 err()  { echo -e "\033[1;31mw-pack:\033[0m $*" >&2; }
 info() { echo -e "\033[1;35m==>\033[0m $*"; }
@@ -145,7 +146,7 @@ source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
 usage() {
   if w_help w-pack; then return 0; fi
   cat <<EOF
-Usage: w-pack <command> [bundle] [--user <name>] [--porcelain] [--packages]
+Usage: w-pack <command> [bundle] [--user <name>] [--porcelain] [--packages] [--yes] [--force]
 
 Info: Install and inspect optional W software bundles (packs).
 
@@ -166,6 +167,10 @@ Commands:
   unsetup <bundle>     Undo only YOUR account's layer, leaving the machine and
                        everyone else untouched (no root, like \`setup\`)
   status [<bundle>]    Show what is installed (all, or one bundle)
+  outdated [<bundle>]  Compare the software a bundle installs OUTSIDE pacman (an
+                       AI engine, say) with the version it should be at
+  upgrade [<bundle>]   Move that software to the version \`outdated\` names, after
+                       showing the plan; rolls back by itself if it fails
   help                 Show this help
 
 Options:
@@ -173,15 +178,19 @@ Options:
                        user, or SUDO_USER / the primary uid-1000 user)
   --porcelain          Machine-readable \`list\`, one bundle per line:
                        <name> TAB <machine:yes|no> TAB <user:yes|no|n/a> TAB <desc>
+                       and \`outdated\`: <bundle> TAB <component> TAB <installed> TAB <target>
   --all                With \`list\`: also show bundles the catalogue does not
                        offer (AUDIENCE=maintainer — tooling for developing W)
   --packages           With \`remove\`: also uninstall the bundle's packages, minus
                        any another installed bundle still lists. Without it the
                        exact \`pacman -Rns\` line is only printed
+  --yes                With \`upgrade\`: do not ask before going ahead
+  --force              With \`upgrade\`: go ahead even while the engine is busy
+                       (a generation in progress is cut off)
 
 Notes:
-  install, refresh and remove require root (packages + system paths); setup and
-  unsetup do not — they write only your own home.
+  install, refresh, upgrade and remove require root (packages + system paths);
+  setup, unsetup and outdated do not.
   Bundles are self-contained under $PACKS_DIR; machine state is recorded in
   $STATE, your own layer in ~/$USER_STATE_REL.
   A bundle may declare AUDIENCE=maintainer: it is not a product but the tooling
@@ -207,6 +216,14 @@ Notes:
   gigabytes (model stores, image stores, toolchains) are only ever named. To put
   a bundle's config back to the W default WITHOUT removing it, use
   \`w-reset <bundle>\`.
+  upgrade is the one command that moves what pacman cannot see — a bundle's own
+  engine, installed from upstream into its own tree. Neither \`w-update\` nor
+  refresh ever does that: an engine update downloads gigabytes and can break a
+  working setup, so it happens only when you ask. The target is the newest stable
+  upstream release, unless the bundle's VERSION key holds it at one version
+  (\`sudo w-conf set comfyui VERSION 0.38.2\`). The engine is stopped, a rollback
+  point is recorded, the new version must start and answer, or the previous one
+  is put back.
 
 Exit codes:
   0  Success
@@ -220,6 +237,8 @@ Examples:
   w-pack setup ai-extra              # catch my own account up, no sudo
   sudo w-pack refresh
   w-pack status
+  w-pack outdated                    # what has a newer version upstream
+  sudo w-pack upgrade comfyui        # show the plan, ask, upgrade
   sudo w-pack remove containers      # unwire it; podman stays installed
   sudo w-pack remove dev --packages  # ...and take its packages too
   w-pack unsetup dev                 # just my own account, no sudo
@@ -783,6 +802,117 @@ refresh_bundle() {
   done < <(w_home_users)
 }
 
+# ── outdated / upgrade ───────────────────────────────────────────────────────
+# Some bundles install their real payload from upstream, not from pacman: an AI
+# engine cloned and pip-installed into its own tree under a service account. No
+# package update reaches it, and refresh deliberately never touches it — refresh
+# is what `w-sync update` calls, and an engine update downloads gigabytes and can
+# break a working setup. So moving it is its own verb, taken only on request.
+#
+# A bundle opts in with a DECLARED pair, like setup/teardown (check.sh refuses
+# one half without the other):
+#   outdated.sh  rootless, read-only. One TSV row per component it upgrades:
+#                <component> TAB <installed> TAB <target> [TAB <note>]
+#                `unknown` where a version cannot be read (no access, offline).
+#                The target already honours the bundle's own VERSION hold.
+#                PACK_PLAN=1 (set by upgrade, as root) asks for the note — what
+#                the move would cost, e.g. a torch change; may take seconds.
+#   upgrade.sh   root. Gets the confirmed rows in PACK_OUTDATED and PACK_FORCE.
+#                Owns everything bundle-specific: stopping its service, the
+#                rollback point, the move, proving the new version starts, and
+#                putting the old one back when it does not. Non-zero = failed.
+# w-pack owns only the shape: which bundles, the plan, the one question.
+bundle_upgradable() { [[ -f "$(bundle_dir "$1")/outdated.sh" ]]; }
+
+bundle_outdated() {                                     # <bundle> → rows on stdout
+  local bdir; bdir="$(bundle_dir "$1")"
+  BUNDLE_NAME="$1" BUNDLE_DIR="$bdir" bash "$bdir/outdated.sh"
+}
+
+# The bundles a command acts on, into TARGETS: the named one (refused with the
+# reason if it cannot be upgraded at all), or every installed bundle that
+# declares the pair. Filled in place, not echoed — a refusal has to exit w-pack,
+# not a subshell.
+TARGETS=()
+upgrade_targets() {                                     # [<bundle>]
+  local name="${1:-}"
+  TARGETS=()
+  if [[ -n "$name" ]]; then
+    bundle_exists "$name" || { err "unknown bundle: $name (see 'w-pack list')"; exit 1; }
+    is_installed "$name"  || { err "'$name' is not installed"; exit 1; }
+    bundle_upgradable "$name" \
+      || { err "'$name' installs nothing outside pacman — its packages update with w-update"; exit 1; }
+    TARGETS=("$name"); return 0
+  fi
+  while read -r name; do
+    [[ -n "$name" ]] && is_installed "$name" && bundle_upgradable "$name" && TARGETS+=("$name")
+  done < <(list_bundles)
+  return 0
+}
+
+# w-update caches what `outdated` says for the bar's status file (6 h — the
+# target is a network question). An upgrade or a removal makes that answer wrong,
+# so every live session is asked again now instead of advertising a stale move.
+refresh_update_status() {
+  [[ -x /usr/lib/w/w-update-refresh ]] || return 0
+  /usr/lib/w/w-update-refresh --packs || true
+}
+
+cmd_outdated() {
+  require_jq
+  local b comp have want any=0
+  upgrade_targets "${1:-}"
+  for b in "${TARGETS[@]}"; do
+    while IFS=$'\t' read -r comp have want _; do
+      [[ -n "$comp" ]] || continue
+      any=1
+      if [[ $PORCELAIN -eq 1 ]]; then printf '%s\t%s\t%s\t%s\n' "$b" "$comp" "$have" "$want"; continue; fi
+      if   [[ "$want" == unknown ]]; then printf '  %-10s %-10s %s, target unknown (offline?)\n' "$b" "$comp" "$have"
+      elif [[ "$have" == "$want" ]]; then printf '  %-10s %-10s %s — up to date\n' "$b" "$comp" "$have"
+      else printf '  %-10s %-10s %s → %s\n' "$b" "$comp" "$have" "$want"; fi
+    done < <(bundle_outdated "$b")
+  done
+  [[ $any -eq 1 || $PORCELAIN -eq 1 ]] || info "No installed bundle carries software outside pacman."
+}
+
+cmd_upgrade() {
+  require_root "upgrade"
+  require_jq
+  local -a queue=(); local -A plan=()
+  local b rows comp have want note ans failed=0
+  upgrade_targets "${1:-}"
+  for b in "${TARGETS[@]}"; do
+    rows="$(PACK_PLAN=1 bundle_outdated "$b")"
+    while IFS=$'\t' read -r comp have want note; do
+      [[ -n "$comp" ]] || continue
+      if [[ "$have" == unknown || "$want" == unknown ]]; then
+        warn "$b: cannot tell where $comp stands (installed $have, target $want) — offline, or not installed yet?"
+      elif [[ "$have" == "$want" ]]; then
+        info "$b: $comp $have is up to date."
+      else
+        plan[$b]+="$comp"$'\t'"$have"$'\t'"$want"$'\n'
+        echo "  $b: $comp $have → $want${note:+  ($note)}"
+      fi
+    done <<< "$rows"
+    [[ -n "${plan[$b]:-}" ]] && queue+=("$b")
+  done
+  if [[ ${#queue[@]} -eq 0 ]]; then info "Nothing to upgrade."; return 0; fi
+  if [[ $ASSUME_YES -ne 1 ]]; then
+    [[ -t 0 ]] || { err "no terminal to confirm on — re-run with --yes"; exit 1; }
+    read -r -p "Upgrade now? The engine is stopped while it moves. [y/N] " ans
+    [[ "$ans" == [yY]* ]] || { info "Nothing changed."; return 0; }
+  fi
+  for b in "${queue[@]}"; do
+    info "Upgrading '$b'..."
+    BUNDLE_NAME="$b" BUNDLE_DIR="$(bundle_dir "$b")" PACK_OUTDATED="${plan[$b]}" PACK_FORCE="$FORCE" \
+      bash "$(bundle_dir "$b")/upgrade.sh" \
+      || { err "upgrade of '$b' did not go through — see above"; failed=1; }
+  done
+  refresh_update_status
+  [[ $failed -eq 0 ]] || exit 1
+  info "Done."
+}
+
 # ── remove / unsetup ─────────────────────────────────────────────────────────
 # The mirror of install, in reverse, with the subject narrowed to W's own wiring
 # (see the header). The order is the install pipeline read backwards, and it is
@@ -1020,6 +1150,7 @@ cmd_remove() {
   w_backup_finalize
   w_backup_summary
   remove_packages "$name"
+  if bundle_upgradable "$name"; then refresh_update_status; fi
   if [[ ${#KEPT_USER_FILES[@]} -gt 0 ]]; then
     echo
     echo "  Left in place (yours, not W's — the software they configure may still"
@@ -1177,6 +1308,8 @@ while [[ $# -gt 0 ]]; do
     --porcelain) PORCELAIN=1; shift ;;
     --all) SHOW_ALL=1; shift ;;
     --packages) WITH_PACKAGES=1; shift ;;
+    --yes) ASSUME_YES=1; shift ;;
+    --force) FORCE=1; shift ;;
     *) POS+=("$1"); shift ;;
   esac
 done
@@ -1190,6 +1323,8 @@ case "${1:-}" in
   remove)         cmd_remove "${2:-}" ;;
   unsetup)        cmd_unsetup "${2:-}" ;;
   status)         cmd_status "${2:-}" ;;
+  outdated)       cmd_outdated "${2:-}" ;;
+  upgrade)        cmd_upgrade "${2:-}" ;;
   help|-h|--help) usage ;;
   "")             usage >&2; exit 2 ;;
   *)              err "unknown command: $1"; usage >&2; exit 2 ;;

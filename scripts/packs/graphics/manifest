@@ -46,3 +46,8 @@
 .config/kritarc	user
 .config/mcpinkscape.conf	user
 /usr/share/w/userdirs/hooks.d/mcpinkscape	managed
+
+# Window rule (Hyprland drop-in, require()d by hyprland.lua with a wildcard):
+# sizes Krita's Qt file dialogs, which open at ~900x420 and remember nothing.
+# w-pack reloads running sessions on install/remove.
+/usr/share/w/hypr/rules.d/graphics.lua	managed

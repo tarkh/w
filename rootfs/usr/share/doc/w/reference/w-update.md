@@ -19,8 +19,10 @@ Commands:
                      then refresh status and offer a reboot if the kernel changed.
   plan [--porcelain] Preflight (read-only): what a repo upgrade would touch, pending
                      AUR, kernel/reboot, free disk. Backs the AI-driven upgrade.
-  check              Refresh the update count + reboot flag (non-root, quiet).
-                     Writes $STATE_FILE for the bar block.
+  check [--packs]    Refresh the update count + reboot flag (non-root, quiet).
+                     Writes $STATE_FILE for the bar block. Pack engine
+                     upgrades (w-pack outdated) are probed at most every 6 h;
+                     --packs probes them now.
   status             Print the last known update status + checker state.
   news               Show the latest Arch Linux news (read before upgrading).
   enable             Turn the periodic update checker ON for this user.

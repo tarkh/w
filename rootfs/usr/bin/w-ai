@@ -198,14 +198,17 @@ host_field() {
 #             ran `w-pack setup <bundle>` must simply not see it — a missing
 #             REQUIRES skips the drop-in silently rather than handing the host
 #             a command that dies at spawn.
+#   DESCRIPTION  one line on what the server drives — the catalog entry a host
+#             that loads servers on demand (goose) shows the model in place of
+#             the tool schemas themselves.
 # Name = file stem, `^[a-z0-9-]+$` (it becomes the server name in every host's
 # config — tool ids derive from it). The user overlay wins by file name.
 # Fields are joined with US (\x1f), not TAB: tab is IFS whitespace, so `read`
 # would collapse the empty ARGS of a server that takes none and shift `ok` into
 # the args column — the VM run of the graphics bundle showed exactly that.
 MCP_FS=$'\x1f'
-mcp_dropins() {                               # [all] → name<US>cmd<US>args<US>ok|missing|invalid
-  local want="${1:-active}" root f name cmd args req state seen=$'\n'
+mcp_dropins() {                               # [all] → name<US>cmd<US>args<US>ok|missing|invalid<US>description
+  local want="${1:-active}" root f name cmd args req state desc seen=$'\n'
   for root in "$USER_ROOT" "$SYS_ROOT"; do
     for f in "$root"/mcp.d/*.conf; do
       [[ -f "$f" ]] || continue
@@ -224,7 +227,8 @@ mcp_dropins() {                               # [all] → name<US>cmd<US>args<US
       else command -v "$req" >/dev/null 2>&1 || state=missing
       fi
       [[ "$want" == all || "$state" == ok ]] || continue
-      printf '%s%s%s%s%s%s%s\n' "$name" "$MCP_FS" "$cmd" "$MCP_FS" "$args" "$MCP_FS" "$state"
+      desc="$(conf_field "$f" DESCRIPTION)"
+      printf '%s\n' "$name$MCP_FS$cmd$MCP_FS$args$MCP_FS$state$MCP_FS${desc//$'\n'/ }"
     done
   done
 }
@@ -247,7 +251,7 @@ with open(base, encoding="utf-8") as fh:
     cfg = json.load(fh)
 servers = cfg.setdefault("mcpServers", {})
 for row in os.environ["W_MCP_ROWS"].splitlines():
-    name, cmd, args, _state = row.split("\x1f")
+    name, cmd, args = row.split("\x1f")[:3]
     servers[name] = {"command": cmd, "args": args.split()}
 with open(out, "w", encoding="utf-8") as fh:
     json.dump(cfg, fh, indent=2)
@@ -273,7 +277,7 @@ cfg = {"mcp": {"w-mcp": {"type": "local", "command": ["w-mcp"], "enabled": True}
 for row in os.environ.get("W_MCP_ROWS", "").splitlines():
     if not row:
         continue
-    name, cmd, args, _state = row.split("\x1f")
+    name, cmd, args = row.split("\x1f")[:3]
     cfg["mcp"][name] = {"type": "local", "command": [cmd] + args.split(), "enabled": True}
     cfg["permission"]["mcp"][f"{name}_*"] = "allow"
 agents_md = os.environ.get("W_AGENTS_MD", "")
@@ -283,14 +287,61 @@ print(json.dumps(cfg))
 EOF
 }
 
-# Goose and Codex take the same list as launch flags — see launch_host.
-goose_mcp_args() {                            # → --with-extension "<cmd> <args>" …
-  local n c a _
-  while IFS="$MCP_FS" read -r n c a _; do
-    [[ -n "$n" ]] || continue
-    printf -- '--with-extension\n%s\n' "$c${a:+ $a}"
-  done < <(mcp_dropins)
+# Goose gets the pack servers as a config LAYER, not as launch flags: a file
+# under the runtime dir handed over in GOOSE_ADDITIONAL_CONFIG_FILES, which
+# goose merges below ~/.config/goose/config.yaml (per extension key) and never
+# writes back. Every server sits there `enabled: false` with its DESCRIPTION, so
+# a request carries none of its tool schemas (blender alone is ~44 KB) until
+# the model asks for it: goose's extensionmanager lists disabled extensions
+# (search_available_extensions) and turns one on for the session
+# (manage_extensions), and the agent loop re-reads the tool list within the
+# same turn. --with-extension would load every server eagerly, and name it
+# after its command (`env__…`, `python3__…`) rather than the drop-in.
+# Written as JSON — YAML's own subset, and no hand-escaping. Echoes the path;
+# nothing (and no file) when no drop-in is active.
+goose_mcp_layer() {
+  local rows dir out
+  rows="$(mcp_dropins)"
+  [[ -n "$rows" ]] || return 0
+  dir="${XDG_RUNTIME_DIR:-$CACHE_DIR}/w-ai"; out="$dir/goose.yaml"
+  if install -d -m700 "$dir" && W_MCP_ROWS="$rows" python3 - "$out" <<'EOF'
+import json, os, sys
+ext = {}
+for row in os.environ["W_MCP_ROWS"].splitlines():
+    name, cmd, args, _state, desc = row.split("\x1f")
+    ext[name] = {"enabled": False, "type": "stdio", "name": name,
+                 "description": desc or f"MCP server '{name}' from a W-Pack",
+                 "cmd": cmd, "args": args.split(), "envs": {}, "timeout": 300}
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    json.dump({"extensions": ext}, fh, indent=2)
+EOF
+  then echo "$out"; else err "could not write the goose mcp.d layer — pack servers unavailable this launch"; fi
 }
+
+# The on-demand servers the W guard plugin lets goose's extensionmanager touch
+# (hosts/goose/plugins/w-guard): exactly this launch's active drop-ins.
+goose_mcp_names() {
+  local n names=""
+  while IFS="$MCP_FS" read -r n _; do
+    [[ -n "$n" ]] && names+="${names:+ }$n"
+  done < <(mcp_dropins)
+  echo "$names"
+}
+
+# One line naming those servers, for goose's per-turn context (the `tom`
+# platform extension, GOOSE_MOIM_MESSAGE_TEXT): a server that is off has no
+# tools for the model to notice, and in a test on hardware a model that skipped the
+# pack's skill went digging through /proc and the add-on's socket instead of
+# loading it. ~300 bytes a turn against the schemas' tens of KB.
+goose_mcp_hint() {
+  local n d hint=""
+  while IFS="$MCP_FS" read -r n _ _ _ d; do
+    [[ -n "$n" ]] && hint+="${hint:+; }$n${d:+ — $d}"
+  done < <(mcp_dropins)
+  [[ -n "$hint" ]] && echo "W pack MCP servers, off until needed — before working in one of these apps, load its server with extensionmanager's manage_extensions (action enable): $hint."
+}
+
+# Codex takes the same list as launch flags — see launch_host.
 
 # Pack MCP servers (mcp.d), the same way: dotted keys, TOML values. Each server
 # also gets Codex's per-server "explicitly trust" approval level — the same
@@ -623,6 +674,79 @@ _goose_seed_permissions() {
   mv -f "$tmp" "$dst"
 }
 
+# Exit 0 when <name> under `extensions:` of a goose config.yaml has
+# `enabled: true` — the same flat-shape scan as _goose_ext_keys.
+_goose_ext_enabled() {                        # <config.yaml> <name>
+  awk -v want="  $2:" '
+    /^extensions:/ { inext=1; next }
+    inext && /^[^ #]/ { inext=0 }
+    inext && /^  [A-Za-z0-9_-]+:/ { cur=($0 == want) }
+    inext && cur && /^    enabled: *true *$/ { found=1 }
+    END { exit !found }
+  ' "$1" 2>/dev/null
+}
+
+# The W guard plugin (hosts/goose/plugins/w-guard — see its script) and the
+# config.yaml it needs, for every account rather than only fresh seeds:
+#   - a symlink into goose's one user plugin dir (~/.agents/plugins; goose has
+#     no flag or env for another), so a W update reaches it in place;
+#   - its `plugins:` entry, written HERE: a plugin goose finds unlisted makes
+#     goose rewrite the whole config.yaml, comments of the W preset included;
+#   - configs seeded before on-demand pack servers: the preset's old
+#     `extensionmanager: false` block, only when byte-identical to what W
+#     shipped (a hand edit stays the user's call — launch_host then warns), and
+#     the goose 1.50 `scheduler` pin when the key is absent.
+# Text edits, never a YAML round-trip (that would drop every comment); one
+# atomic write, and nothing at all on unexpected input.
+_goose_seed_guard() {
+  local src link="$HOME/.agents/plugins/w-guard" cfg="$HOME/.config/goose/config.yaml"
+  src="$(preset goose/plugins/w-guard)" || return 0
+  if [[ -e "$link" && ! -L "$link" ]]; then
+    err "$link is not W's symlink — leaving it; pack MCP servers load unguarded"
+  else
+    install -d -m700 "$(dirname "$link")" && ln -sfn "$src" "$link" || return 0
+  fi
+  [[ -f "$cfg" ]] || return 0
+  python3 - "$cfg" "$link" <<'EOF' || err "could not update $cfg for on-demand MCP servers"
+import os, re, sys
+path, plugin = sys.argv[1:3]
+text = orig = open(path, encoding="utf-8").read()
+old_em = ("  # Lets the model itself discover/enable/disable extensions at runtime — would\n"
+          "  # let it silently re-enable anything we pin off below, defeating the point of\n"
+          "  # this whole block. Off.\n"
+          "  extensionmanager:\n    enabled: false\n")
+new_em = ("  # Lets the model find extensions that are configured but off and turn one on\n"
+          "  # for the session. On: it is how W's pack MCP servers (mcp.d) load on demand —\n"
+          "  # w-ai hands them over disabled (goose_mcp_layer), so a request carries none of\n"
+          "  # their tool schemas until one is needed. Under w-ai the W guard plugin\n"
+          "  # (~/.agents/plugins/w-guard) confines it to exactly those servers: turning on\n"
+          "  # anything pinned off below, or off w-mcp/developer, is refused.\n"
+          "  extensionmanager:\n    enabled: true\n")
+text = text.replace(old_em, new_em)
+ext = re.search(r"^extensions:\n(?:(?: .*)?\n)*", text, re.M)
+if ext and not re.search(r"^  scheduler:", ext.group(0), re.M):
+    block = ("\n  # goose 1.50, on upstream by default: host-local scheduled recipe runs. W\n"
+             "  # schedules through its own systemd timers (w_schedule_*). Off.\n"
+             "  scheduler:\n    enabled: false\n    type: platform\n    name: scheduler\n"
+             "    description: Create and manage scheduled recipe execution\n"
+             "    display_name: Scheduler\n    bundled: true\n")
+    rest = text[ext.end():]
+    text = text[:ext.start()] + ext.group(0).rstrip("\n") + "\n" + block + ("\n" + rest if rest else "")
+if not re.search(rf"^  {re.escape(plugin)}:", text, re.M):
+    entry = f"  {plugin}:\n    enabled: true\n"
+    if re.search(r"^plugins:[ \t]*\n", text, re.M):
+        text = re.sub(r"^plugins:[ \t]*\n", lambda m: m.group(0) + entry, text, count=1, flags=re.M)
+    else:
+        text = text.rstrip("\n") + "\n\n# W guard plugin (see w-ai _goose_seed_guard).\nplugins:\n" + entry
+if text != orig:
+    tmp = path + ".w-ai.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+EOF
+}
+
 # Seed the goose config + hints from the W preset on first run. copy-if-absent so
 # user edits are never overwritten. Done at runtime (per-user) — apply.sh runs as
 # root and cannot seed every user's home.
@@ -646,6 +770,7 @@ seed_goose() {
     printf '\n# W default: telemetry off — re-enable any time with `goose configure`.\nGOOSE_TELEMETRY_ENABLED: false\n' >> "$cfg"
   fi
   _goose_seed_permissions
+  _goose_seed_guard
   # Warn (never auto-fix) if the user's config carries an extension key this
   # preset doesn't pin — e.g. upstream goose reseeded something new on its own,
   # or the file predates a preset update. See ai-integration.md §4 (Этап 2).
@@ -935,14 +1060,25 @@ launch_host() {
       [[ -n "${MODE:-}" ]]  && export GOOSE_MODE="$MODE"
       export_provider_key "$provider"
       [[ "$provider" == ollama && -n "${OLLAMA_HOST:-}" ]] && export OLLAMA_HOST
-      # Pack MCP servers (mcp.d) ride --with-extension, repeatable, for this
-      # launch only — config.yaml keeps the pinned W preset, seed_goose's
+      # Pack MCP servers (mcp.d) load on demand, for this launch only: a
+      # config layer with each one disabled (goose_mcp_layer) + the guard's
+      # allow-list — config.yaml keeps the pinned W preset, seed_goose's
       # unknown-extension warning stays meaningful.
-      local -a ext=()
-      mapfile -t ext < <(goose_mcp_args)
+      local layer
+      layer="$(goose_mcp_layer)"
+      if [[ -n "$layer" ]]; then
+        export GOOSE_ADDITIONAL_CONFIG_FILES="$layer${GOOSE_ADDITIONAL_CONFIG_FILES:+:$GOOSE_ADDITIONAL_CONFIG_FILES}"
+        _goose_ext_enabled "$HOME/.config/goose/config.yaml" extensionmanager \
+          || err "extensionmanager is off in ~/.config/goose/config.yaml — pack MCP servers ($(goose_mcp_names)) cannot be loaded this session"
+        if [[ -z "${GOOSE_MOIM_MESSAGE_TEXT:-}" ]]; then
+          export GOOSE_MOIM_MESSAGE_TEXT; GOOSE_MOIM_MESSAGE_TEXT="$(goose_mcp_hint)"
+        fi
+      fi
+      export W_AI_MCP_ON_DEMAND
+      W_AI_MCP_ON_DEMAND="$(goose_mcp_names)"
       echo "w-ai: host=$host provider=$provider model=${MODEL:-default} mode=${MODE:-default}"
-      [[ -n "$seed" ]] && exec goose run -t "$seed" --interactive "${ext[@]}"
-      exec goose session "${ext[@]}"
+      [[ -n "$seed" ]] && exec goose run -t "$seed" --interactive
+      exec goose session
       ;;
     claude)
       need_bin claude "claude is not installed — run: w-ai host install claude"
@@ -1267,7 +1403,7 @@ cmd_status() {
   fi
   # Pack servers (mcp.d): every drop-in with its state for THIS account.
   local n state extra=""
-  while IFS="$MCP_FS" read -r n _ _ state; do
+  while IFS="$MCP_FS" read -r n _ _ state _; do
     [[ -n "$n" ]] || continue
     extra+="${extra:+, }$n$([[ "$state" == ok ]] || echo " ($state)")"
   done < <(mcp_dropins all)

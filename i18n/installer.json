@@ -234,6 +234,10 @@
     "en": "Graphics and design: GIMP, Inkscape, Krita, G'MIC filters, AI assistant bridges",
     "ru": "Графика и дизайн: GIMP, Inkscape, Krita, фильтры G'MIC, мосты для AI-ассистента"
   },
+  "p_3d": {
+    "en": "3D creation: Blender with an AI assistant bridge, themed by W",
+    "ru": "3D-графика: Blender с мостом для AI-ассистента, в теме W"
+  },
   "p_virt": {
     "en": "Desktop virtualization: libvirt + QEMU/KVM, virt-manager, GNOME Boxes",
     "ru": "Десктопная виртуализация: libvirt + QEMU/KVM, virt-manager, GNOME Boxes"

@@ -2,16 +2,17 @@
 name: w-packs
 description: >-
   Optional software bundles (W-Packs) — opt-in add-ons by direction (containers,
-  dev, office, graphics, gaming, …) installed on top of the base system with `w-pack`. Load this when
+  dev, office, graphics, 3d, gaming, …) installed on top of the base system with `w-pack`. Load this when
   the user wants to see, install, or reason about optional bundles. Operating an
   already-installed bundle is covered by that bundle's own skill (skills/<bundle>).
 sources:
   - path: .claude/library/packs.md
-    sha256: d5e460b0e9aff90d7278ea965859e3e9b53089ba9ce6606881850e52d5d93526
+    sha256: 112e2d5e040e11d34d90c8906e86e234c9f68e3d63b3c7d7b00c2aa97de82e62
 tools:
   - w_pack_list
   - w_pack_status
   - w_pack_install
+  - w_pack_upgrade
 ---
 
 # W-Packs
@@ -40,6 +41,8 @@ w-pack status [<bundle>]     # what is installed (all, or one bundle)
 sudo w-pack install <bundle> # install: packages + config + w-style + setup
 w-pack setup <bundle>        # set an installed bundle up for MY account (no sudo)
 sudo w-pack refresh [<b>]    # re-apply INSTALLED bundles, no package operations
+w-pack outdated [<b>]        # engines installed OUTSIDE pacman vs their target version
+sudo w-pack upgrade [<b>]    # move them: plan, one question, auto-rollback on failure
 sudo w-pack remove <bundle>  # undo W's wiring for it (packages stay by default)
 w-pack unsetup <bundle>      # undo only MY account's layer (no sudo)
 ```
@@ -177,7 +180,8 @@ software it installs, registered through the `mcp.d` channel
 launches, so those tools simply appear in your session next to `w_*`. The
 `graphics` bundle is the first: an Inkscape server (`mcpinkscape`, typed SVG
 drawing/export tools) and a GIMP bridge (`gimpmcp`, Python inside a running
-GIMP + viewport screenshots). Two rules follow from how they are installed:
+GIMP + viewport screenshots); `3d` adds a Blender server (`mcp-for-blender`,
+bpy code inside a running Blender, safe mode on). Two rules follow from how they are installed:
 
 - They are **per account** (a uv tool in `~/.local/bin`, a plug-in in
   `~/.config`), so a server is offered only when its files exist for the
@@ -200,6 +204,9 @@ When `w-mcp` is connected:
   prompt and is audited, like every Tier-2 action. It can be switched off in
   `ai.conf` (`W_AI_TOOL_PACKS`); if disabled, tell the user which switch to flip
   rather than working around it.
+- `w_pack_upgrade` — move a bundle's engine installed outside pacman (comfyui,
+  invokeai). `plan` is read-only; `apply` is **privileged** (polkit, audited) and
+  sits behind the same `W_AI_TOOL_PACKS` switch. Procedure below.
 
 There is deliberately **no MCP tool for `w-pack setup`** or `unsetup`: both are
 rootless and touch only the caller's own home, so they need no OS-enforced
@@ -227,6 +234,53 @@ how a fix to a bundle's setup reaches machines that installed it months ago. Use
 use `setup` to bring **a new account** onto an installed bundle; use `install` only to
 add a bundle to the machine or to deliberately re-pull its packages.
 
+**`upgrade` is the only thing that moves an engine.** Some bundles (comfyui,
+invokeai) install their engine from upstream into their own tree; no package update
+reaches it and `refresh` never rebuilds it. `w-pack outdated` (no root) shows
+installed vs target; `sudo w-pack upgrade <b>` prints the plan, asks once, then the
+bundle's own upgrade stops the service (refusing while it is generating, unless
+`--force`), records a rollback point, moves, proves the new version starts and
+otherwise restores the old one — leaving the service running or stopped as it was.
+The target is the newest stable upstream release unless the bundle's `VERSION`
+w-conf key holds one (`sudo w-conf set comfyui VERSION 0.37.2` — also the way back).
+
+**Where a pending engine upgrade shows up — and where it does not.** It is never
+part of a system update: `w-update` does not count it (the bar's number is
+packages only) and never runs it. The periodic `w-update check` asks
+`w-pack outdated` at most every 6 hours (a network question) and keeps the answer
+beside the package counts: `w-update status` (and so `w_updates_check`) prints a
+"Pack engine upgrades" line, `w-update` ends a system upgrade by naming them, and
+**Hub → Packs** shows the version move on the bundle's row with an Update button
+(a terminal running `sudo w-pack upgrade <b>`). A finished upgrade re-asks at once,
+so a stale "update available" there means the check has not run since — use
+`w_pack_upgrade('plan')`, which always asks live.
+
+**Upgrading an engine for the user** (`w_pack_upgrade`):
+
+1. **Plan.** `w_pack_upgrade('plan')` (or with the bundle). Rows read
+   `bundle component installed → target`; "up to date" = nothing to do; "target
+   unknown" = upstream unreachable (offline) — say so, do not guess. A version the
+   account cannot read is not an upgrade signal either.
+2. **Tell the user the cost and get an explicit yes.** The engine service is
+   **stopped** for the move (minutes; a generation in progress is not allowed —
+   the upgrade refuses while the queue is busy), it downloads from upstream, and
+   for invokeai a release may bring a **new torch — a multi-GB download** (the
+   plan from the root side names it; the apply output starts with that line).
+   Mention the way back: hold the old version with `VERSION`. Load the bundle's
+   own skill for its specifics (custom nodes, database) before answering
+   follow-ups.
+3. **Apply** — `w_pack_upgrade('apply', '<bundle>')`, one bundle per call, only
+   after the yes. The user approves the polkit prompt. It never passes `--force`.
+4. **Read the verdict from the output.** Success = the bundle's own proof that
+   the new version started. "busy" refusal = relay it: wait for the queue, or the
+   user runs `sudo w-pack upgrade <b> --force` themselves (cuts off the job).
+   Failure = the bundle already rolled back to the old version — report the error
+   lines verbatim, do not retry blindly; holding the old `VERSION` keeps it there.
+   The service is left running or stopped as it was before.
+
+Without `w-mcp` (or with the switch off): hand the user `sudo w-pack upgrade <b>`
+for their terminal, or Hub → Packs → Update; `--yes` only when they said so.
+
 Prefer the read tools (or `w-pack list`/`status`) to ground answers in what is
 actually installed before suggesting anything.
 
@@ -235,6 +289,8 @@ actually installed before suggesting anything.
 - **Confirm before installing.** `w_pack_install` pulls packages and changes the
   system — state what the bundle adds and why, then let the user approve the polkit
   prompt. Never try to bypass that prompt.
+- **Confirm before an engine upgrade** — plan first, cost stated, explicit yes;
+  never fold it into a system update or run it because `w-update` mentioned it.
 - **Bundle first, not tool.** If the user wants a capability W packages as a bundle,
   install the bundle rather than hand-picking individual packages — the bundle
   carries W's curated config and theming for that direction.

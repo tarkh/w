@@ -82,10 +82,25 @@ private weights, `hf/`) are never registered, and a record pointing there is rem
   `sudo systemctl edit --drop-in=20-local invokeai.service`, `Environment=` lines
   only (it sorts after 10-w.conf and adds to it; an `ExecStart=` there breaks the
   unit), then restart.
-- **Upgrade InvokeAI / change GPU build**: `sudo systemctl stop invokeai`,
-  `sudo rm -rf $ROOT/app`, (`sudo w-conf set invokeai GPU …`),
+- **Upgrade InvokeAI**: nothing updates it on its own — not `w-update`, not
+  `w-sync update`/refresh. `w-pack outdated invokeai` (no root) compares the
+  installed version with the target; `sudo w-pack upgrade invokeai` shows the plan
+  (including whether a new torch comes along — a multi-GB download), asks, and
+  then: refuses while the queue is busy (`--force` overrides), stops the service,
+  records a rollback point (`$ROOT/.w-upgrade`: package freeze + database copy),
+  installs `invokeai==<target>` on the SAME torch backend, proves the new version
+  starts and answers, and otherwise puts the old version and database back. The
+  service is left as it was (running or not). Run it with `w_pack_upgrade`
+  after the user's yes (procedure: the w-packs skill), or hand it to the user's
+  terminal — it asks for confirmation; `--yes` only when they said so.
+- **Hold or go back to a version**: `sudo w-conf set invokeai VERSION 6.14.1` then
+  `sudo w-pack upgrade invokeai` (`latest` = newest stable on PyPI, the default).
+  An older InvokeAI may refuse a database the newer one migrated; the matching
+  copy is in `$ROOT/.w-upgrade/databases`.
+- **Change GPU build** (upgrade never does): `sudo systemctl stop invokeai`,
+  `sudo rm -rf $ROOT/app`, `sudo w-conf set invokeai GPU …`,
   `sudo w-pack refresh invokeai`. Gallery, boards and registry live in
-  `$ROOT/data` and survive; the database migrates forward on first start.
+  `$ROOT/data` and survive.
 
 ## Gotchas
 

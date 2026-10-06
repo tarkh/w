@@ -9,7 +9,7 @@ description: >-
   configure yourself" requests.
 sources:
   - path: .claude/library/w-ai.md
-    sha256: 03a5fdbf137556293d33480cd23ea657356315aea50fe6b2a83a5271c7ef2359
+    sha256: a90c80a7ee57541923d6becb4c4fcad0c30ce82383dd82ccc6af32f772d0dcd0
 ---
 
 # W AI (configuring the assistant)
@@ -41,8 +41,11 @@ a fleet machine, by `/etc/w/policy.d/ai.conf` — a site policy that pins a key 
 - `w-ai status` — current host/provider/model/mode, whether the host binary is
   installed, whether a key is present in the keyring, and `MCP extra:` — the MCP
   servers optional bundles registered for the assistant (`mcp.d` drop-ins, e.g.
-  `inkscape, gimp` from the `graphics` bundle). Every host gets them at launch, as
-  launch flags, alongside `w-mcp`; one marked `(missing)` is registered on the
+  `inkscape, gimp` from the `graphics` bundle, `blender` from `3d`). Every host gets them at launch,
+  alongside `w-mcp`. Under goose they start switched off, so their tool schemas
+  cost nothing until needed: load one with extensionmanager's
+  `manage_extensions` (action `enable`, the server's name) before working in that
+  app — W allows exactly these servers there, nothing else. One marked `(missing)` is registered on the
   machine but not set up for this account — `w-pack setup <bundle>` fixes it, then
   launch `w-ai` again (the flags are computed per launch, nothing is cached).
 - `w-ai config` — open the user override in an editor.

@@ -10,9 +10,9 @@
 # and all. Only the bundle knows what it installed, so only it can take it back.
 #
 # What is NOT undone, by design:
-#   * /var/lib/ollama — the model store. Gigabytes of downloads, and a nested
-#     btrfs subvolume that `rm -rf` does not even remove properly. It is data:
-#     the path and its size are printed and the human decides.
+#   * $DIR/ollama — the models, inside the shared `ai-models` store. Gigabytes
+#     of downloads: the path and its size are printed and the human decides.
+#     The store itself belongs to every AI pack and is never touched here.
 #
 # Idempotent; best-effort. See pack-ai-extra.md.
 
@@ -22,13 +22,24 @@ info() { echo -e "  \033[1;35m->\033[0m $*"; }
 warn() { echo -e "  \033[1;33mWARN:\033[0m $*" >&2; }
 
 WITH_PACKAGES="${PACK_PACKAGES:-0}"
-STORE="/var/lib/ollama"
+source /usr/lib/w/w-conf-lib.sh
+wconf_load ai-models
+STORE="$(wconf_get ai-models DIR /var/lib/w/ai-models)/ollama"
 
 # ── 1. Stop and disable the service ──────────────────────────────────────────
 if systemctl list-unit-files ollama.service &>/dev/null; then
   info "Disabling ollama.service..."
   systemctl disable --now ollama.service 2>/dev/null \
     || warn "could not disable ollama.service (already gone?)"
+fi
+
+# The drop-in we rendered — never a 20-local.conf the admin wrote.
+DROPIN_DIR="/etc/systemd/system/ollama.service.d"
+if [[ -f "$DROPIN_DIR/10-w.conf" ]]; then
+  rm -f "$DROPIN_DIR/10-w.conf"
+  rmdir "$DROPIN_DIR" 2>/dev/null || true
+  systemctl daemon-reload
+  info "Removed rendered drop-in $DROPIN_DIR/10-w.conf."
 fi
 
 # ── 2. The Ollama packages setup.sh installed (only when packages were asked for) ─
@@ -52,12 +63,7 @@ fi
 if [[ -d "$STORE" ]]; then
   size="$(du -sh "$STORE" 2>/dev/null | cut -f1 || echo '?')"
   info "Kept: $STORE ($size) — downloaded models, W never deletes them."
-  if btrfs subvolume show "$STORE" >/dev/null 2>&1; then
-    info "  It is a btrfs subvolume; to reclaim the space:"
-    info "      sudo btrfs subvolume delete $STORE"
-  else
-    info "  To reclaim the space: sudo rm -rf $STORE"
-  fi
+  info "  To reclaim the space: sudo rm -rf $STORE"
 fi
 
 info "ai-extra machine teardown complete."

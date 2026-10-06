@@ -72,6 +72,17 @@ mod_files() {
   # at login into themes/w.toml).
   install -Dm644 "$SRC/rootfs/etc/skel/.config/helix/config.toml" /etc/skel/.config/helix/config.toml
 
+  info "Deploying GTK file-dialog defaults (first-open size + float rule)..."
+  # The schema override is inert until compiled: pacman's glib hook fires only for
+  # package-owned files, never for a file W drops in, so compile here.
+  install -Dm644 "$SRC/rootfs/usr/share/glib-2.0/schemas/50_w-filechooser.gschema.override" \
+    /usr/share/glib-2.0/schemas/50_w-filechooser.gschema.override
+  # Nemo's terminal (schema default gnome-terminal is absent) → w-term.
+  install -Dm644 "$SRC/rootfs/usr/share/glib-2.0/schemas/50_w-terminal.gschema.override" \
+    /usr/share/glib-2.0/schemas/50_w-terminal.gschema.override
+  glib-compile-schemas /usr/share/glib-2.0/schemas
+  install -Dm644 "$SRC/rootfs/usr/share/w/hypr/rules.d/dialogs.lua" /usr/share/w/hypr/rules.d/dialogs.lua
+
   local -a wusers=(); local entry wuser home_dir
   mapfile -t wusers < <(w_home_users)
   ((${#wusers[@]})) || echo "  WARN: no W user account found (uid 1000-65533), skipping user config copy."

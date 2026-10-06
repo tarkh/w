@@ -17,7 +17,7 @@ sources:
   - path: .claude/library/w-wallpaper.md
     sha256: 2499a3c31263d765ac650f83ea6e84264c64424627e28df47631e425f9740f41
   - path: .claude/library/w-appearance.md
-    sha256: 9e1fc708089ef7b0320fda529d4fdeb69d4375fd4f1ff6ed0efdff3cb1058f88
+    sha256: a900ce0c3d58b65a75f41071def5d20e7c4e5d7206216a490669daec543dc9e8
 tools:
   - w_theme_status
   - w_theme_set
@@ -216,7 +216,7 @@ Appearance → Settings tab:
 
 - `w-appearance bar-position <theme|top|bottom>` — pin the bar's edge, or hand it back
   to the theme's `geometry.conf`.
-- `w-appearance blur <theme|off>` — force Hyprland blur off.
+- `w-appearance blur <theme|off>` — force Hyprland blur off (foot follows on its next launch).
 - `w-appearance motion <theme|off>` — force Hyprland animations off (global toggle).
 - `w-appearance rgb <on|off>` — recolor all RGB devices via the OpenRGB axis
   (600-rgb) on every login/theme render, and after suspend/resume (`w-rgb`

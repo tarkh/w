@@ -5,13 +5,13 @@ order: 9
 summary: Opening the assistant, profiles for different setups, hosts and providers, where API keys are kept, how much it may do on its own, and the optional advanced stack.
 sources:
   - path: .claude/library/w-ai.md
-    sha256: 03a5fdbf137556293d33480cd23ea657356315aea50fe6b2a83a5271c7ef2359
+    sha256: a90c80a7ee57541923d6becb4c4fcad0c30ce82383dd82ccc6af32f772d0dcd0
   - path: .claude/library/ai-integration.md
-    sha256: f32aa75761dcd502adb75af9854472c0c4385f7794e9acc932f5c06d7775fa46
+    sha256: 171dd165f8bf454226de2d798cb878e0c53b5033332ed66060670941cd60d96d
   - path: .claude/library/pack-comfyui.md
-    sha256: 39359310301024f530ea09fad70d83c56e60265cfe9951ef5f1ef919a3e4a2ad
+    sha256: f155a4517e54b899507729281e67c65f19c043ec77355f42cc95e2b2ba32d804
   - path: .claude/library/pack-invokeai.md
-    sha256: 5abb48e8ed21e81603e71e780be300ed84b9e15d335acb58453fd330f70dc41d
+    sha256: 463229f1755cd26d72c86359e36ead814007789d4beae2f290ccbbd4f5228730
 ---
 
 W ships an AI assistant that runs in a terminal and can drive the machine
@@ -69,8 +69,10 @@ pick *subscription* for Zen, one of the providers W already manages a key for,
 or set up anything else straight in OpenCode itself (`opencode auth login`).
 
 Some packs bring tools of their own for the assistant — the **graphics** pack,
-for instance, lets it draw in Inkscape and edit inside GIMP. These arrive the
-same way, at launch, for every host; `w-ai status` lists them under
+for instance, lets it draw in Inkscape and edit inside GIMP, and the **3d** pack
+lets it build scenes in Blender. These arrive the
+same way, at launch, for every host — with Goose they stay switched off until a
+request needs that app, so everyday questions don't carry their weight; `w-ai status` lists them under
 **MCP extra**. One shown as *missing* is installed on the machine but not set up
 for your account yet: `w-pack setup <pack>` (no password) and a fresh session.
 
@@ -139,12 +141,17 @@ opens the browser) or start it yourself with `systemctl start comfyui`.
   anything, which is its own safety rule rather than W's.
 - **Shared model store:** models are downloaded into
   `/var/lib/w/ai-models`, a snapshot-excluded store shared by the whole machine;
-  every account set up for the pack writes there.
+  every account set up for the pack writes there. Ollama from the *ai-extra*
+  pack keeps its models there too, in `ollama/`.
 - **Where your results land:** `/var/lib/w/comfyui/data/output` (under the engine
   directory, wherever it was installed). You can open that folder in the file
   manager, collect renders and drop source images into `input/` next to it —
   access comes with the `w-ai` group the bundle adds you to, which takes effect
   at your next login.
+- **Updating:** a system update leaves the engine alone; `w-pack outdated` shows
+  a newer release and `sudo w-pack upgrade comfyui` installs it, putting the old
+  one back if the new one does not start — see
+  [keeping packs current](packs.md#keeping-packs-current).
 - **The assistant can help** with ComfyUI workflows, model placement and the
   service — load the *comfyui* knowledge pack when asked about local generation.
 
@@ -171,3 +178,6 @@ service on `http://127.0.0.1:9090/`; open **InvokeAI** from the app menu or run
 - **Tuning** (memory limits, attention, precision) lives in
   `/var/lib/w/invokeai/data/invokeai.yaml`; the example file next to it lists
   every setting.
+- **Updating:** the same as ComfyUI — `sudo w-pack upgrade invokeai`, which also
+  says up front whether the new release brings a new PyTorch (a large download)
+  and restores the previous version and its database if the new one fails.

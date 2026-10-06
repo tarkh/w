@@ -127,6 +127,14 @@ chk_manifests() {
       rc=1
     fi
 
+    # outdated.sh and upgrade.sh are one contract (w-pack "outdated / upgrade"):
+    # an upgrade with no outdated has no plan to show or confirm, an outdated with
+    # no upgrade announces a version nothing can move to.
+    if [[ -f "$bdir/outdated.sh" && ! -f "$bdir/upgrade.sh" ]] || [[ -f "$bdir/upgrade.sh" && ! -f "$bdir/outdated.sh" ]]; then
+      echo "  packs/$bname: outdated.sh and upgrade.sh come as a pair"
+      rc=1
+    fi
+
     bm="$bdir/manifest"
     [[ -f "$bm" ]] || continue
     n=0

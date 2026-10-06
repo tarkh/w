@@ -5,7 +5,7 @@ order: 1
 summary: The single update path, the badge in the bar, Arch news, and what to do when an upgrade goes wrong.
 sources:
   - path: .claude/library/w-update.md
-    sha256: 004038d61a61d74780748e6bf3ad212974e646e931fa4459b8b076a7ddf5f8dd
+    sha256: 11750135480a5f3abaaad941b1e98259aad6845151c31672087ae94bc7791237
   - path: .claude/library/w-mirrors.md
     sha256: 713856f43f54c44fc52642f8968824cdca2f0c967b7bcca2c6943e9a0f6f147c
 ---
@@ -42,6 +42,10 @@ automatically (snap-pac), so an update is always reversible — see
   requires it, a "reboot pending" hint.
 - Clicking the bar block (or the Updates tile in the Hub) opens `w-update` in
   a terminal.
+- New releases of pack engines (comfyui, invokeai) are **not** in that count and
+  are never installed by `w-update` — they show in **Hub → Packs**, in
+  `w-update status`, and as a note at the end of `w-update`. See
+  [the packs guide](packs.md).
 
 W-specific `/etc` files get their `.pacnew` reconciled automatically by a
 pacman hook; third-party `.pacnew` files stay manual, and `w-update` points

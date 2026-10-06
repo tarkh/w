@@ -9,9 +9,16 @@
 # Fixes the stale-count glitch: updating outside the bar (plain pacman/yay) used to
 # leave the indicator showing an old number until the next timer tick or a manual
 # click. Now any transaction re-runs the same non-root check the bar already trusts.
+#
+# Arguments go through to `w-update check`: `w-pack upgrade` calls this with
+# --packs so the moved engine stops being advertised before the 6 h cache expires.
 set -uo pipefail
 
 command -v w-update >/dev/null 2>&1 || exit 0
+# runuser keeps the caller's cwd — root's own (/root, or wherever sudo ran) is
+# unreadable to the account, and git (the comfyui outdated probe) refuses to run
+# there: the target reads "unknown" and the pack cache is kept stale on purpose.
+cd / || exit 0
 
 declare -A seen=()
 for s in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); do
@@ -35,5 +42,5 @@ for s in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); d
     HOME="$home" \
     XDG_RUNTIME_DIR="/run/user/$uid" \
     XDG_STATE_HOME="$home/.local/state" \
-    w-update check </dev/null >/dev/null 2>&1 || true
+    w-update check "$@" </dev/null >/dev/null 2>&1 || true
 done

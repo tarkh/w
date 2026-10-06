@@ -9,7 +9,7 @@ description: >-
   pacman mirrors.
 sources:
   - path: .claude/library/w-update.md
-    sha256: 004038d61a61d74780748e6bf3ad212974e646e931fa4459b8b076a7ddf5f8dd
+    sha256: 11750135480a5f3abaaad941b1e98259aad6845151c31672087ae94bc7791237
   - path: .claude/library/w-mirrors.md
     sha256: 713856f43f54c44fc52642f8968824cdca2f0c967b7bcca2c6943e9a0f6f147c
 tools:
@@ -37,7 +37,10 @@ automatically). The single entry point is the `w-update` command.
   updates via `yay -Qua`, detects reboot-pending, and atomically writes
   `~/.local/state/w/updates.json`. **Never run bare `pacman -Sy`** to check — it causes
   partial-upgrade breakage; `checkupdates` uses a private temporary database.
-- `w-update status` — print the last recorded status plus the checker's state.
+  It also records pending **pack engine upgrades** (`w-pack outdated` — comfyui,
+  invokeai) in their own `packs` field, probed at most every 6 h (`--packs` = now).
+- `w-update status` — print the last recorded status plus the checker's state, and
+  a "Pack engine upgrades" line when there are any.
 - `w-update news` — the latest Arch Linux news items (from the official RSS feed). Read
   this **before a large upgrade** — it surfaces manual-intervention announcements.
 - `w-update enable` / `w-update disable` — per-user toggle of the background checker
@@ -81,6 +84,9 @@ default-on Tier-2 action. Do it as **plan → apply**, never a blind auto-apply:
 - **AUR is not applied this way** — `yay` must build as the user and PKGBUILD diffs want
   review. If the plan lists AUR updates, tell the user to run `w-update` in a terminal
   for those.
+- **Pack engines are not part of a system update** — not counted, not applied, by
+  either path; `w-update` only names them at the end. If status lists some, mention
+  them as a separate offer; moving one is `w_pack_upgrade` (the w-packs skill).
 - Gated by `W_AI_TOOL_UPDATE` in `ai.conf` (on by default). If disabled, tell the user
   which switch to flip — do not seek a workaround.
 
@@ -138,7 +144,8 @@ show the module missing for the running kernel.
 The Quickshell bar has an `updates` block. It is **read-only** — it does not poll pacman
 itself; it watches the `updates.json` status file that `w-update check` writes.
 
-- Shows the update count (repo, plus AUR if configured).
+- Shows the update count (repo, plus AUR if configured). Pack engine upgrades are
+  never in that number — they show in Hub → Packs instead.
 - Auto-hides when there are zero updates, **but stays visible if a reboot is pending**
   (so the reboot indicator is never silently hidden), using an alternate color.
 - Left-click opens `w-update` in the terminal (start an upgrade); right-click shows news.

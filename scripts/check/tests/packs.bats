@@ -383,3 +383,66 @@ mcp_row() {                                             # <bundle>
   [[ ! -f "$W_PACKS_MCP_DROPIN/alpha.conf" ]]
   [[   -f "$W_PACKS_MCP_DROPIN/beta.conf" ]]
 }
+
+# ── outdated / upgrade ───────────────────────────────────────────────────────
+# The bundle owns the semantics (versions, the move, the rollback); w-pack owns
+# the shape — which bundles, the plan, the one question, and that ONLY the rows
+# that differ reach upgrade.sh. That shape is what is asserted here.
+
+# upgradable <bundle> <installed> <target> [exit] — the declared pair, with an
+# upgrade.sh that records what it was handed.
+upgradable() {
+  local d="$W_PACKS_DIR/$1"
+  printf "printf 'Engine\\\\t%%s\\\\t%%s\\\\tplan=%%s\\\\n' '%s' '%s' \"\${PACK_PLAN:-0}\"\n" "$2" "$3" > "$d/outdated.sh"
+  cat > "$d/upgrade.sh" <<EOT
+printf '%s|%s|%s\n' "\$BUNDLE_NAME" "\$PACK_OUTDATED" "\$PACK_FORCE" >> "$BATS_TEST_TMPDIR/upgraded"
+exit ${4:-0}
+EOT
+}
+
+@test "outdated: porcelain prefixes the bundle and skips bundles without the pair" {
+  mkbundle alpha; upgradable alpha 1.0 1.1
+  mkbundle beta
+  PORCELAIN=1 run cmd_outdated
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == $'alpha\tEngine\t1.0\t1.1' ]]
+}
+
+@test "outdated: a bundle that installs nothing outside pacman is refused by name" {
+  mkbundle beta
+  run cmd_outdated beta
+  [[ "$status" -eq 1 ]]
+  [[ "$output" == *"installs nothing outside pacman"* ]]
+}
+
+@test "upgrade: only the differing rows reach upgrade.sh, with the plan note asked for" {
+  mkbundle alpha; upgradable alpha 1.0 1.1
+  mkbundle beta;  upgradable beta 2.0 2.0
+  ASSUME_YES=1 run cmd_upgrade
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"alpha: Engine 1.0 → 1.1"* ]]
+  [[ "$(cat "$BATS_TEST_TMPDIR/upgraded")" == $'alpha|Engine\t1.0\t1.1\n|0' ]]
+}
+
+@test "upgrade: an unknown side is warned about and never moved" {
+  mkbundle alpha; upgradable alpha 1.0 unknown
+  ASSUME_YES=1 run cmd_upgrade alpha
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"cannot tell where Engine stands"* ]]
+  [[ ! -f "$BATS_TEST_TMPDIR/upgraded" ]]
+}
+
+@test "upgrade: without a terminal and without --yes it refuses and moves nothing" {
+  mkbundle alpha; upgradable alpha 1.0 1.1
+  run cmd_upgrade alpha < /dev/null
+  [[ "$status" -eq 1 ]]
+  [[ "$output" == *"--yes"* ]]
+  [[ ! -f "$BATS_TEST_TMPDIR/upgraded" ]]
+}
+
+@test "upgrade: --force is handed down, a failed upgrade.sh fails the command" {
+  mkbundle alpha; upgradable alpha 1.0 1.1 1
+  ASSUME_YES=1 FORCE=1 run cmd_upgrade alpha
+  [[ "$status" -eq 1 ]]
+  [[ "$(cat "$BATS_TEST_TMPDIR/upgraded")" == *"|1" ]]
+}

@@ -204,6 +204,11 @@ rootfs/etc/systemd/user/w-sync-check.*	--updatesys
 # activation" rule, same as the Plymouth theme above).
 rootfs/usr/lib/w/w-gpu-lib.sh	--gpu
 
+# A gschema override is inert on disk: glib reads only the compiled
+# gschemas.compiled, and pacman's glib hook never fires for a file W drops in.
+# mod_files compiles it ("copy is not activation" again).
+rootfs/usr/share/glib-2.0/schemas/*	--files
+
 # ── any other rootfs change → drop files down (+ theme re-render) ────────────────
 rootfs/*			--rootfs
 

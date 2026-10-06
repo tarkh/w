@@ -103,6 +103,24 @@ running system only. Curated into `/usr/share/w/ai/skills/comfyui/` when install
   Manager v4 — or one whose manager install failed offline — gains the manager
   without a venv rebuild. Reinstalling the engine from scratch = delete the app
   tree yourself, then refresh.
+- **Upgrading ComfyUI is its own command** — nothing updates the engine on its own
+  (not `w-update`, not `w-sync update`/refresh). `w-pack outdated comfyui` (no
+  root) compares the installed release with the target; `sudo w-pack upgrade
+  comfyui` shows the plan, asks, then: refuses while the queue is busy (`--force`
+  overrides), stops the service, records a rollback point (`$ROOT/.w-upgrade`:
+  git revision + package freeze), upgrades comfy-cli, runs `comfy update comfy
+  --version <target>` (torch is left alone and checked to stay the same build),
+  re-syncs ComfyUI-Manager, proves the engine starts and reports the target on
+  `/system_stats`, and otherwise puts the old revision and packages back. The
+  service is left as it was. Run it with `w_pack_upgrade` after the user's yes
+  (procedure: the w-packs skill), or hand it to the user's terminal — it asks
+  for confirmation; `--yes` only when they said so.
+- **Hold or go back to a release**: `sudo w-conf set comfyui VERSION 0.37.2` then
+  `sudo w-pack upgrade comfyui` (`latest` = highest stable release tag, the
+  default; a fresh install also installs VERSION).
+- **Custom nodes are not upgraded with the engine** — Manager → Update All in the
+  web interface. The automatic rollback catches "the engine does not start", not
+  "node X broke on the new release": for that, hold the old VERSION and upgrade.
 - **The store is shared** (`ai-models` subsystem): don't "clean" it to make room or
   move models into a ComfyUI-private `models/` dir — other consumers read the same
   paths; keep files in `$DIR/<class>/`.

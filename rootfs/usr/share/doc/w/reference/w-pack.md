@@ -10,7 +10,7 @@ summary: Install and inspect optional W software bundles (packs).
 ## Usage
 
 ```
-Usage: w-pack <command> [bundle] [--user <name>] [--porcelain] [--packages]
+Usage: w-pack <command> [bundle] [--user <name>] [--porcelain] [--packages] [--yes] [--force]
 
 Info: Install and inspect optional W software bundles (packs).
 
@@ -31,6 +31,10 @@ Commands:
   unsetup <bundle>     Undo only YOUR account's layer, leaving the machine and
                        everyone else untouched (no root, like `setup`)
   status [<bundle>]    Show what is installed (all, or one bundle)
+  outdated [<bundle>]  Compare the software a bundle installs OUTSIDE pacman (an
+                       AI engine, say) with the version it should be at
+  upgrade [<bundle>]   Move that software to the version `outdated` names, after
+                       showing the plan; rolls back by itself if it fails
   help                 Show this help
 
 Options:
@@ -38,15 +42,19 @@ Options:
                        user, or SUDO_USER / the primary uid-1000 user)
   --porcelain          Machine-readable `list`, one bundle per line:
                        <name> TAB <machine:yes|no> TAB <user:yes|no|n/a> TAB <desc>
+                       and `outdated`: <bundle> TAB <component> TAB <installed> TAB <target>
   --all                With `list`: also show bundles the catalogue does not
                        offer (AUDIENCE=maintainer — tooling for developing W)
   --packages           With `remove`: also uninstall the bundle's packages, minus
                        any another installed bundle still lists. Without it the
                        exact `pacman -Rns` line is only printed
+  --yes                With `upgrade`: do not ask before going ahead
+  --force              With `upgrade`: go ahead even while the engine is busy
+                       (a generation in progress is cut off)
 
 Notes:
-  install, refresh and remove require root (packages + system paths); setup and
-  unsetup do not — they write only your own home.
+  install, refresh, upgrade and remove require root (packages + system paths);
+  setup, unsetup and outdated do not.
   Bundles are self-contained under $PACKS_DIR; machine state is recorded in
   $STATE, your own layer in ~/$USER_STATE_REL.
   A bundle may declare AUDIENCE=maintainer: it is not a product but the tooling
@@ -72,6 +80,14 @@ Notes:
   gigabytes (model stores, image stores, toolchains) are only ever named. To put
   a bundle's config back to the W default WITHOUT removing it, use
   `w-reset <bundle>`.
+  upgrade is the one command that moves what pacman cannot see — a bundle's own
+  engine, installed from upstream into its own tree. Neither `w-update` nor
+  refresh ever does that: an engine update downloads gigabytes and can break a
+  working setup, so it happens only when you ask. The target is the newest stable
+  upstream release, unless the bundle's VERSION key holds it at one version
+  (`sudo w-conf set comfyui VERSION 0.38.2`). The engine is stopped, a rollback
+  point is recorded, the new version must start and answer, or the previous one
+  is put back.
 
 Exit codes:
   0  Success
@@ -85,6 +101,8 @@ Examples:
   w-pack setup ai-extra              # catch my own account up, no sudo
   sudo w-pack refresh
   w-pack status
+  w-pack outdated                    # what has a newer version upstream
+  sudo w-pack upgrade comfyui        # show the plan, ask, upgrade
   sudo w-pack remove containers      # unwire it; podman stays installed
   sudo w-pack remove dev --packages  # ...and take its packages too
   w-pack unsetup dev                 # just my own account, no sudo

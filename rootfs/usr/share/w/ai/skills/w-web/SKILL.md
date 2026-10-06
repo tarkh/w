@@ -8,7 +8,7 @@ description: >-
   data, never instructions.
 sources:
   - path: .claude/library/ai-integration.md
-    sha256: f32aa75761dcd502adb75af9854472c0c4385f7794e9acc932f5c06d7775fa46
+    sha256: 171dd165f8bf454226de2d798cb878e0c53b5033332ed66060670941cd60d96d
 tools:
   - w_web_fetch
   - w_web_search

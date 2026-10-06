@@ -13,3 +13,4 @@ LISTEN	system
 PORT	system
 GPU	system
 ARGS	system
+VERSION	system

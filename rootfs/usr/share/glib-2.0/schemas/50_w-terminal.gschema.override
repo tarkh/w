@@ -1,0 +1,9 @@
+# W vendor default for the terminal Nemo's "Open in Terminal" spawns in the folder:
+# the schema ships gnome-terminal, which W does not have. w-term maps to the active
+# terminal and keeps the caller's working directory. Owned by apply.sh --files; see
+# /usr/bin/w-term. Nemo's "Run in Terminal" honours `exec` only for names in its
+# own hardcoded list (eel-gnome-extensions.c) and never reads `exec-arg`, so that
+# path falls to the first listed terminal found — foot, W's fallback.
+[org.cinnamon.desktop.default-applications.terminal]
+exec='w-term'
+exec-arg='-e'

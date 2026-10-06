@@ -1,0 +1,19 @@
+# 3d bundle — packages (all in the official extra repo, no AUR).
+# One per line; '#' comments and blank lines ignored. Installed by w-pack via yay
+# (repo + AUR in one pass) as the build user; pacman fallback if yay is absent.
+#
+# Cycles' GPU runtime is NOT listed: which one (HIP / oneAPI / none) depends on
+# the machine's GPU, so pre.sh picks it (--asdeps) before this list resolves.
+# Excluded on purpose: freecad (parametric CAD), openscad (extra still ships
+# 2021.01), prusa-slicer / orca-slicer (3D printing), godot (game engine),
+# meshlab (Blender covers mesh cleanup) — other workflows, see meta.conf.
+# f3d (model viewer/thumbnailer): 8 MiB itself, but vtk + opencascade + boost +
+# openmpi behind it add ~800 MiB for what Blender already does — a viewport
+# screenshot over MCP or a `blender -b` render previews any model.
+
+blender               # Blender 5.x — the whole 3D pipeline. Draws its own UI
+                      # (neither GTK nor Qt) → themed by this bundle's `blender`
+                      # w-style axis through the W startup module.
+libdecor              # Blender's native-Wayland window decorations (optional
+                      # dependency of the package; without it Blender falls
+                      # back to XWayland).

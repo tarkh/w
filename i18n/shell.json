@@ -912,6 +912,14 @@
     "en": "Set up",
     "ru": "Настроить"
   },
+  "hub.packs.upgrade": {
+    "en": "Update",
+    "ru": "Обновить"
+  },
+  "hub.packs.upgradeTo": {
+    "en": "update %v%",
+    "ru": "обновление %v%"
+  },
   "hub.packs.notSetUp": {
     "en": "On this machine, but not set up for you",
     "ru": "Есть на машине, но не настроен для вас"

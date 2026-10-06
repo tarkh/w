@@ -5,11 +5,14 @@ description: >-
   uwsm-managed systemd session, the single Quickshell UI (bar, launcher, notifications,
   OSD, lock, greeter), key bindings, and screen capture (screenshots + recording).
   Load this for anything about the desktop, window management, keybindings, screen
-  recording or screencasts, the bar/launcher, or the shell UI.
+  recording or screencasts, the bar/launcher, the shell UI, or an app's Open/Save
+  dialog that opens too small, huge or tiled.
   Monitors and the night light are w-displays; reopening windows at login is w-session.
 sources:
   - path: .claude/library/package-hyprland.md
-    sha256: 6eb71031cc9bd879d31d999569464acc6673443825e6544cfaa313d255324a3a
+    sha256: 85f6ab9f832fcc8a6f98530bcab0370dd2a4d226371915b22864c8526292d176
+  - path: .claude/library/package-files.md
+    sha256: 85da1d2fccfd07be804443763a7fdde37727878e1b6c85d3288413f72c23b504
   - path: .claude/library/quickshell.md
     sha256: da1b14d9d934188dd9b49ece41af8b58ab8d5abe06c6172e198e1c5ade171759
   - path: .claude/library/quickshell-bar.md
@@ -23,7 +26,7 @@ sources:
   - path: .claude/library/w-screenshot.md
     sha256: cab923bc52e33ecc3604a6f4786103d095312a01a25b1b2a5ee893a41c67c3ae
   - path: .claude/library/w-record.md
-    sha256: 7522ccd5382e3c6717165eddb5e6d2bf4a12dcf6d8b20852bd612143c344ebaa
+    sha256: c7ff443860ecebfc73ec01be9a90b845d1a1110e79f9bdabfde1c5dcd7b0f625
 tools:
   - w_desktop_context
   - w_notify
@@ -107,6 +110,44 @@ Since Hyprland 0.55 the compositor config is **Lua**, not the old hyprlang `.con
   `hyprctl hyprsunset` IPC instead (hyprsunset has its own internal scheduler that can
   silently reassert whatever it parsed at startup, so giving it nothing to reassert is
   the fix — the **w-displays** skill has the night light itself).
+
+### Open / Save dialogs of an app (too small, huge, or tiled)
+
+W's standard for every "pick a file" window is **1000x640 logical px, floating, centred**.
+W's own apps and bundles already comply; an app the user (or you) installed later may
+not. Diagnose before writing anything: have the user open the dialog, then
+`w_hypr_windows` (or `hyprctl clients -j`) → its `class`, `initialTitle`, `floating`,
+`size`. Then match it to one case:
+
+1. **class `xdg-desktop-portal-gtk`, or the app's own class with a GTK3 dialog**
+   (GIMP-like) — GTK owns the size, shared by all GTK apps and kept across reboots.
+   Floating but huge/odd in every app → a stale saved size: `gsettings reset
+   org.gtk.Settings.FileChooser window-size`, reopen. Never put `size` on these — it
+   would override the size the user drags. Nothing else to do.
+2. **Dialog is tiled** (`floating: false`; the app opened it without a parent window) →
+   a user rule with `float = true, center = true` matching that dialog, no `size` (if
+   it is a GTK dialog, also reset the saved size above — a tiled open saves its tile).
+3. **Nothing remembers its size** — Qt apps (`QFileDialog`; W's qt6ct has no portal
+   dialog), GTK4 apps on the old in-process chooser, apps drawing their own browser
+   window (Blender) — it opens tiny every time → a user rule that gives the W size.
+
+Rules for cases 2–3 go in `~/.config/hypr/rules.d/<app>.lua`, then `hyprctl reload`,
+then reopen the dialog and confirm with `w_hypr_windows`. The class is the APP's, so
+also match the dialog by `initial_title` — otherwise the main window is resized too.
+Titles are translated: list every UI language the user runs (e.g. Russian and English):
+
+```lua
+hl.window_rule({
+  match    = { class = "^(org\.example\.App)$",
+               initial_title = "^(Open|Save As|Открыть|Сохранить как)( — App)?$" },
+  float = true, size = { 1000, 640 }, min_size = { 600, 420 }, center = true,
+})
+```
+
+- Qt appends ` — <App name>` to every window title — include it in the pattern.
+- Do **not** match `modal = true`: Qt also marks message boxes modal, and `size` would
+  blow every "Are you sure?" up to 1000x640.
+- Cases 2–3 do not remember a manual resize (each open is 1000x640); case 1 does.
 
 > For precise, up-to-date Hyprland config syntax (options, binds, rules, animations,
 > layouts, hyprctl/IPC), consult the **`hyprland` skill** — a navigator over a local copy
@@ -287,7 +328,8 @@ recording is a *state* the machine is in: `w-record <region|window|output>` (def
 action `--toggle`), plus `w-record stop` and `w-record status [--porcelain]`. The
 binds are on **R**: `Super+Ctrl+R` (output), `Super+Alt+R` (region),
 `Super+Ctrl+Alt+R` (window) — tokens `record_screen` / `record_region` /
-`record_window`. Each is a toggle: the chord that started the take ends it. They do
+`record_window`. Each is a toggle: the chord that started the take ends it; the
+launcher entry **Screen Recording** (`w-record region`) toggles the same way. They do
 not mirror the I-family ladder because `Super+R` is `resize_mode` and
 `Super+Shift+R` is `reload`. Files go to `Screencasts/` inside `$(xdg-user-dir
 VIDEOS)`, named `W-<date>_<time>.<FORMAT>`.

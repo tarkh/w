@@ -5,7 +5,7 @@ order: 10
 summary: What a pack is, the bundles W offers, installing one for the machine and setting it up for your account, and how to undo it.
 sources:
   - path: .claude/library/packs.md
-    sha256: d5e460b0e9aff90d7278ea965859e3e9b53089ba9ce6606881850e52d5d93526
+    sha256: 112e2d5e040e11d34d90c8906e86e234c9f68e3d63b3c7d7b00c2aa97de82e62
 ---
 
 W installs in two layers. The **base** is everything a working desktop needs and
@@ -57,6 +57,14 @@ it into the desktop — so a pack arrives configured, not merely downloaded.
   export vector documents through an Inkscape server, and run edits inside a
   running GIMP and look at the result — with whatever model your profile uses,
   local or cloud. Generative painting in Krita is planned for a companion pack.
+- **3d** — Blender for 3D modelling, sculpting, animation and rendering.
+  Blender opens in W's colours and follows theme switches while
+  running; pick another theme in Blender's preferences and it stays yours.
+  [The AI assistant](ai.md) can build and change scenes in a running Blender —
+  add and edit objects, apply materials, look at the viewport, export to
+  GLB/FBX. Its code runs in a safe mode: Blender's own tools only — no shell
+  commands, no network, no add-on installs. Cycles renders on AMD and Intel Arc graphics out of the
+  box.
 - **gaming** — Steam, Lutris and Heroic side by side on one shared
   Proton/Wine/MangoHud/gamemode foundation: Steam covers most of a typical
   library, Lutris is the catch-all for everything else (GOG, Amazon, native
@@ -172,3 +180,37 @@ When a W update changes a pack you already have, it is re-applied for you — th
 configuration, theming and setup step, without touching packages. There is
 nothing to do by hand. If a pack's configuration ever looks stale, `sudo w-pack
 refresh` does that pass on demand; it works offline and takes seconds.
+
+Some packs install their main program from its own project rather than as a
+system package — the AI engines **comfyui** and **invokeai** are the two. A
+system update never touches them, on purpose: an engine update downloads
+gigabytes and can change how a working setup behaves, so it happens only when
+you ask for it.
+
+```sh
+w-pack outdated                 # which engines have a newer release
+sudo w-pack upgrade comfyui     # show the plan, ask, then upgrade
+```
+
+`upgrade` waits for nothing to be generating, stops the engine, keeps a way back,
+installs the new release and checks that it starts and answers. If it does not,
+the previous version is put back by itself. The engine ends up running or
+stopped, just as it was. Your models, images and settings are not touched.
+
+To stay on one release — or to go back to an older one — name it, then upgrade:
+
+```sh
+sudo w-conf set comfyui VERSION 0.37.2
+sudo w-pack upgrade comfyui
+```
+
+`VERSION=latest` (the default) follows the newest stable release again. Custom
+nodes in ComfyUI are updated from its own web interface (**Manager → Update
+All**), not by `w-pack upgrade`.
+
+You do not have to remember to look. W checks for a new engine release every few
+hours and tells you without mixing it into the system update count: **Hub →
+Packs** shows the version change on the pack's row with an **Update** button
+(it opens the same `sudo w-pack upgrade` in a terminal), `w-update status` lists
+it, and `w-update` mentions it at the end of a system upgrade. The assistant can
+run the upgrade too — it shows you the plan and waits for your yes first.

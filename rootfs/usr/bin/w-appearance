@@ -114,6 +114,8 @@ cmd_blur() {
     *) err "blur must be theme or off"; exit 2 ;;
   esac
   w-style apply effects
+  # foot asks for its own blur (ext-background-effect) — its axis mirrors the knob.
+  w-style apply foot
 }
 
 cmd_motion() {

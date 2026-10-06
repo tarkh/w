@@ -70,5 +70,6 @@ file_permissions=(
   # install hook is skipped outright — so the whole tree is executable by nature.
   ["/root/w/rootfs/etc/initcpio/"]="0:0:755"
   ["/root/w/rootfs/usr/share/w/ai/skills/hyprland/install.sh"]="0:0:755"
+  ["/root/w/rootfs/usr/share/w/ai/hosts/goose/plugins/w-guard/scripts/guard"]="0:0:755"
   ["/root/w/rootfs/etc/greetd/w-greeter-wrapper.sh"]="0:0:755"
 )

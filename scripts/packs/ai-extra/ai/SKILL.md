@@ -19,8 +19,12 @@ system only. Curated into `/usr/share/w/ai/skills/ai-extra/` when installed.
 - **Local inference engine:** Ollama as base + GPU backend, matched to the card at
   install time (`ollama`, plus `ollama-cuda` on NVIDIA / `ollama-rocm` on AMD — the
   backend depends on the base and pulls it in), service `ollama.service`
-  listening on `127.0.0.1:11434`. Models live in `/var/lib/ollama` (a nested btrfs
-  subvolume, excluded from root snapshots).
+  listening on `127.0.0.1:11434`. Models live in `$DIR/ollama` of the machine-wide
+  AI model store (`w-conf get ai-models DIR`, default `/var/lib/w/ai-models`,
+  snapshot-excluded) — set by the drop-in `ollama.service.d/10-w.conf`
+  (`OLLAMA_MODELS`). Moving the store: `sudo w-conf set ai-models DIR <path>` +
+  `sudo w-pack refresh ai-extra` (re-points and restarts Ollama; old models stay
+  put, the rsync line is printed). `/var/lib/ollama` is only the service's home.
 - **Embedding model:** `qllama/bge-m3:q8_0` (~635MB, multilingual, dense 1024-dim,
   8K context) — pulled at install time if network was available. Backs the
   semantic-memory layer: set `W_AI_EMBED=ollama` in `~/.config/w/ai-features.conf`

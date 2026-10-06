@@ -42,6 +42,7 @@ LISTEN="$(wconf_get comfyui LISTEN 127.0.0.1)"
 PORT="$(wconf_get comfyui PORT 8188)"
 GPU="$(wconf_get comfyui GPU auto)"
 ARGS="$(wconf_get comfyui ARGS '')"
+VERSION="$(wconf_get comfyui VERSION latest)"   # the release a fresh workspace gets
 DIR="$(wconf_get ai-models DIR /var/lib/w/ai-models)"
 
 # ── 1. Path validation ─────────────────────────────────────────────────────────
@@ -193,34 +194,40 @@ COMFY="$ROOT/.local/bin/comfy"
 # ComfyUI-Manager is NOT settled here (`comfy install` does pip it in, but only
 # on a fresh workspace, and the engine ignores it without a flag) — step 6d
 # owns it. Telemetry is off via the standard env wins.
-GPU_LIB="${W_GPU_LIB:-/usr/lib/w/w-gpu-lib.sh}"
+# The flag is decided only when a workspace is actually built — a refresh (or an
+# upgrade's setup replay) over an existing one must not re-detect, or re-warn
+# "installing CPU-only" about, hardware it is not installing for.
 gpu_flags=""
-case "$GPU" in
-  nvidia) gpu_flags="--nvidia" ;;
-  amd)    gpu_flags="--amd --rocm-version 7.2" ;;
-  intel)  gpu_flags="--intel-arc" ;;
-  cpu)    gpu_flags="--cpu" ;;
-  auto)
-    if [[ -r "$GPU_LIB" ]]; then
-      # shellcheck source=/dev/null
-      source "$GPU_LIB"
-      if   w_gpu_has nvidia;      then gpu_flags="--nvidia"
-      elif w_gpu_has amd;         then gpu_flags="--amd --rocm-version 7.2"
-      elif w_gpu_intel_discrete;  then gpu_flags="--intel-arc"
-      elif w_gpu_has intel; then
+pick_gpu_flags() {
+  local GPU_LIB="${W_GPU_LIB:-/usr/lib/w/w-gpu-lib.sh}"
+  case "$GPU" in
+    nvidia) gpu_flags="--nvidia" ;;
+    amd)    gpu_flags="--amd --rocm-version 7.2" ;;
+    intel)  gpu_flags="--intel-arc" ;;
+    cpu)    gpu_flags="--cpu" ;;
+    auto)
+      if [[ -r "$GPU_LIB" ]]; then
+        # shellcheck source=/dev/null
+        source "$GPU_LIB"
+        if   w_gpu_has nvidia;      then gpu_flags="--nvidia"
+        elif w_gpu_has amd;         then gpu_flags="--amd --rocm-version 7.2"
+        elif w_gpu_intel_discrete;  then gpu_flags="--intel-arc"
+        elif w_gpu_has intel; then
+          gpu_flags="--cpu"
+          warn 'Intel graphics found, but not a supported discrete Arc/Battlemage — installing CPU-only (real-time synthesis will be slow).'
+        else gpu_flags="--cpu"; warn 'no supported GPU matched — installing CPU-only (real-time synthesis will be slow).'
+        fi
+      else
         gpu_flags="--cpu"
-        warn 'Intel graphics found, but not a supported discrete Arc/Battlemage — installing CPU-only (real-time synthesis will be slow).'
-      else gpu_flags="--cpu"; warn 'no supported GPU matched — installing CPU-only (real-time synthesis will be slow).'
+        warn "w-gpu-lib.sh missing — cannot detect GPU, installing CPU-only."
       fi
-    else
-      gpu_flags="--cpu"
-      warn "w-gpu-lib.sh missing — cannot detect GPU, installing CPU-only."
-    fi
-    ;;
-  *) warn "GPU='$GPU' unknown (nvidia|amd|intel|cpu|auto) — falling back to CPU."; gpu_flags="--cpu" ;;
-esac
+      ;;
+    *) warn "GPU='$GPU' unknown (nvidia|amd|intel|cpu|auto) — falling back to CPU."; gpu_flags="--cpu" ;;
+  esac
+}
 
 if [[ ! -d "$ROOT/app/.venv" ]]; then
+  pick_gpu_flags
   info "Installing ComfyUI workspace at $ROOT/app (GPU flags: ${gpu_flags:-none})..."
   if [[ -x "$COMFY" ]]; then
     # --fast-deps only for the engines whose torch variant the uv-path actually
@@ -235,7 +242,7 @@ if [[ ! -d "$ROOT/app/.venv" ]]; then
       *) fast_deps=(--fast-deps) ;;
     esac
     run_as_comfy env DO_NOT_TRACK=1 COMFY_NO_TELEMETRY=1 \
-      "$COMFY" --skip-prompt --workspace "$ROOT/app" install --version latest \
+      "$COMFY" --skip-prompt --workspace "$ROOT/app" install --version "${VERSION#v}" \
       "${fast_deps[@]}" $gpu_flags || warn "comfy install failed — the engine is not ready. Retry: w-pack refresh comfyui"
   else
     warn "comfy-cli lost after tool install — no engine."
@@ -318,13 +325,15 @@ fi
 # The engine defaults to a CUDA device and only honours a CPU runtime when told
 # explicitly: `--cpu` (comfy/cli_args.py) sets CPUState.CPU; without it,
 # model_management.resolve_device falls through to torch.cuda.current_device()
-# and a CPU-only torch dies with "Torch not compiled with CUDA enabled". The
-# install above chose the torch variant from $gpu_flags, so lock the runtime to
-# the SAME result — never rebootstrapped from scratch-level hardware probing,
-# so a refresh after a GPU swap re-runs the same resolution and stays consistent
-# with whatever venv actually exists.
+# and a CPU-only torch dies with "Torch not compiled with CUDA enabled". So the
+# runtime follows the torch build that IS in the venv (its local tag: +cpu,
+# +rocm7.2, +cu128, +xpu), never a fresh hardware probe — a refresh after a GPU
+# swap keeps matching the venv that actually exists. Only with no torch to read
+# (the build above failed) does the flag it was asked for decide.
 ENGINE_CPU_FLAG=""
-[[ "$gpu_flags" == *"--cpu"* ]] && ENGINE_CPU_FLAG="--cpu"
+torch_info="$(compgen -G "$ROOT/app/.venv/lib/python3*/site-packages/torch-*.dist-info" | head -n1)"
+if [[ -n "$torch_info" ]]; then [[ "$torch_info" == *+cpu.dist-info ]] && ENGINE_CPU_FLAG="--cpu"
+else [[ "$gpu_flags" == *"--cpu"* ]] && ENGINE_CPU_FLAG="--cpu"; fi
 
 # ── 7. Drop-in: lock the runtime to the chosen paths/config (never edit vendor) ─
 # /etc/systemd/system/comfyui.service.d/10-w.conf overrides the shipped unit's

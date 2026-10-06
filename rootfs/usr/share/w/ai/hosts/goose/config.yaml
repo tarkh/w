@@ -92,11 +92,14 @@ extensions:
     display_name: Summon
     bundled: true
 
-  # Lets the model itself discover/enable/disable extensions at runtime — would
-  # let it silently re-enable anything we pin off below, defeating the point of
-  # this whole block. Off.
+  # Lets the model find extensions that are configured but off and turn one on
+  # for the session. On: it is how W's pack MCP servers (mcp.d) load on demand —
+  # w-ai hands them over disabled (goose_mcp_layer), so a request carries none of
+  # their tool schemas until one is needed. Under w-ai the W guard plugin
+  # (~/.agents/plugins/w-guard) confines it to exactly those servers: turning on
+  # anything pinned off below, or off w-mcp/developer, is refused.
   extensionmanager:
-    enabled: false
+    enabled: true
     type: platform
     name: Extension Manager
     description: Enable extension management tools for discovering, enabling, and disabling extensions
@@ -152,6 +155,17 @@ extensions:
     display_name: Orchestrator
     bundled: true
 
+  # New in goose 1.50, on upstream by default: host-local scheduled recipe runs.
+  # Off for the reason orchestrator's note gives — W schedules through its own
+  # systemd timers (w_schedule_*), one audited place for every host.
+  scheduler:
+    enabled: false
+    type: platform
+    name: scheduler
+    description: Create and manage scheduled recipe execution
+    display_name: Scheduler
+    bundled: true
+
   # Off upstream already — an extra LLM call per use, no clear need. Pinned
   # explicitly for the same reason as chatrecall above.
   summarize:
@@ -162,10 +176,11 @@ extensions:
     display_name: Summarize
     bundled: true
 
-  # Off upstream already, and physically unavailable in our goose build (gated
-  # behind the "code-mode" cargo feature) — pinned off for documentation, not
-  # because it does anything on this binary. Revisit as a §7 (token
-  # optimization) idea if a future goose build ships the feature.
+  # Off upstream already. Code Mode: every non-platform tool — w-mcp's
+  # included — leaves the tool list and is reached only from model-written
+  # TypeScript (list_functions / execute_typescript). Saves tokens on strong
+  # models, breaks weak and local ones; W's pack servers load on demand instead
+  # (extensionmanager above). The W guard refuses turning it on mid-session.
   code_execution:
     enabled: false
     type: platform

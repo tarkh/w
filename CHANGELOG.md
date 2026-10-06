@@ -8,6 +8,58 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.22.0
+
+- **3D pack.** `w-pack install 3d` sets up Blender 5 with the Cycles GPU runtime
+  for your card (AMD HIP, Intel Arc oneAPI; NVIDIA renders through its driver).
+  The W assistant can build and edit scenes in a running Blender — inspect them,
+  run code, take viewport screenshots, export — with Blender's safe mode on and
+  its telemetry off. Blender follows your W theme live; a theme preset you pick
+  in Blender yourself is left alone. Every Open/Save dialog in Blender opens at
+  the same size as the rest of W. The pack is heavy: about 2.5 GiB with its
+  dependencies. On an AMD machine whose processor has integrated graphics,
+  Cycles lists the iGPU as a second HIP device named after the CPU — untick it
+  in Preferences → System, or renders split onto the slower chip.
+- **Engine upgrades for ComfyUI and InvokeAI.** Both install their engine from
+  upstream, so system updates never moved it. `w-pack outdated` now shows the
+  installed and the newest stable version, and `sudo w-pack upgrade` moves it:
+  the service is stopped (refused while it is busy), a rollback point is
+  recorded, and if the new version fails to start and answer, the previous one
+  is put back. To hold a specific version, set it with
+  `w-conf set comfyui VERSION <x.y.z>` (or `invokeai`). Available engine
+  upgrades show up in `w-update status` and in Hub → Packs with an Update
+  button; they are never counted in the bar's update badge and
+  `w-update upgrade` never runs them. The assistant can plan and apply the
+  upgrade too.
+- **Ollama models live in the shared AI model store.** With the `ai-extra`
+  pack, Ollama now keeps its models in `ollama/` inside the machine-wide store
+  (`/var/lib/w/ai-models` by default) and follows `w-conf set ai-models DIR`
+  like ComfyUI and InvokeAI. Models already in `/var/lib/ollama` are moved
+  there once, during this update (instantly on Btrfs; otherwise copied, verified
+  and only then removed). If both places already hold models, the store wins and
+  `/var/lib/ollama` is left for you to merge by hand.
+- **The assistant answers everyday requests lighter.** In the default goose
+  host, tools of installed packs (Blender, GIMP, Inkscape) are no longer sent
+  with every request; the assistant turns a pack's tools on when a task needs
+  them, within the same turn. A plain question now carries 58 KB instead of up
+  to 128 KB — faster and cheaper on paid models.
+- **Screen Recording in the launcher**, next to Screenshot: it opens the region
+  selector and starts recording; launching it again stops the take.
+- **Every Open/Save dialog opens at one size** — floating and centred at
+  1000×640, in every app. Some GTK dialogs used to open tiled, and GTK saved
+  that full-height tile as your size for every app afterwards. If your dialogs
+  still open stretched after the update, that saved size is yours and W leaves
+  it alone; reset it once with
+  `gsettings reset org.gtk.Settings.FileChooser window-size`.
+  LibreOffice dialogs opened from the Start Center no longer tile either.
+- **Terminal launches follow your terminal.** Nemo's "Open in Terminal" did
+  nothing (it looked for gnome-terminal, which W does not ship); it now opens
+  your selected terminal in that folder. Apps marked to run in a terminal and
+  `gio launch` also use it, through the standard `xdg-terminal-exec` package,
+  which this update installs.
+- **foot gets blur.** With foot as your terminal, background blur now follows
+  the blur setting, including the Hub override; before, foot was never blurred.
+
 ## v0.21.0
 
 - **InvokeAI pack.** `w-pack install invokeai` sets up InvokeAI, an image

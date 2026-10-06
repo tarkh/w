@@ -1,0 +1,3 @@
+# W: xdg-terminal-exec launches the terminal through w-term, the single place that
+# knows the selected one (w-term set). Override per user: ~/.config/xdg-terminals.list
+w-term.desktop

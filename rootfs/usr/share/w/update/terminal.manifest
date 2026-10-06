@@ -9,6 +9,10 @@
 #     with `w-term set <name>` (→ ~/.config/w/terminal.conf, created on demand).
 #   • /etc/w/terminal.conf — this machine's DEVIATION only. Class override.
 #
+#   • /etc/xdg/xdg-terminals.list — xdg-terminal-exec's pick: w-term.desktop, so
+#     Terminal=true apps and `gio launch` follow w-term. Class managed; a user
+#     overrides with ~/.config/xdg-terminals.list (spec, not a W file).
+#
 # TERMINAL_OPTS is a shell ARRAY, so the layered reader cannot represent it and
 # w-term sources that one key itself — see w-conf.md.
 #
@@ -21,4 +25,5 @@
 /usr/share/w/defaults/terminal.conf	managed
 /usr/share/w/defaults/terminal.schema	managed
 /etc/w/terminal.conf	override
+/etc/xdg/xdg-terminals.list	managed
 .config/w/terminal.conf	user-conf

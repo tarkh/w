@@ -27,6 +27,12 @@
 # env-hyprland at graphical-session-pre → active from the next login.
 /etc/w/env.d/office.sh	managed
 
+# Window rule (Hyprland drop-in, require()d by hyprland.lua with a wildcard):
+# floats LibreOffice's `soffice`-class dialogs, which tile when opened from the
+# Start Center (no transient parent). w-pack reloads running sessions on
+# install/remove.
+/usr/share/w/hypr/rules.d/office.lua	managed
+
 # Vault-registry watcher: re-renders the Obsidian axis for the account whenever
 # ~/.config/obsidian/obsidian.json changes (vault created/opened), so a vault
 # created after the last render is themed at once. Enabled per account by

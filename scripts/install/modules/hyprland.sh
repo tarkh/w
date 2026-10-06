@@ -11,12 +11,15 @@ mod_hyprland() {
     qt5-wayland \
     qt6-wayland \
     ghostty \
-    foot
+    foot \
+    xdg-terminal-exec
 
   info "Deploying w-term (single terminal entry point)..."
   # Every W surface (binds, bar, hub, launcher) launches the terminal via w-term;
   # it maps the active terminal to its fastest systemd/D-Bus-correct invocation.
   install -Dm755 "$SRC/rootfs/usr/bin/w-term" /usr/bin/w-term
+  # xdg-terminal-exec (GLib's first terminal choice: Terminal=true apps, `gio
+  # launch`) picks /etc/xdg/xdg-terminals.list → w-term.desktop, both via rootfs.
   # Vendor default selection (TERMINAL=ghostty). Seed-if-absent so an admin edit to
   # /etc/w/terminal.conf survives re-apply; per-user override is ~/.config/w/terminal.conf.
   if [[ ! -f /etc/w/terminal.conf ]]; then

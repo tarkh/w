@@ -32,6 +32,7 @@ ROOT="$(wconf_get invokeai ROOT /var/lib/w/invokeai)"
 LISTEN="$(wconf_get invokeai LISTEN 127.0.0.1)"
 PORT="$(wconf_get invokeai PORT 9090)"
 GPU="$(wconf_get invokeai GPU auto)"
+VERSION="$(wconf_get invokeai VERSION latest)"   # the release a fresh venv gets
 DIR="$(wconf_get ai-models DIR /var/lib/w/ai-models)"
 
 # ── 1. Path validation ────────────────────────────────────────────────────────
@@ -178,6 +179,7 @@ elif ! command -v uv >/dev/null 2>&1; then
   warn "uv not found — InvokeAI cannot be installed. Install uv (apply.sh --uv) and run 'w-pack refresh invokeai'."
 else
   pick_backend
+  pkg=invokeai; [[ "$VERSION" == latest ]] || pkg="invokeai==${VERSION#v}"
   info "Installing InvokeAI into $VENV (torch backend: $backend)..."
   run_as_invoke mkdir -p "$ROOT/app"
   # rocm7.2, not the rocm7.1 the manual still names: torch 2.12 on the 7.1 index
@@ -186,7 +188,7 @@ else
   if run_as_invoke uv venv --relocatable --prompt invoke --python 3.12 \
        --python-preference only-managed "$VENV" \
      && run_as_invoke uv pip install --python "$VENV/bin/python" \
-       --python-preference only-managed --torch-backend="$backend" invokeai; then
+       --python-preference only-managed --torch-backend="$backend" "$pkg"; then
     info "InvokeAI $("$VENV/bin/python" -c 'import importlib.metadata as m; print(m.version("invokeai"))' 2>/dev/null) installed."
   else
     # A half-built venv would pass the guard above on the next refresh only if

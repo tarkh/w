@@ -1,7 +1,7 @@
 # w-mcp domain: packs — optional software bundles (W-Packs): list/status (Tier 0)
-# + install (Tier 2, via com.w.ai.actuate).
+# + install and engine upgrade (Tier 2, via com.w.ai.actuate).
 import re
-from typing import Annotated
+from typing import Annotated, Literal
 
 from core import _actuate, _disabled_msg, _tool_on, desc, run, tool
 
@@ -47,3 +47,25 @@ def register(mcp):
         if not re.fullmatch(r"[a-z0-9-]+", b):
             return "(bundle must be a bare name like 'containers')"
         return _actuate("pack-install", b, timeout=1800)
+
+    @tool(mcp, domain=DOMAIN)
+    def w_pack_upgrade(
+        action: Annotated[Literal["plan", "apply"], desc("plan = read-only: installed vs target engine version per bundle, run it FIRST; apply = privileged (polkit) `w-pack upgrade <bundle>`")] = "plan",
+        bundle: Annotated[str, desc("one bundle; plan may omit it (all), apply requires it")] = "",
+    ) -> str:
+        """Upgrade a pack's engine installed outside pacman (comfyui, invokeai) —
+        Tier 2 on apply (polkit prompt). Two-step: plan → tell the user the move
+        and its cost, get an explicit go-ahead → apply. Apply stops the engine
+        (minutes, may download GBs) and rolls back by itself on failure; a busy
+        engine refuses. Workflow: the w-packs skill. Gated by W_AI_TOOL_PACKS."""
+        b = bundle.strip()
+        if b and not re.fullmatch(r"[a-z0-9-]+", b):
+            return "(bundle must be a bare name like 'comfyui')"
+        act = action.strip().lower()
+        if act in ("", "plan"):
+            return run(["w-pack", "outdated", *([b] if b else [])], timeout=120)
+        if not _tool_on("PACKS"):
+            return _disabled_msg("w_pack_upgrade", "W_AI_TOOL_PACKS")
+        if not b:
+            return "(name the bundle to upgrade; see w_pack_upgrade('plan'))"
+        return _actuate("pack-upgrade", b, timeout=3600)

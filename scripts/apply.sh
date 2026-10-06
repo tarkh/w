@@ -284,6 +284,12 @@ apply_rootfs() {
     /usr/share/w/ai/llms.txt   # 2026-09-14: the skill catalog is generated (w-mcp instructions)
   )
   rm -f "${retired[@]}"
+  # A path the repo retired that a PACKAGE now owns: remove only while unowned, or
+  # every apply would delete the package's file. apply_rootfs runs before any
+  # pacman step, so the install below no longer hits "exists in filesystem".
+  # 2026-10-06: W's own /usr/bin/xdg-terminal-exec shim (dev-edge only, never
+  # released) → extra/xdg-terminal-exec. Drop once no dev-edge machine carries it.
+  pacman -Qqo /usr/bin/xdg-terminal-exec &>/dev/null || rm -f /usr/bin/xdg-terminal-exec
 
   # Record the /etc paths W ships, so the .pacnew reconciler (alpm hook
   # 96-w-pacnew-reconcile) knows which .pacnew are W-owned noise and can drop them.

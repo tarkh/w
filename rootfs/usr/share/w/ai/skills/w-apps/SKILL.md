@@ -9,7 +9,7 @@ description: >-
   questions.
 sources:
   - path: .claude/library/package-files.md
-    sha256: 4a7d8310cfc989001c09688193b3f82df60a7931965bdc19a7ec69b60ba208da
+    sha256: 85da1d2fccfd07be804443763a7fdde37727878e1b6c85d3288413f72c23b504
   - path: .claude/library/package-printing.md
     sha256: c994a8ed2d35da6357a5251ab80d769c45f3fcd386905b1c2d4fdfe734b1257d
 ---
@@ -25,7 +25,7 @@ defaults. Files come from `apply.sh --files`, printing/scanning from
 | Kind | App | Notes |
 |---|---|---|
 | Files (CLI) | **yazi** | terminal file manager, themed (`yazi` w-style axis) |
-| Files (GUI) | **Nemo** | GTK3 file manager |
+| Files (GUI) | **Nemo** | GTK3 file manager; right-click → Open in Terminal opens the W terminal (`w-term`) in that folder |
 | Images | **imv** | `image/*` |
 | Video / audio | **mpv** | `video/*` + `audio/*`; `vo=gpu-next`; audio-only files get a 20-band visualizer |
 | PDF / EPUB / CBZ / XPS | **zathura** | dark `recolor` reading by default |
@@ -35,6 +35,21 @@ defaults. Files come from `apply.sh --files`, printing/scanning from
 Defaults are set through `mimeapps.list` (imv→images, mpv→video+audio,
 zathura→documents). To change a default, edit the user `~/.config/mimeapps.list` or
 use a file manager's "Open With → set default".
+
+## Open / Save dialogs (file pickers)
+
+- One size for every "pick a file" window: **1000x640** (logical px) on first open.
+  GTK apps (GIMP, Firefox, LibreOffice, Nemo) and portal callers (Chromium/Electron
+  apps such as Zed, Flatpak) share ONE GTK file chooser whose size GTK itself
+  remembers in gsettings — resize it once and every GTK app keeps that size, across
+  reboots. Dialogs that remember nothing themselves — File Roller (GTK4), Krita and
+  flameshot (Qt), Blender's file browser — get the same size from Hyprland window
+  rules in `/usr/share/w/hypr/rules.d/` (`dialogs.lua`, `graphics.lua`,
+  `flameshot.lua`, `3d.lua`); those reopen at 1000x640, a resize is not kept.
+- **Dialog opens huge (full height) or oddly sized in every GTK app** → a stale saved
+  size (typically recorded once while a dialog was tiled). Reset it, then reopen:
+  `gsettings reset org.gtk.Settings.FileChooser window-size`. A new W default reaches
+  already-running apps (and the portal) only after re-login.
 
 ## Mounting drives & network shares
 
