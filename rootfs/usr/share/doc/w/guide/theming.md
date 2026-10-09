@@ -1,6 +1,7 @@
 ---
 title: Themes and wallpapers
 section: guide
+category: desktop
 order: 2
 summary: Switching themes, creating a theme from a wallpaper, wallpaper sets, and the Appearance panel.
 sources:

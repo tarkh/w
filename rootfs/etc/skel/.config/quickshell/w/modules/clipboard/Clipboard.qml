@@ -285,7 +285,7 @@ Scope {
                         // the edge); delegates inset the same 8 so rows stay put and only
                         // the shared scrollbar moves near the window edge.
                         width: parent.width + 8
-                        height: parent.height - search.height - footer.height - parent.spacing * 2
+                        height: parent.height - search.height - footerHints.height - parent.spacing * 2
                         clip: true
                         model: root.view()
                         currentIndex: 0
@@ -457,7 +457,7 @@ Scope {
 
                     // ── Footer hints ──────────────────────────────────────────
                     Item {
-                        id: footer
+                        id: footerHints
                         width: parent.width
                         height: 18
 

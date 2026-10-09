@@ -58,6 +58,7 @@ W machine with `w-info`.
 - [`w-dns`](reference/w-dns.md) — Switch DNS provider and DNS-over-TLS mode (systemd-resolved).
 - [`w-fingerprint`](reference/w-fingerprint.md) — Enrol, list and delete the fingerprints of the current user.
 - [`w-firewall`](reference/w-firewall.md) — Toggle the firewall zone between home and public (firewalld).
+- [`w-help`](reference/w-help.md) — Open the W documentation in the Help window.
 - [`w-hotkeys`](reference/w-hotkeys.md) — Manage Hyprland keybindings — profiles, catalog, custom binds.
 - [`w-info`](reference/w-info.md) — List all W tools with a one-line description of each.
 - [`w-kbdlight`](reference/w-kbdlight.md) — Keyboard backlight — level, media keys, and light at the LUKS prompt.

@@ -1,6 +1,7 @@
 ---
 title: Security
 section: guide
+category: system
 order: 3
 summary: What W enables out of the box — hardening, sudo-rs, firewall, encrypted DNS, keyring, firmware updates, fingerprint and Secure Boot controls.
 sources:

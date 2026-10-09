@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>w-pack · W Linux</title>
+<meta name="description" content="Установка и просмотр дополнительных наборов ПО W (паков).">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../ru/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Меню" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../ru/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Документация</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Поиск по документации" aria-label="Поиск" autocomplete="off" spellcheck="false" data-empty="Ничего не найдено">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><a href="../../en/reference/w-pack.html" hreflang="en">en</a><b>ru</b></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Начало</h2><ul><li><a href="../index.html">Документация W Linux</a></li><li><a href="../hotkeys.html">Горячие клавиши</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Рабочий стол</h2><ul><li><a href="../guide/theming.html">Темы и обои</a></li><li><a href="../guide/desktop.html">Рабочий стол</a></li><li><a href="../guide/displays.html">Мониторы и ночной свет</a></li><li><a href="../guide/input.html">Клавиатура, мышь и тачпад</a></li></ul><h2>Система</h2><ul><li><a href="../guide/updates.html">Поддержание W в актуальном состоянии</a></li><li><a href="../guide/security.html">Безопасность</a></li><li><a href="../guide/network.html">Сеть, DNS и фаервол</a></li><li><a href="../guide/power.html">Питание и батарея</a></li><li><a href="../recovery.html">Восстановление — когда W не загружается или загружается неправильно</a></li></ul><h2>Программы</h2><ul><li><a href="../guide/packs.html">Наборы — опциональные пакеты софта</a></li></ul><h2>ИИ</h2><ul><li><a href="../guide/ai.html">Ассистент ИИ</a></li></ul><h2>Справочник</h2><ul><li><a href="index.html">Команды</a><ul><li><a href="w-ai.html">w-ai</a></li><li><a href="w-appearance.html">w-appearance</a></li><li><a href="w-bar.html">w-bar</a></li><li><a href="w-conf.html">w-conf</a></li><li><a href="w-crypt.html">w-crypt</a></li><li><a href="w-dns.html">w-dns</a></li><li><a href="w-fingerprint.html">w-fingerprint</a></li><li><a href="w-firewall.html">w-firewall</a></li><li><a href="w-help.html">w-help</a></li><li><a href="w-hotkeys.html">w-hotkeys</a></li><li><a href="w-info.html">w-info</a></li><li><a href="w-kbdlight.html">w-kbdlight</a></li><li><a href="w-kernel.html">w-kernel</a></li><li><a href="w-keyboard.html">w-keyboard</a></li><li><a href="w-langpack.html">w-langpack</a></li><li><a href="w-locale.html">w-locale</a></li><li><a href="w-logs.html">w-logs</a></li><li><a href="w-mirrors.html">w-mirrors</a></li><li><a href="w-monitor.html">w-monitor</a></li><li><a href="w-nightlight.html">w-nightlight</a></li><li><a href="w-notify.html">w-notify</a></li><li><a href="w-pack.html" aria-current="page">w-pack</a></li><li><a href="w-pointer.html">w-pointer</a></li><li><a href="w-power.html">w-power</a></li><li><a href="w-record.html">w-record</a></li><li><a href="w-reset.html">w-reset</a></li><li><a href="w-rollback.html">w-rollback</a></li><li><a href="w-screenshot.html">w-screenshot</a></li><li><a href="w-secureboot.html">w-secureboot</a></li><li><a href="w-session.html">w-session</a></li><li><a href="w-ssh.html">w-ssh</a></li><li><a href="w-style.html">w-style</a></li><li><a href="w-sync.html">w-sync</a></li><li><a href="w-term.html">w-term</a></li><li><a href="w-theme.html">w-theme</a></li><li><a href="w-time.html">w-time</a></li><li><a href="w-update.html">w-update</a></li><li><a href="w-userdirs.html">w-userdirs</a></li><li><a href="w-wallpaper.html">w-wallpaper</a></li></ul></li></ul></nav>
+  <main>
+    <article>
+      <h1>w-pack</h1>
+      <p><code>w-pack</code> — Установка и просмотр дополнительных наборов ПО W (паков).</p>
+<h2 id="использование">Использование <a class="anchor" href="#использование" aria-hidden="true">#</a></h2>
+<pre><code>Использование: <span class="w">w-pack</span> &lt;команда&gt; [бандл] [<span class="f">--user</span> &lt;имя&gt;] [<span class="f">--porcelain</span>] [<span class="f">--packages</span>]
+                     [<span class="f">--yes</span>] [<span class="f">--force</span>]
+
+Info: Установка и просмотр дополнительных наборов ПО W (паков).
+
+Дополнительные наборы ПО (W-Packs) — необязательные надстройки над базой.
+У бандла есть МАШИННЫЙ слой (пакеты, системный конфиг, службы — ставится один раз,
+нужен root) и ПОЛЬЗОВАТЕЛЬСКИЙ слой (его инструменты и конфиг в вашем доме).
+
+Команды:
+  list                 Список доступных бандлов и их состояние
+  install &lt;бандл&gt;      Установить бандл: машинный слой, затем ваш пользовательский
+  setup &lt;бандл&gt;        Настроить уже установленный бандл для ВАШЕЙ учётной записи
+                       (без root и polkit — пишет только в ваш домашний каталог)
+  refresh [&lt;бандл&gt;]    Переприменить установленные бандлы из готового дерева,
+                       НЕ трогая пакеты (конфиг + <span class="w">w-style</span> + AI-скил + setup)
+  remove &lt;бандл&gt;       Размотать проводку W: пользовательские слои, машинный
+                       teardown, конфиг во владении W, оси темы, AI-скил и
+                       состояние. Пакеты и данные остаются (см. <span class="f">--packages</span>)
+  unsetup &lt;бандл&gt;      Отменить только слой ВАШЕЙ учётной записи, не трогая
+                       машину и остальных (без root, как `setup`)
+  status [&lt;бандл&gt;]     Показать, что установлено (всё или один бандл)
+  outdated [&lt;бандл&gt;]   Сравнить ПО, которое бандл ставит МИМО pacman (например,
+                       AI-движок), с версией, на которой оно должно стоять
+  upgrade [&lt;бандл&gt;]    Перевести это ПО на версию, которую называет `outdated`,
+                       показав план; при неудаче само откатывается
+  help                 Показать эту справку
+
+Параметры:
+  <span class="f">--user</span> &lt;имя&gt;         Работать для другой учётной записи (только root; иначе
+                       вызвавший пользователь, либо SUDO_USER / основной uid-1000)
+  <span class="f">--porcelain</span>          Машиночитаемый `list`, по бандлу на строку:
+                       &lt;имя&gt; TAB &lt;machine:yes|no&gt; TAB &lt;user:yes|no|n/a&gt; TAB &lt;опис&gt;
+                       и `outdated`: &lt;бандл&gt; TAB &lt;компонент&gt; TAB &lt;стоит&gt; TAB &lt;цель&gt;
+  <span class="f">--all</span>                Для `list`: показать и бандлы, которых нет в каталогах
+                       (AUDIENCE=maintainer — инструменты разработки самой W)
+  <span class="f">--packages</span>           Для `remove`: удалить и пакеты бандла, кроме тех, что
+                       перечисляет другой установленный бандл. Без флага точная
+                       строка `pacman <span class="f">-Rns</span>` только печатается
+  <span class="f">--yes</span>                Для `upgrade`: не спрашивать перед началом
+  <span class="f">--force</span>              Для `upgrade`: идти, даже если движок занят
+                       (идущая генерация будет прервана)
+
+Заметки:
+  install, refresh, upgrade и remove требуют root (пакеты + системные пути);
+  setup, unsetup и outdated — нет.
+  Бандлы самодостаточны и лежат в $PACKS_DIR; состояние машины пишется в
+  $STATE, ваш собственный слой — в ~/$USER_STATE_REL.
+  Бандл может объявить AUDIENCE=maintainer: это не продукт, а инструментарий для
+  разработки самой W, поэтому его не предлагает ни один каталог — ни чеклист
+  инсталлера, ни Хаб, ни AI-тулы; добраться до него можно только через
+  `<span class="w">w-pack</span> list <span class="f">--all</span>` или установкой по имени. После установки он перечисляется
+  как обычный: машина обязана уметь сказать, что на ней стоит.
+  Бандл может также объявить `pre.sh`: шаг от root, исполняемый ДО его пакетов —
+  включение репозитория, синхронизация pacman, разрешение пакета в
+  аппаратном варианте, который виртуальный провайдер иначе выбрал бы неверно.
+  `refresh` никогда его не переигрывает — та же политика, что и для пакетов.
+  Бандл, установленный кем-то другим, НЕ настраивается для вас автоматически — это
+  потратило бы ваш диск и трафик на выбор, которого вы не делали. `<span class="w">w-pack</span> list`
+  говорит об этом прямо, а `<span class="w">w-pack</span> setup &lt;бандл&gt;` — единственная команда, которая
+  это чинит.
+  refresh — то, что вызывает обновление: `<span class="w">w-sync</span> update` запускает его после apply,
+  затронувшего дерево бандлов, чтобы идемпотентная настройка бандла (маркированные
+  области, drop-in&#x27;ы, чистка старых раскладок) переигрывалась на каждой машине,
+  а не ждала, пока кто-то переустановит бандл руками. Пользовательский слой
+  для каждой учётной записи, у которой он уже есть, — и только для них.
+  remove отменяет то, что СДЕЛАЛ W, а не то, что установили вы: состояние, конфиг
+  во владении W, оси темы, AI-скил и собственные шаги teardown бандла. Ваши пакеты
+  и ваши данные остаются — строка `pacman <span class="f">-Rns</span>` печатается для вас, а пути ценой
+  в гигабайты (хранилища моделей и образов, тулчейны) только называются. Чтобы
+  вернуть конфиг бандла к дефолту W, НЕ удаляя его, используйте
+  `<span class="w">w-reset</span> &lt;бандл&gt;`.
+  upgrade — единственная команда, которая двигает то, чего не видит pacman:
+  собственный движок бандла, поставленный из апстрима в его дерево. Ни
+  `<span class="w">w-update</span>`, ни refresh этого не делают никогда: обновление движка качает
+  гигабайты и может сломать рабочую настройку, поэтому оно происходит только по
+  вашей просьбе. Цель — новейший стабильный релиз апстрима, если ключ VERSION
+  бандла не держит его на одной версии (`sudo <span class="w">w-conf</span> set comfyui VERSION 0.38.2`).
+  Движок останавливается, записывается точка отката, новая версия обязана
+  стартовать и ответить — иначе возвращается прежняя.
+
+Коды выхода:
+  0  Успех
+  1  Ошибка выполнения (неизвестный бандл, нет источника, нет прав)
+  2  Ошибка вызова
+
+Примеры:
+  <span class="w">w-pack</span> list
+  <span class="w">w-pack</span> list <span class="f">--all</span>                  <span class="c"># включая бандлы, которых нет в каталогах</span>
+  sudo <span class="w">w-pack</span> install containers
+  <span class="w">w-pack</span> setup ai-extra              <span class="c"># догнать свою учётную запись, без sudo</span>
+  sudo <span class="w">w-pack</span> refresh
+  <span class="w">w-pack</span> status
+  <span class="w">w-pack</span> outdated                    <span class="c"># у чего есть новая версия в апстриме</span>
+  sudo <span class="w">w-pack</span> upgrade comfyui        <span class="c"># показать план, спросить, обновить</span>
+  sudo <span class="w">w-pack</span> remove containers      <span class="c"># размотать; podman остаётся установленным</span>
+  sudo <span class="w">w-pack</span> remove dev <span class="f">--packages</span>  <span class="c"># ...и забрать заодно его пакеты</span>
+  <span class="w">w-pack</span> unsetup dev                 <span class="c"># только моя учётная запись, без sudo</span></code></pre>
+<p>Эта страница генерируется из собственной справки команды (w-docs-refgen). Живая
+версия того же текста на машине с W: <code>w-pack help</code>.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="w-notify.html"><small>Назад</small>w-notify</a><a class="next" href="w-pointer.html"><small>Далее</small>w-pointer</a></nav>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

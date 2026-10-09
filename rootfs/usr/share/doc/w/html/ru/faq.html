@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FAQ · W Linux</title>
+<meta name="description" content="Короткие ответы на частые вопросы.">
+<link rel="icon" href="../assets/logo.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../ru/search-index.js" defer></script>
+<script src="../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Меню" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../ru/index.html"><img src="../assets/logo.svg" alt="W Linux"><span>Документация</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Поиск по документации" aria-label="Поиск" autocomplete="off" spellcheck="false" data-empty="Ничего не найдено">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><a href="../en/faq.html" hreflang="en">en</a><b>ru</b></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Начало</h2><ul><li><a href="index.html">Документация W Linux</a></li><li><a href="hotkeys.html">Горячие клавиши</a></li><li><a href="faq.html" aria-current="page">FAQ</a></li></ul><h2>Рабочий стол</h2><ul><li><a href="guide/theming.html">Темы и обои</a></li><li><a href="guide/desktop.html">Рабочий стол</a></li><li><a href="guide/displays.html">Мониторы и ночной свет</a></li><li><a href="guide/input.html">Клавиатура, мышь и тачпад</a></li></ul><h2>Система</h2><ul><li><a href="guide/updates.html">Поддержание W в актуальном состоянии</a></li><li><a href="guide/security.html">Безопасность</a></li><li><a href="guide/network.html">Сеть, DNS и фаервол</a></li><li><a href="guide/power.html">Питание и батарея</a></li><li><a href="recovery.html">Восстановление — когда W не загружается или загружается неправильно</a></li></ul><h2>Программы</h2><ul><li><a href="guide/packs.html">Наборы — опциональные пакеты софта</a></li></ul><h2>ИИ</h2><ul><li><a href="guide/ai.html">Ассистент ИИ</a></li></ul><h2>Справочник</h2><ul><li><a href="reference/index.html">Команды</a></li></ul></nav>
+  <main>
+    <article>
+      <h1>FAQ</h1>
+      <p>Я поддерживаю эту страницу актуальной, пересматривая её при каждом релизе
+W. Где вопросу нужны подробности, ответ ссылается на раздел или страницу
+восстановления, а не повторяет их.</p>
+<h2 id="общее">Общее <a class="anchor" href="#общее" aria-hidden="true">#</a></h2>
+<p><strong>Что такое W?</strong>
+Дистрибутив на базе Arch Linux с готовым рабочим столом Hyprland/Quickshell,
+собственными инструментами <code>w-*</code> для того, что нужно рабочему столу
+(обновления, темы, сеть, безопасность, восстановление), и автоматическими
+снапшотами. Список инструментов — <code>w-info</code>.</p>
+<p><strong>Где лежат файлы конфигурации?</strong>
+Управляемые W файлы живут в <code>/usr/share/w/defaults</code> (вендор), <code>/etc/w</code>
+(машина), <code>~/.config/w</code> (пользователь). Переопределять по вкусу — нормально,
+а сброс к значениям W — одна команда на область: см. <code>w-reset</code>.</p>
+<p><strong>Как узнать, что делает команда <code>w-*</code>?</strong>
+<code>w-info</code> их перечисляет; <code>w-&lt;tool&gt; help</code> печатает справку каждого
+инструмента; в справочнике команд этой документации есть страница на
+каждый инструмент.</p>
+<h2 id="обновления-и-восстановление">Обновления и восстановление <a class="anchor" href="#обновления-и-восстановление" aria-hidden="true">#</a></h2>
+<p><strong>Обновление сломало систему. Как откатиться?</strong>
+Перезагрузитесь, выберите снапшот перед обновлением в меню загрузки и
+следуйте <a href="recovery.html">Восстановление</a> (копия есть на диске). Snapper
+хранит несколько последних транзакций.</p>
+<p><strong>Почему обновление говорит «нужна перезагрузка»?</strong>
+Работающее ядро отличается от установленного. Перезагрузка, предложенная
+<code>w-update</code>, сначала аккуратно закрывает окна — отмените диалог сохранения,
+и перезагрузка отменится.</p>
+<p><strong>Что такое <code>w-sync</code> и канал «edge»?</strong>
+W обновляет свои <em>пакеты</em> через <code>w-update</code>, а собственную конфигурацию —
+через канал edge (<code>w-sync</code>). Стабильный канал запланирован, но пока не
+запущен.</p>
+<h2 id="рабочий-стол">Рабочий стол <a class="anchor" href="#рабочий-стол" aria-hidden="true">#</a></h2>
+<p><strong>Экран стал чёрным / монитор пропал после смены настроек дисплея.</strong>
+W защищает от потери последнего включённого выхода, и если что-то всё же
+проскочило, <code>w-monitor reset --all</code> из текстовой консоли (Ctrl+Alt+F2)
+возвращает разумные значения по умолчанию. Подробности — в
+<a href="guide/displays.html#%D1%87%D1%91%D1%80%D0%BD%D1%8B%D0%B9-%D1%8D%D0%BA%D1%80%D0%B0%D0%BD-%D0%BF%D0%BE%D1%81%D0%BB%D0%B5-%D1%81%D0%BC%D0%B5%D0%BD%D1%8B-%D0%B4%D0%B8%D1%81%D0%BF%D0%BB%D0%B5%D0%B5%D0%B2">разделе о мониторах</a>
+и в <a href="recovery.html">Восстановление</a>.</p>
+<p><strong>Считыватель отпечатков перестал разблокировать.</strong>
+Перезапишите палец через <code>w-fingerprint</code> (или <strong>Хаб → Ввод → Отпечаток</strong>);
+обычный пароль как запасной вариант всегда работает.</p>
+<p><strong>Окно, которое я закрыл, снова появляется после входа.</strong>
+Это восстановление сессии, включённое по умолчанию. Выключите его или
+исключите приложение в <strong>Хаб → Система → Сессия</strong>; см.
+<a href="guide/desktop.html">раздел о рабочем столе</a>.</p>
+<p><strong>Почему мой ноутбук уходит в сон позже, чем я задал?</strong>
+Три таймера простоя — это цепочка, а не три секундомера: экран гаснет
+через заданное время <em>после блокировки</em>, а сон наступает через заданное
+время <em>после гашения экрана</em>. Под каждой строкой в <strong>Хаб → Энергия</strong>
+показано итоговое абсолютное время — см.
+<a href="guide/power.html#%D0%BF%D1%80%D0%BE%D1%81%D1%82%D0%BE%D0%B9-%D0%B1%D0%BB%D0%BE%D0%BA%D0%B8%D1%80%D0%BE%D0%B2%D0%BA%D0%B0-%D0%BF%D0%BE%D1%82%D0%BE%D0%BC-%D0%B3%D0%B0%D1%88%D0%B5%D0%BD%D0%B8%D0%B5-%D1%8D%D0%BA%D1%80%D0%B0%D0%BD%D0%B0-%D0%BF%D0%BE%D1%82%D0%BE%D0%BC-%D1%81%D0%BE%D0%BD">раздел о питании</a>.</p>
+<h2 id="программы">Программы <a class="anchor" href="#программы" aria-hidden="true">#</a></h2>
+<p><strong>Как установить то, чего нет в моём списке?</strong>
+<code>yay</code> покрывает репозитории и AUR; песочница для сторонних приложений —
+Flatpak/Bazaar, это опциональный набор <code>flatpak</code> (<code>sudo w-pack install flatpak</code>). Всё, что установлено так, снапшотится, как и обновление.</p>
+<p><strong>Пак говорит, что он есть на машине, но не настроен для меня.</strong>
+У пака есть половина машины (пакеты, устанавливаются один раз, нужен
+администратор) и половина на аккаунт, которая намеренно не делается за всех
+автоматически. Нажмите <strong>Настроить</strong> в <strong>Хаб → Наборы</strong>, либо выполните
+<code>w-pack setup &lt;name&gt;</code> — пароль не нужен. См.
+<a href="guide/packs.html#%D1%83%D1%81%D1%82%D0%B0%D0%BD%D0%BE%D0%B2%D0%BA%D0%B0-%D0%B8-%D0%BD%D0%B0%D1%81%D1%82%D1%80%D0%BE%D0%B9%D0%BA%D0%B0-%D0%B4%D0%BB%D1%8F-%D0%B2%D0%B0%D1%88%D0%B5%D0%B3%D0%BE-%D0%B0%D0%BA%D0%BA%D0%B0%D1%83%D0%BD%D1%82%D0%B0">раздел о наборах</a>.</p>
+<p><strong>Обязателен ли ассистент ИИ, и нужен ли для него платный аккаунт?</strong>
+Ни то, ни другое. От него ничего в W не зависит, и он не делает ничего, пока
+вы не дадите ему модель в <strong>Хаб → ИИ</strong>. Это может быть уже имеющаяся у вас
+подписка, API-ключ, либо модель, работающая локально на вашей машине — см.
+<a href="guide/ai.html">раздел об ассистенте ИИ</a>.</p>
+<p><strong>Куда делся <code>~/go</code>? Почему <code>~/.cache/uv</code> и <code>~/.cache/go</code> — не обычные папки?</strong>
+W держит кэши тулчейнов в XDG-местах и вне снапшотов home. Кэш модулей и
+сборки Go живёт в <code>~/.cache/go</code>, <code>GOPATH</code> — <code>~/.local/share/go</code>, а бинарники
+<code>go install</code> попадают в <code>~/.local/bin</code> (он в PATH). Такие папки кэшей —
+вложенные btrfs-подтома, поэтому откат home никогда не тянет за собой
+гигабайты восстановимых загрузок. Оставшийся с прежних времён <code>~/go</code> —
+просто устаревший, удаляйте при желании. Значения задаёт
+<code>/etc/profile.d/w-go.sh</code> и применяются со следующего входа; ваш собственный
+профиль шелла может их переопределить.</p>
+<p><strong>Безопасен ли AUR?</strong>
+Это стороннее пакетирование, которое вы сами просматриваете в запросе
+PKGBUILD — так же, как это делает любой пользователь Arch. W держит
+критичные для загрузки пакеты вне AUR там, где это важно.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="hotkeys.html"><small>Назад</small>Горячие клавиши</a><a class="next" href="guide/theming.html"><small>Далее</small>Темы и обои</a></nav>
+  </main>
+  <aside class="toc"><h2>На этой странице</h2><ul><li><a href="#общее">Общее</a></li><li><a href="#обновления-и-восстановление">Обновления и восстановление</a></li><li><a href="#рабочий-стол">Рабочий стол</a></li><li><a href="#программы">Программы</a></li></ul></aside>
+</div>
+</body>
+</html>

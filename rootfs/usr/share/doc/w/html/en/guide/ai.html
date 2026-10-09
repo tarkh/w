@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The AI assistant · W Linux</title>
+<meta name="description" content="Opening the assistant, profiles for different setups, hosts and providers, where API keys are kept, how much it may do on its own, and the optional advanced stack.">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../en/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Menu" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../en/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Documentation</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Search the docs" aria-label="Search" autocomplete="off" spellcheck="false" data-empty="Nothing found">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><b>en</b><a href="../../ru/guide/ai.html" hreflang="ru">ru</a></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Getting started</h2><ul><li><a href="../index.html">W Linux documentation</a></li><li><a href="../hotkeys.html">Keyboard shortcuts</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Desktop</h2><ul><li><a href="theming.html">Themes and wallpapers</a></li><li><a href="desktop.html">The desktop</a></li><li><a href="displays.html">Displays and night light</a></li><li><a href="input.html">Keyboard, mouse and touchpad</a></li></ul><h2>System</h2><ul><li><a href="updates.html">Keeping W up to date</a></li><li><a href="security.html">Security</a></li><li><a href="network.html">Network, DNS and the firewall</a></li><li><a href="power.html">Power and battery</a></li><li><a href="../recovery.html">Recovery — when W will not boot, or boots wrong</a></li></ul><h2>Software</h2><ul><li><a href="packs.html">Packs — optional software bundles</a></li></ul><h2>AI</h2><ul><li><a href="ai.html" aria-current="page">The AI assistant</a></li></ul><h2>Reference</h2><ul><li><a href="../reference/index.html">Commands</a></li></ul></nav>
+  <main>
+    <article>
+      <h1>The AI assistant</h1>
+      <p>W ships an AI assistant that runs in a terminal and can drive the machine
+through W's own tools — read the display layout, switch a power profile, look
+at logs. It is optional in every sense: nothing depends on it, and it does
+nothing until you configure a model for it.</p>
+<p><kbd>Super+W</kbd> opens the ask palette; typing a question there hands off to a
+full session. <code>w-ai</code> in a terminal is the same thing, and <code>w-ai status</code> prints
+what is configured right now.</p>
+<h2 id="profiles">Profiles <a class="anchor" href="#profiles" aria-hidden="true">#</a></h2>
+<p><strong>Hub → AI</strong> is a list of <strong>profiles</strong>. A profile is a saved combination of
+<em>which program runs the assistant</em>, <em>which model it talks to</em>, and <em>how much it
+may do without asking</em>. Tapping an inactive profile makes it active immediately;
+the active one carries a checkmark.</p>
+<p>The point of profiles is switching setups without editing anything: keep one for
+a cloud model and one that runs entirely on your own machine, and flip between
+them in a tap. <strong>New profile…</strong> creates one, optionally copying an existing one
+as a starting point.</p>
+<p>The chevron on a row expands the editor. Every change applies as you pick it —
+there is no save button — and none of it asks for your password: this is a
+personal setting, like a keyboard layout.</p>
+<h2 id="host-provider-and-model">Host, provider and model <a class="anchor" href="#host-provider-and-model" aria-hidden="true">#</a></h2>
+<ul>
+<li><strong>Host</strong> is the program that actually runs the session. W ships with one
+included; the others are third-party CLIs with their own login and their own
+updater, so they are installed per user, on request.</li>
+<li><strong>Provider</strong> is the service behind the model. What the dropdown offers adapts
+to the host you picked — for a CLI that has its own subscription login it
+offers <em>subscription</em>, which means W passes no API key at all and the vendor
+bills your plan rather than per token.</li>
+<li><strong>Model</strong> is the model id. It is <strong>required</strong> for the included host — leave it
+empty and the session will not start. For a provider CLI it is marked
+<em>optional</em>, because that CLI picks its own.</li>
+</ul>
+<p>When the chosen host needs something, a row appears right underneath it saying
+so — <strong>not installed</strong> with an <strong>Install</strong> button, or <strong>not signed in</strong> with
+<strong>Sign in</strong>. Both open a terminal and run the step for you. Installing a host
+does not need your password: it lands in your own account.</p>
+<p>If a session refuses to start, <code>w-ai ready</code> in a terminal answers why in one
+word.</p>
+<p>The third-party CLIs W can drive are Claude Code, Codex and OpenCode. W hands
+them its tools and its identity only when it launches them itself — start
+<code>claude</code>, <code>codex</code> or <code>opencode</code> by hand in a project of your own and you get
+the plain tool, with nothing of W attached. OpenCode is the one with its own
+subscription (Zen) <em>and</em> a direct line to dozens of other providers at once —
+pick <em>subscription</em> for Zen, one of the providers W already manages a key for,
+or set up anything else straight in OpenCode itself (<code>opencode auth login</code>).</p>
+<p>Some packs bring tools of their own for the assistant — the <strong>graphics</strong> pack,
+for instance, lets it draw in Inkscape and edit inside GIMP, and the <strong>3d</strong> pack
+lets it build scenes in Blender. These arrive the
+same way, at launch, for every host — with Goose they stay switched off until a
+request needs that app, so everyday questions don't carry their weight; <code>w-ai status</code> lists them under
+<strong>MCP extra</strong>. One shown as <em>missing</em> is installed on the machine but not set up
+for your account yet: <code>w-pack setup &lt;pack&gt;</code> (no password) and a fresh session.</p>
+<h2 id="api-keys">API keys <a class="anchor" href="#api-keys" aria-hidden="true">#</a></h2>
+<p>Where the provider needs a key, the expanded profile shows an <strong>API key</strong> row:
+whether one is stored, a masked field to paste one into, and a button to remove
+it. The key goes into the system keyring, never into a file on disk, and it
+belongs to the <em>provider</em> rather than to the profile — every profile using that
+provider shares it. From a terminal the same thing is <code>w-ai key set</code>.</p>
+<p>One trap worth naming: if you are using a CLI on its <strong>subscription</strong> login, do
+not also store an API key for it. With a key present the CLI switches to
+per-token API billing.</p>
+<h2 id="mode-how-much-it-does-on-its-own">Mode: how much it does on its own <a class="anchor" href="#mode-how-much-it-does-on-its-own" aria-hidden="true">#</a></h2>
+<p><strong>Mode</strong> is <em>chat</em>, <em>approve</em>, <em>smart approve</em> or <em>auto</em>, in increasing order of
+independence: from answering only, through asking before each action, to acting
+on its own.</p>
+<p>This is a convenience setting, not the security boundary. Anything that touches
+the system as administrator stops at W's own password or fingerprint prompt no
+matter which mode you picked — <em>auto</em> cannot authorise a privileged change on
+your behalf. For the same reason W's own tools (including the ones an installed
+pack adds, like the Inkscape or GIMP helpers) never wait on the host's
+per-tool confirmation: the assistant calls them directly, and anything
+privileged still stops at that same prompt. MCP servers you register yourself
+keep the host's normal confirmation flow.</p>
+<p><strong>Tool surface</strong> next to it controls how much of W's own tooling the assistant
+is offered. Leave it on <em>auto</em>.</p>
+<h2 id="advanced">Advanced <a class="anchor" href="#advanced" aria-hidden="true">#</a></h2>
+<p>The <strong>Advanced</strong> section adds capabilities that need extra software: <strong>Web
+search</strong>, <strong>Reader</strong> (fetching and reading a page), <strong>Semantic memory</strong>
+(searching its own memory by meaning rather than by keyword) and <strong>Local
+models</strong>.</p>
+<p>These come from an optional bundle. Until it is installed the four rows are
+greyed out with <em>Requires the ai-extra pack</em> and a single <strong>Install</strong> button
+that does it for you — see <a href="packs.html">the packs guide</a>. Afterwards each row
+switches on independently, and the ones W cannot enable for you report why:
+that the local model runner is not running, or that a model still has to be
+downloaded. Choosing <em>brave</em> for web search reveals its own API-key field, which
+works exactly like the one above.</p>
+<p>Nothing here is required for an ordinary chat session; it is the difference
+between an assistant that can look things up and one that can only answer.</p>
+<h2 id="comfyui">ComfyUI <a class="anchor" href="#comfyui" aria-hidden="true">#</a></h2>
+<p>Generation of images and video is a separate optional bundle — see
+<a href="packs.html">the packs guide</a>. It runs ComfyUI as a system service: a node-based
+editor and backend combined, on <code>http://127.0.0.1:8188/</code>. Open it from the app
+menu (which starts the service, asks for the admin password the first time and
+opens the browser) or start it yourself with <code>systemctl start comfyui</code>.</p>
+<ul>
+<li><strong>GPU matching:</strong> the engine is installed with the driver your hardware needs
+(<code>nvidia</code> / <code>amd</code> / <code>intel</code> Arc / <code>cpu</code>), detected automatically.</li>
+<li><strong>Adding nodes:</strong> the node manager is built in and already switched on, so a
+node pack you are missing is installed from the interface itself — nothing to
+clone, nothing to install by hand. It only works while ComfyUI answers on
+<code>127.0.0.1</code>: expose the engine to the network and the manager stops installing
+anything, which is its own safety rule rather than W's.</li>
+<li><strong>Shared model store:</strong> models are downloaded into
+<code>/var/lib/w/ai-models</code>, a snapshot-excluded store shared by the whole machine;
+every account set up for the pack writes there. Ollama from the <em>ai-extra</em>
+pack keeps its models there too, in <code>ollama/</code>.</li>
+<li><strong>Where your results land:</strong> <code>/var/lib/w/comfyui/data/output</code> (under the engine
+directory, wherever it was installed). You can open that folder in the file
+manager, collect renders and drop source images into <code>input/</code> next to it —
+access comes with the <code>w-ai</code> group the bundle adds you to, which takes effect
+at your next login.</li>
+<li><strong>Updating:</strong> a system update leaves the engine alone; <code>w-pack outdated</code> shows
+a newer release and <code>sudo w-pack upgrade comfyui</code> installs it, putting the old
+one back if the new one does not start — see
+<a href="packs.html#keeping-packs-current">keeping packs current</a>.</li>
+<li><strong>The assistant can help</strong> with ComfyUI workflows, model placement and the
+service — load the <em>comfyui</em> knowledge pack when asked about local generation.</li>
+</ul>
+<h2 id="invokeai">InvokeAI <a class="anchor" href="#invokeai" aria-hidden="true">#</a></h2>
+<p>A second, independent generation bundle with a different interface: InvokeAI
+works on a layered <strong>canvas</strong> (inpainting, outpainting, regional prompts) with a
+gallery and boards, where ComfyUI builds a node graph. It runs as a system
+service on <code>http://127.0.0.1:9090/</code>; open <strong>InvokeAI</strong> from the app menu or run
+<code>systemctl start invokeai</code>.</p>
+<ul>
+<li><strong>GPU matching:</strong> the PyTorch build is chosen for your hardware at install
+(<code>nvidia</code> / <code>amd</code> / <code>intel</code> Arc / <code>cpu</code>), the same way as for ComfyUI.</li>
+<li><strong>Same models as ComfyUI:</strong> every model file in the shared store
+(<code>/var/lib/w/ai-models/checkpoints</code>, <code>loras</code>, <code>vae</code>, …) is registered in
+InvokeAI where it lies — nothing is copied. Added a file? Run
+<code>sudo systemctl reload invokeai</code> and it appears after a short check. Files
+InvokeAI cannot use are skipped quietly.</li>
+<li><strong>Its own downloads</strong> from the Model Manager tab go to
+<code>/var/lib/w/ai-models/invokeai</code>. Removing a model inside InvokeAI deletes a
+file only from there; a shared-store model is just hidden until next start.</li>
+<li><strong>Where your results land:</strong> <code>/var/lib/w/invokeai/data/outputs</code>, reachable
+from the file manager with the same <code>w-ai</code> group (next login).</li>
+<li><strong>Tuning</strong> (memory limits, attention, precision) lives in
+<code>/var/lib/w/invokeai/data/invokeai.yaml</code>; the example file next to it lists
+every setting.</li>
+<li><strong>Updating:</strong> the same as ComfyUI — <code>sudo w-pack upgrade invokeai</code>, which also
+says up front whether the new release brings a new PyTorch (a large download)
+and restores the previous version and its database if the new one fails.</li>
+</ul>
+
+    </article>
+    <nav class="pager"><a class="prev" href="packs.html"><small>Previous</small>Packs — optional software bundles</a><a class="next" href="../reference/index.html"><small>Next</small>Commands</a></nav>
+  </main>
+  <aside class="toc"><h2>On this page</h2><ul><li><a href="#profiles">Profiles</a></li><li><a href="#host-provider-and-model">Host, provider and model</a></li><li><a href="#api-keys">API keys</a></li><li><a href="#mode-how-much-it-does-on-its-own">Mode: how much it does on its own</a></li><li><a href="#advanced">Advanced</a></li><li><a href="#comfyui">ComfyUI</a></li><li><a href="#invokeai">InvokeAI</a></li></ul></aside>
+</div>
+</body>
+</html>

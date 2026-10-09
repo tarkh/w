@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>w-ai · W Linux</title>
+<meta name="description" content="Запуск и настройка AI-ассистента W — хосты, ключи, память, вопросы.">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../ru/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Меню" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../ru/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Документация</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Поиск по документации" aria-label="Поиск" autocomplete="off" spellcheck="false" data-empty="Ничего не найдено">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><a href="../../en/reference/w-ai.html" hreflang="en">en</a><b>ru</b></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Начало</h2><ul><li><a href="../index.html">Документация W Linux</a></li><li><a href="../hotkeys.html">Горячие клавиши</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Рабочий стол</h2><ul><li><a href="../guide/theming.html">Темы и обои</a></li><li><a href="../guide/desktop.html">Рабочий стол</a></li><li><a href="../guide/displays.html">Мониторы и ночной свет</a></li><li><a href="../guide/input.html">Клавиатура, мышь и тачпад</a></li></ul><h2>Система</h2><ul><li><a href="../guide/updates.html">Поддержание W в актуальном состоянии</a></li><li><a href="../guide/security.html">Безопасность</a></li><li><a href="../guide/network.html">Сеть, DNS и фаервол</a></li><li><a href="../guide/power.html">Питание и батарея</a></li><li><a href="../recovery.html">Восстановление — когда W не загружается или загружается неправильно</a></li></ul><h2>Программы</h2><ul><li><a href="../guide/packs.html">Наборы — опциональные пакеты софта</a></li></ul><h2>ИИ</h2><ul><li><a href="../guide/ai.html">Ассистент ИИ</a></li></ul><h2>Справочник</h2><ul><li><a href="index.html">Команды</a><ul><li><a href="w-ai.html" aria-current="page">w-ai</a></li><li><a href="w-appearance.html">w-appearance</a></li><li><a href="w-bar.html">w-bar</a></li><li><a href="w-conf.html">w-conf</a></li><li><a href="w-crypt.html">w-crypt</a></li><li><a href="w-dns.html">w-dns</a></li><li><a href="w-fingerprint.html">w-fingerprint</a></li><li><a href="w-firewall.html">w-firewall</a></li><li><a href="w-help.html">w-help</a></li><li><a href="w-hotkeys.html">w-hotkeys</a></li><li><a href="w-info.html">w-info</a></li><li><a href="w-kbdlight.html">w-kbdlight</a></li><li><a href="w-kernel.html">w-kernel</a></li><li><a href="w-keyboard.html">w-keyboard</a></li><li><a href="w-langpack.html">w-langpack</a></li><li><a href="w-locale.html">w-locale</a></li><li><a href="w-logs.html">w-logs</a></li><li><a href="w-mirrors.html">w-mirrors</a></li><li><a href="w-monitor.html">w-monitor</a></li><li><a href="w-nightlight.html">w-nightlight</a></li><li><a href="w-notify.html">w-notify</a></li><li><a href="w-pack.html">w-pack</a></li><li><a href="w-pointer.html">w-pointer</a></li><li><a href="w-power.html">w-power</a></li><li><a href="w-record.html">w-record</a></li><li><a href="w-reset.html">w-reset</a></li><li><a href="w-rollback.html">w-rollback</a></li><li><a href="w-screenshot.html">w-screenshot</a></li><li><a href="w-secureboot.html">w-secureboot</a></li><li><a href="w-session.html">w-session</a></li><li><a href="w-ssh.html">w-ssh</a></li><li><a href="w-style.html">w-style</a></li><li><a href="w-sync.html">w-sync</a></li><li><a href="w-term.html">w-term</a></li><li><a href="w-theme.html">w-theme</a></li><li><a href="w-time.html">w-time</a></li><li><a href="w-update.html">w-update</a></li><li><a href="w-userdirs.html">w-userdirs</a></li><li><a href="w-wallpaper.html">w-wallpaper</a></li></ul></li></ul></nav>
+  <main>
+    <article>
+      <h1>w-ai</h1>
+      <p><code>w-ai</code> — Запуск и настройка AI-ассистента W — хосты, ключи, память, вопросы.</p>
+<h2 id="использование">Использование <a class="anchor" href="#использование" aria-hidden="true">#</a></h2>
+<pre><code>Использование: <span class="w">w-ai</span> [<span class="f">--host</span> &lt;имя&gt;] [команда]
+
+Info: Запуск и настройка AI-ассистента W — хосты, ключи, память, вопросы.
+
+Запуск (по умолчанию, если команды нет):
+  <span class="w">w-ai</span>                  Запустить ассистента с настроенным хостом
+  <span class="w">w-ai</span> <span class="f">--host</span> &lt;имя&gt;     Заменить хост на запуск (goose|local|claude|codex|opencode)
+
+Команды:
+  ask &lt;текст…&gt;          Начать сессию с заданным вопросом и остаться в
+                        интерактивном режиме (это вызывает палитра «Спросить W»
+                        в Quickshell; пустой текст = обычный запуск)
+  ready                 Код 0, если текущая конфигурация готова к запуску (бинарь
+                        хоста на месте, вход в него активен или API-ключ в
+                        связке, модель задана там, где хосту она нужна); иначе
+                        код 1 + слово-причина. Используется точкой входа
+                        «Спросить W» в Quickshell перед открытием.
+  status                Хост/провайдер/модель, наличие ключа, самопроверка <span class="w">w-mcp</span>
+  config                Править персональное переопределение (~/.config/w/ai.conf)
+  host list [<span class="f">--porcelain</span>]   Хосты (goose|local|claude|codex|opencode) и их состояние
+  host status [&lt;н&gt;]     Показать контракт одного хоста (hosts/&lt;н&gt;/host.conf)
+  host install &lt;н&gt;      Установить CLI хоста родным установщиком вендора
+  host login [&lt;н&gt;]      Войти в хост со своей авторизацией (Claude Code, Codex)
+  features [<span class="f">--porcelain</span>]           Состояние продвинутых функций (пак ai-extra):
+                        ddgs/trafilatura/ollama/модель эмбеддингов/numpy,
+                        конфиг семантической памяти, размер векторного корпуса
+  features set &lt;КЛЮЧ&gt; &lt;значение&gt;   Задать один ключ продвинутых функций (W_AI_EMBED|
+                        W_AI_EMBED_MODEL|W_AI_EMBED_URL|W_AI_EMBED_KEEPALIVE|
+                        W_AI_SEARCH_PROVIDER) в ~/.config/w/ai-features.conf
+  profile list          Список профилей провайдеров, активный помечен
+  profile new &lt;н&gt; [<span class="f">--from</span> &lt;база&gt;]   Создать профиль (пустой или копией из &lt;базы&gt;)
+  profile edit &lt;н&gt;      Править профиль в \$EDITOR
+  profile show &lt;н&gt;      Напечатать содержимое профиля
+  profile use &lt;н&gt;       Сделать &lt;н&gt; активным профилем (копирует его в ai.conf)
+  profile rm &lt;н&gt;        Удалить профиль
+  profile field &lt;н&gt; &lt;КЛЮЧ&gt; &lt;значение&gt;   Задать одну строку KEY=VALUE в профиле
+                        (раскомментирует закомментированный дефолт, если он есть;
+                        редактор полей в Хабе использует это вместо \$EDITOR)
+  key set &lt;провайдер&gt;   Сохранить API-ключ провайдера в связке ключей (спросит)
+  key rm  &lt;провайдер&gt;   Удалить API-ключ провайдера из связки ключей
+  key list              Показать, у каких провайдеров есть ключ
+  memory list           Список сохранённых воспоминаний ассистента (общие для хостов)
+  memory search &lt;з&gt;     Найти воспоминания по запросу
+  memory add            Записать новое воспоминание в \$EDITOR (шаблон frontmatter)
+  memory rm &lt;slug&gt;      Удалить воспоминание по slug
+  memory context        Напечатать блок контекста памяти для начала сессии
+  memory review         Гигиена: возраст, что в контексте, подсказки о протухшем
+  task list [статус]    Список задач (по умолчанию открытые; ещё done|all)
+  task add &lt;текст…&gt;     Добавить открытую задачу (можно дописать <span class="f">--due</span> ГГГГ-ММ-ДД)
+  task done &lt;slug&gt;      Отметить задачу выполненной
+  skills list           Системные и пользовательские скилы (надстройка агента)
+  skills show &lt;имя&gt;     Напечатать SKILL.md одного скила
+  skills rm &lt;имя&gt;       Удалить пользовательский скил (системные защищены)
+  recipe list           Доступные рецепты автоматизации (система + надстройка)
+  run-recipe &lt;имя&gt;      Выполнить один рецепт headless через goose, однократно
+                        (внутренняя точка входа таймера; руками запускать безопасно)
+  schedule add &lt;рецепт&gt; &lt;OnCalendar&gt;   Запускать рецепт по таймеру systemd юзера
+  schedule list          Список активных расписаний рецептов
+  schedule rm &lt;рецепт&gt;   Убрать расписание рецепта
+  help                  Показать эту справку
+
+Конфиг: $SYS_CONF (системный) поверх него $USER_CONF (пользовательский).
+Секреты: gnome-keyring (атрибут $KEY_ATTR=&lt;провайдер&gt;); ничего в открытом виде.
+
+Коды выхода:
+  0  Успех   1  Ошибка выполнения   2  Ошибка вызова
+
+Примеры:
+  <span class="w">w-ai</span> key set openrouter
+  <span class="w">w-ai</span> <span class="f">--host</span> local
+  <span class="w">w-ai</span> host install claude
+  <span class="w">w-ai</span> status</code></pre>
+<p>Эта страница генерируется из собственной справки команды (w-docs-refgen). Живая
+версия того же текста на машине с W: <code>w-ai help</code>.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="index.html"><small>Назад</small>Команды</a><a class="next" href="w-appearance.html"><small>Далее</small>w-appearance</a></nav>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

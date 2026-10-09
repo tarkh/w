@@ -734,6 +734,7 @@
 
   "docs.contents":      { "en": "Contents",                                                                                                  "ru": "Содержание" },
   "docs.fullPage":      { "en": "Full page",                                                                                                 "ru": "Вся страница" },
+  "docs.openInHelp":    { "en": "Open in Help",                                                                                              "ru": "Открыть в справке" },
   "docs.notFoundTitle": { "en": "Documentation not found",                                                                                   "ru": "Документация не найдена" },
   "docs.notFoundBody":  { "en": "The documentation directory is missing on this machine. The pages are published with W at the repository.", "ru": "Каталог документации на этой машине отсутствует. Страницы публикуются с W в репозитории." }
 }

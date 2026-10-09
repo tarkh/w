@@ -138,6 +138,13 @@ assert_image_fresh() {
 # which is also what makes git stop complaining about a tree it does not
 # recognise. A checkout owned by root falls back to a plain unprivileged account:
 # what matters to the suites is "not root", not which uid.
+#
+# --init, because the entrypoint ends in `exec runuser`, and runuser as PID 1
+# waits for its own child only: an orphan that dies stays a zombie with its
+# /proc entry. w-record's start-up check reads exactly that entry, so the
+# capture.bats case whose stub recorder dies at once saw it "alive" and never
+# fell back to the CPU. A real session has systemd reaping, and so does CI, where
+# PID 1 is the entrypoint's bash.
 run_in_image() {
   local uid gid
   uid="$(stat -c %u "$REPO")"; gid="$(stat -c %g "$REPO")"
@@ -147,7 +154,7 @@ run_in_image() {
   # like a problem, is not, and trains you to skim this tool's output.
   local tty=()
   [[ -t 1 ]] && tty=(-t)
-  engine run --rm -i "${tty[@]}" -v "$REPO:/w" -w /w \
+  engine run --rm --init -i "${tty[@]}" -v "$REPO:/w" -w /w \
     -e "W_BOX_UID=$uid" -e "W_BOX_GID=$gid" \
     "$IMAGE" bash /usr/local/bin/w-box-entry "$@"
 }

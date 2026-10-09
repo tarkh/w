@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Power and battery · W Linux</title>
+<meta name="description" content="Power profiles, the idle cascade of lock, screen-off and suspend, lid and power-button actions, and the battery charge limit.">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../en/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Menu" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../en/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Documentation</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Search the docs" aria-label="Search" autocomplete="off" spellcheck="false" data-empty="Nothing found">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><b>en</b><a href="../../ru/guide/power.html" hreflang="ru">ru</a></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Getting started</h2><ul><li><a href="../index.html">W Linux documentation</a></li><li><a href="../hotkeys.html">Keyboard shortcuts</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Desktop</h2><ul><li><a href="theming.html">Themes and wallpapers</a></li><li><a href="desktop.html">The desktop</a></li><li><a href="displays.html">Displays and night light</a></li><li><a href="input.html">Keyboard, mouse and touchpad</a></li></ul><h2>System</h2><ul><li><a href="updates.html">Keeping W up to date</a></li><li><a href="security.html">Security</a></li><li><a href="network.html">Network, DNS and the firewall</a></li><li><a href="power.html" aria-current="page">Power and battery</a></li><li><a href="../recovery.html">Recovery — when W will not boot, or boots wrong</a></li></ul><h2>Software</h2><ul><li><a href="packs.html">Packs — optional software bundles</a></li></ul><h2>AI</h2><ul><li><a href="ai.html">The AI assistant</a></li></ul><h2>Reference</h2><ul><li><a href="../reference/index.html">Commands</a></li></ul></nav>
+  <main>
+    <article>
+      <h1>Power and battery</h1>
+      <p><strong>Hub → Power</strong> is one panel over everything that decides how much energy the
+machine uses and what it does when you leave it alone.</p>
+<h2 id="laptop-or-desktop">Laptop or desktop <a class="anchor" href="#laptop-or-desktop" aria-hidden="true">#</a></h2>
+<p><strong>Machine → Type</strong> is the switch that reseeds every other setting on this page
+at once. <em>Laptop</em> gives you separate behaviour on wall power and on battery, a
+lid action, and the battery controls. <em>Desktop</em> gives one gentle set of idle
+timers, ignores the lid, and hides the battery section because there is nothing
+to show.</p>
+<p>It is normally detected for you, and worth changing only if the detection got
+your hardware wrong. A value you set deliberately survives the switch — if
+something looks stuck after changing the type, that is why: it is your choice,
+not a preset. <code>w-reset power</code> clears the lot back to W's defaults.</p>
+<h2 id="power-profile">Power profile <a class="anchor" href="#power-profile" aria-hidden="true">#</a></h2>
+<p><strong>Profile</strong> is <em>Performance</em>, <em>Balanced</em> or <em>Power saver</em>. Only the profiles the
+hardware actually supports are offered — <em>Performance</em> needs a platform driver
+that many desktops and virtual machines do not have, and its absence is not a
+fault.</p>
+<p><strong>Auto-switch (AC/battery)</strong> hands the choice to the power source: balanced
+while plugged in, power saver on battery. Turn it off if you would rather pick
+by hand.</p>
+<h2 id="idle-lock-then-screen-off-then-suspend">Idle: lock, then screen off, then suspend <a class="anchor" href="#idle-lock-then-screen-off-then-suspend" aria-hidden="true">#</a></h2>
+<p>The three idle timers are a <strong>chain, not three separate stopwatches</strong>, and
+reading them that way is the difference between the settings doing what you
+expect and looking broken:</p>
+<ul>
+<li><strong>Auto-lock (idle)</strong> counts from your last keypress or mouse move.</li>
+<li><strong>Screen off (after lock)</strong> counts from the moment the lock fired.</li>
+<li><strong>Suspend (after screen off)</strong> counts from the moment the screen went dark.</li>
+</ul>
+<p>So 5 / 2 / 10 means: lock after five minutes, screen off two minutes later,
+suspend ten minutes after that. Each row shows the resulting absolute time
+underneath it, so you never have to do the arithmetic yourself. Setting a value
+to zero switches that link off and the next one counts from the previous live
+link instead.</p>
+<p>On a laptop there are two independent sets — <strong>Idle — on AC</strong> and <strong>Idle — on
+battery</strong> — and the battery one is deliberately more aggressive.</p>
+<p><strong>Keyboard backlight off (idle)</strong> sits in the same section but is <em>not</em> part of
+the chain: it is its own timer counting from your last activity, and the light
+comes back the moment you touch anything.</p>
+<p>Two behaviours worth knowing about, both intentional:</p>
+<ul>
+<li>The machine always locks <strong>before</strong> it suspends, so it never resumes to an
+unlocked desktop — and it waits for the lock screen to finish appearing before
+it actually goes to sleep, so you see the whole thing draw rather than a
+half-faded flash. In a terminal, use <code>w-power sleep</code> rather than
+<code>systemctl suspend</code> to get that same behaviour. Closing the lid suspends
+through systemd rather than through W, so there the lock screen simply
+appears without the fade — the animation would not be visible with the lid
+shut, and skipping it is what keeps a half-drawn locker off the screen you
+come back to.</li>
+<li>Once the screen is locked, nudging the mouse blanks the display again after
+the screen-off delay rather than leaving it lit.</li>
+</ul>
+<p><kbd>Super+L</kbd> locks immediately.</p>
+<p>Idle timers are per-account: two people on one machine legitimately have
+different ones.</p>
+<h2 id="lid-and-power-button">Lid and power button <a class="anchor" href="#lid-and-power-button" aria-hidden="true">#</a></h2>
+<p>On a laptop, <strong>Lid</strong> sets what closing the lid does, separately <strong>On battery</strong>
+and <strong>On AC</strong> — suspend, lock, nothing, or power off. <strong>Power button → When
+pressed</strong> does the same for the button: the power menu, suspend, power off, or
+nothing.</p>
+<p>If your machine suspends and then wakes a few seconds later on its own, W
+already handles the usual cause — on some firmware an open lid keeps asserting
+a wake signal, so W removes it for the duration of a suspend that started with
+the lid open and puts it back afterwards. Closing the lid still wakes the
+machine as it should.</p>
+<h2 id="battery">Battery <a class="anchor" href="#battery" aria-hidden="true">#</a></h2>
+<p><strong>Status</strong> shows the charge and, where the firmware reports it, the battery's
+<strong>health</strong> — its current full capacity against its original one.</p>
+<p><strong>Charge limit</strong> caps charging below 100%. A battery kept at 80% ages
+noticeably more slowly than one held full, which is worth it for a laptop that
+lives on a desk; set it to <em>Full</em> before a trip. The cap is re-applied after
+every resume, because firmware tends to forget it. On hardware that does not
+expose the setting the control does nothing, and there is no way around that
+from software.</p>
+<p>The bar shows the battery block only where there is a battery.</p>
+<h2 id="shutting-down">Shutting down <a class="anchor" href="#shutting-down" aria-hidden="true">#</a></h2>
+<p><kbd>Super+Backspace</kbd> opens the power menu: <strong>Lock</strong>, <strong>Logout</strong>,
+<strong>Suspend</strong>, <strong>Reboot</strong>, <strong>Shutdown</strong>.</p>
+<p>Logout, reboot and shutdown go the polite way: W asks each window to close, so
+an editor gets to show its save dialog, and if you cancel that dialog the whole
+shutdown is called off rather than pushed through. That is why the power menu is
+the better route than a raw <code>systemctl poweroff</code> — unsaved work cannot be lost
+by accident.</p>
+<p>From a terminal the settings on this page are <code>w-power</code>, and the keyboard
+backlight itself is <code>w-kbdlight</code>.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="network.html"><small>Previous</small>Network, DNS and the firewall</a><a class="next" href="../recovery.html"><small>Next</small>Recovery — when W will not boot, or boots wrong</a></nav>
+  </main>
+  <aside class="toc"><h2>On this page</h2><ul><li><a href="#laptop-or-desktop">Laptop or desktop</a></li><li><a href="#power-profile">Power profile</a></li><li><a href="#idle-lock-then-screen-off-then-suspend">Idle: lock, then screen off, then suspend</a></li><li><a href="#lid-and-power-button">Lid and power button</a></li><li><a href="#battery">Battery</a></li><li><a href="#shutting-down">Shutting down</a></li></ul></aside>
+</div>
+</body>
+</html>

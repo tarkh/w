@@ -83,7 +83,7 @@ if [[ $rehash == 1 ]]; then
                 fm==1 && /^  - path:/ { hit = ($NF == p) }
                 fm==1 && hit && sub(/sha256:[ \t]*[0-9a-fA-F]+/, "sha256: " h) { hit = 0; n++ }
                 { print }
-                END { exit(n ? 0 : 3) }' "$page" > "$tmp" && { mv "$tmp" "$page"; echo "    rehash $rel → ${page#"$DOCS"/}"; changed=$((changed + 1)); } || rm -f "$tmp"
+                END { exit(n ? 0 : 3) }' "$page" > "$tmp" && { chmod --reference="$page" "$tmp"; mv "$tmp" "$page"; echo "    rehash $rel → ${page#"$DOCS"/}"; changed=$((changed + 1)); } || rm -f "$tmp"
         done
     done
     echo "rehashed: $changed anchor(s) updated"

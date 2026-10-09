@@ -514,7 +514,7 @@ _mcp_fixture() {
 @test "mcp.d: a drop-in whose REQUIRES is missing is not offered, but is listed" {
   _mcp_fixture
   run mcp_dropins
-  [[ "$output" == "present${US}true${US}--stdio -v${US}ok${US}" ]]
+  [[ "$output" == "present${US}true${US}--stdio -v${US}ok${US}${US}" ]]
   run mcp_dropins all
   [[ "$output" == *"absent${US}python3${US}$HOME/.local/share/w/x/server.py${US}missing"* ]]
 }
@@ -531,7 +531,7 @@ _mcp_fixture() {
   mkdir -p "$USER_ROOT/mcp.d"
   printf 'COMMAND="false"\n' > "$USER_ROOT/mcp.d/present.conf"
   run mcp_dropins
-  [[ "$output" == "present${US}false${US}${US}ok${US}" ]]
+  [[ "$output" == "present${US}false${US}${US}ok${US}${US}" ]]
 }
 
 @test "mcp.d: a bad name or an empty COMMAND is invalid, never offered" {
@@ -542,7 +542,7 @@ _mcp_fixture() {
   [[ "$output" == *"Bad_Name${US}true${US}${US}invalid"* ]]
   [[ "$output" == *"nocmd${US}${US}x${US}invalid"* ]]
   run mcp_dropins
-  [[ "$output" == "present${US}true${US}--stdio -v${US}ok${US}" ]]
+  [[ "$output" == "present${US}true${US}--stdio -v${US}ok${US}${US}" ]]
 }
 
 @test "mcp.d: goose gets every active server disabled in a config layer, with its description" {
@@ -600,6 +600,44 @@ assert "absent" not in s, s' "$cfg"
   cfg="$(claude_mcp_config)"
   [[ "$cfg" == "$SYS_ROOT/hosts/claude/mcp.json" ]]
   [[ ! -e "$XDG_RUNTIME_DIR/w-ai/mcp.json" ]]
+}
+
+# URL= drop-ins: an app that serves MCP itself over streamable HTTP (Ardour's
+# built-in surface) reaches every host in that host's own remote form.
+_mcp_url_fixture() {
+  _mcp_fixture
+  printf 'URL="http://127.0.0.1:4820/mcp"\nDESCRIPTION="Remote: does things"\n' > "$SYS_ROOT/mcp.d/remote.conf"
+}
+
+@test "mcp.d: a URL drop-in is offered with no REQUIRES, and COMMAND+URL together is invalid" {
+  _mcp_url_fixture
+  printf 'COMMAND="true"\nURL="http://127.0.0.1:1/mcp"\n' > "$SYS_ROOT/mcp.d/both.conf"
+  run mcp_dropins all
+  [[ "$output" == *"remote${US}${US}${US}ok${US}Remote: does things${US}http://127.0.0.1:4820/mcp"* ]]
+  [[ "$output" == *"both${US}true${US}${US}invalid"* ]]
+  printf 'URL="http://127.0.0.1:4820/mcp"\nREQUIRES="~/nope"\n' > "$SYS_ROOT/mcp.d/remote.conf"
+  run mcp_dropins
+  [[ "$output" != *remote* ]]
+}
+
+@test "mcp.d: a URL drop-in reaches claude, opencode, goose and codex as their remote form" {
+  _mcp_url_fixture
+  python3 -c '
+import json,sys; s=json.load(open(sys.argv[1]))["mcpServers"]
+assert s["remote"]=={"type":"http","url":"http://127.0.0.1:4820/mcp"}, s
+assert s["present"]=={"command":"true","args":["--stdio","-v"]}, s' "$(claude_mcp_config)"
+  opencode_config_content | python3 -c '
+import json,sys; d=json.load(sys.stdin)
+assert d["mcp"]["remote"]=={"type":"remote","url":"http://127.0.0.1:4820/mcp","enabled":True}, d
+assert d["permission"]["mcp"]["remote_*"]=="allow", d'
+  python3 -c '
+import json,sys; e=json.load(open(sys.argv[1]))["extensions"]["remote"]
+assert e["type"]=="streamable_http" and e["uri"]=="http://127.0.0.1:4820/mcp", e
+assert e["enabled"] is False and "cmd" not in e and e["description"]=="Remote: does things", e' "$(goose_mcp_layer)"
+  [[ "$(goose_mcp_hint)" == *"remote — Remote: does things."* && "$(goose_mcp_hint)" != *http* ]]
+  run codex_mcp_args
+  [[ "$output" == *$'-c\nmcp_servers.remote.url="http://127.0.0.1:4820/mcp"\n-c\nmcp_servers.remote.default_tools_approval_mode="approve"'* ]]
+  [[ "$output" != *"remote.command"* ]]
 }
 
 # ── Host approval policy: W's own servers are never host-gated ────────────────

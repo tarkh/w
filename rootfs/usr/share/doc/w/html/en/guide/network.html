@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Network, DNS and the firewall · W Linux</title>
+<meta name="description" content="Connecting to Wi-Fi and ethernet, the machine&#x27;s name, encrypted DNS, and switching the firewall zone for an untrusted network.">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../en/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Menu" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../en/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Documentation</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Search the docs" aria-label="Search" autocomplete="off" spellcheck="false" data-empty="Nothing found">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><b>en</b><a href="../../ru/guide/network.html" hreflang="ru">ru</a></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Getting started</h2><ul><li><a href="../index.html">W Linux documentation</a></li><li><a href="../hotkeys.html">Keyboard shortcuts</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Desktop</h2><ul><li><a href="theming.html">Themes and wallpapers</a></li><li><a href="desktop.html">The desktop</a></li><li><a href="displays.html">Displays and night light</a></li><li><a href="input.html">Keyboard, mouse and touchpad</a></li></ul><h2>System</h2><ul><li><a href="updates.html">Keeping W up to date</a></li><li><a href="security.html">Security</a></li><li><a href="network.html" aria-current="page">Network, DNS and the firewall</a></li><li><a href="power.html">Power and battery</a></li><li><a href="../recovery.html">Recovery — when W will not boot, or boots wrong</a></li></ul><h2>Software</h2><ul><li><a href="packs.html">Packs — optional software bundles</a></li></ul><h2>AI</h2><ul><li><a href="ai.html">The AI assistant</a></li></ul><h2>Reference</h2><ul><li><a href="../reference/index.html">Commands</a></li></ul></nav>
+  <main>
+    <article>
+      <h1>Network, DNS and the firewall</h1>
+      <p><strong>Hub → Network</strong> holds the settings you change rarely and want to find without
+hunting: the machine's name, the DNS resolver, and the firewall zone. Joining
+an actual network is a job for the applet, one click away.</p>
+<h2 id="connections">Connections <a class="anchor" href="#connections" aria-hidden="true">#</a></h2>
+<p>Connections are managed by <strong>NetworkManager</strong>. There are three doors to it and
+they all lead to the same place:</p>
+<ul>
+<li>the <strong>network applet</strong> in the tray — the interactive one, for picking a Wi-Fi
+network and typing its password;</li>
+<li>the <strong>network block in the bar</strong>, which shows what you are connected through
+and opens the connection editor when clicked;</li>
+<li><strong>Connections…</strong> in this panel, which opens the same editor.</li>
+</ul>
+<p>The bar's block is read-only by design: it tells you whether you are on
+ethernet, Wi-Fi, a VPN or nothing at all, and leaves managing to the applet.</p>
+<p>Bluetooth has its own tray applet next to it.</p>
+<h2 id="hostname">Hostname <a class="anchor" href="#hostname" aria-hidden="true">#</a></h2>
+<p><strong>Hostname</strong> is the name this machine answers to on the network and shows in a
+terminal prompt. Changing it asks for your password, and W keeps the system's
+own host table in step for you.</p>
+<h2 id="dns">DNS <a class="anchor" href="#dns" aria-hidden="true">#</a></h2>
+<p>W resolves names through <strong>systemd-resolved with DNS-over-TLS</strong>, so the queries
+your machine makes are encrypted rather than readable by anything between you
+and the resolver. Two controls:</p>
+<ul>
+<li><strong>Provider</strong> — Quad9 (the default), Cloudflare, Mullvad, Google or AdGuard.</li>
+<li><strong>Mode</strong> — <em>on</em> is encrypted with a fallback if the network breaks TLS,
+<em>strict</em> refuses to resolve at all unless it can do so encrypted, and <em>off</em>
+hands DNS back to whatever the network or your VPN hands out.</li>
+</ul>
+<p><em>on</em> is the right default: it keeps encryption everywhere it is possible without
+leaving you unable to open a page on a hotel network that mangles DNS. Choose
+<em>strict</em> when you know the network behaves and you would rather fail than leak.</p>
+<p>DNS is one setting for the whole machine — there is no per-user resolver. From a
+terminal it is <code>w-dns</code>.</p>
+<p>If every page takes ten seconds to even start loading while the connection itself
+is fine, the encrypted resolver is what is stuck: <code>w-dns off</code> hands DNS back to
+the network right away (unencrypted), and <code>w-dns status</code> shows what the machine
+is currently using.</p>
+<p>On a machine managed by someone else, either control may show <em>Set by site
+policy</em>; then it is pinned centrally and there is no local way around it.</p>
+<h2 id="firewall">Firewall <a class="anchor" href="#firewall" aria-hidden="true">#</a></h2>
+<p>The firewall is default-deny inbound, and <strong>Zone</strong> picks how strict it is:</p>
+<ul>
+<li><strong>home</strong> — the default. Allows incoming SSH and local network discovery, which
+is what you want on your own network for file sharing and printers.</li>
+<li><strong>public</strong> — for café Wi-Fi, hotels, conferences and any other network you do
+not control.</li>
+</ul>
+<p>Both zones always allow SSH, so switching cannot lock you out of a machine you
+administer remotely. Outgoing connections are never blocked.</p>
+<p>For anything finer than the two zones, the <code>firewall-config</code> application ships
+with W and picks up its theme. From a terminal the zone is <code>w-firewall</code>.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="security.html"><small>Previous</small>Security</a><a class="next" href="power.html"><small>Next</small>Power and battery</a></nav>
+  </main>
+  <aside class="toc"><h2>On this page</h2><ul><li><a href="#connections">Connections</a></li><li><a href="#hostname">Hostname</a></li><li><a href="#dns">DNS</a></li><li><a href="#firewall">Firewall</a></li></ul></aside>
+</div>
+</body>
+</html>

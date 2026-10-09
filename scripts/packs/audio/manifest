@@ -1,0 +1,26 @@
+# audio bundle — config ownership (deploy.sh SDK + w-reset).
+# TSV: <path>\t<class>. Absolute path → config/root<path> (always managed);
+# home-relative → config/skel/<path>. class: user = seed-if-absent, managed =
+# overwrite (W owns it). A trailing '/' marks a directory tree.
+#
+# Ardour's two config files are seeds, the user's from the first start (Ardour
+# rewrites both in full on exit). Each carries only what W decides:
+#   config    — the JACK/Pipewire engine backend at 48 kHz / 256 frames (the
+#               audio-device dialog opens on it, not on raw ALSA, which PipeWire
+#               holds), and discover-plugins-on-start (VST3 — Surge XT — is
+#               scanned at start, not only after a manual Plugin Manager scan);
+#   ui_config — color-file "w": the colour theme the ardour axis renders.
+# Ardour fills in every other option with its defaults. The path carries the
+# major version (ardour9); Ardour 10 reads ~/.config/ardour10 — re-seed then.
+#
+# Deliberately NOT owned: the theme file itself (~/.config/ardour9/themes/
+# w-ardour.colors — the ardour w-style axis), audacity.cfg (the audacity axis
+# edits one key in it), sessions and everything else Ardour writes.
+.config/ardour9/config	user
+.config/ardour9/ui_config	user
+
+# Window rule (Hyprland drop-in, require()d by hyprland.lua with a wildcard):
+# sizes Ardour's media import and qpwgraph's file dialogs, centres Ardour's
+# Preferences (audio.lua).
+# w-pack reloads running sessions on install/remove.
+/usr/share/w/hypr/rules.d/audio.lua	managed

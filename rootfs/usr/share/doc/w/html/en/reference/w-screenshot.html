@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>w-screenshot · W Linux</title>
+<meta name="description" content="Capture the screen — region/window/output, annotate/copy/save.">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../en/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Menu" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../en/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Documentation</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Search the docs" aria-label="Search" autocomplete="off" spellcheck="false" data-empty="Nothing found">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><b>en</b><a href="../../ru/reference/w-screenshot.html" hreflang="ru">ru</a></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Getting started</h2><ul><li><a href="../index.html">W Linux documentation</a></li><li><a href="../hotkeys.html">Keyboard shortcuts</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Desktop</h2><ul><li><a href="../guide/theming.html">Themes and wallpapers</a></li><li><a href="../guide/desktop.html">The desktop</a></li><li><a href="../guide/displays.html">Displays and night light</a></li><li><a href="../guide/input.html">Keyboard, mouse and touchpad</a></li></ul><h2>System</h2><ul><li><a href="../guide/updates.html">Keeping W up to date</a></li><li><a href="../guide/security.html">Security</a></li><li><a href="../guide/network.html">Network, DNS and the firewall</a></li><li><a href="../guide/power.html">Power and battery</a></li><li><a href="../recovery.html">Recovery — when W will not boot, or boots wrong</a></li></ul><h2>Software</h2><ul><li><a href="../guide/packs.html">Packs — optional software bundles</a></li></ul><h2>AI</h2><ul><li><a href="../guide/ai.html">The AI assistant</a></li></ul><h2>Reference</h2><ul><li><a href="index.html">Commands</a><ul><li><a href="w-ai.html">w-ai</a></li><li><a href="w-appearance.html">w-appearance</a></li><li><a href="w-bar.html">w-bar</a></li><li><a href="w-conf.html">w-conf</a></li><li><a href="w-crypt.html">w-crypt</a></li><li><a href="w-dns.html">w-dns</a></li><li><a href="w-fingerprint.html">w-fingerprint</a></li><li><a href="w-firewall.html">w-firewall</a></li><li><a href="w-help.html">w-help</a></li><li><a href="w-hotkeys.html">w-hotkeys</a></li><li><a href="w-info.html">w-info</a></li><li><a href="w-kbdlight.html">w-kbdlight</a></li><li><a href="w-kernel.html">w-kernel</a></li><li><a href="w-keyboard.html">w-keyboard</a></li><li><a href="w-langpack.html">w-langpack</a></li><li><a href="w-locale.html">w-locale</a></li><li><a href="w-logs.html">w-logs</a></li><li><a href="w-mirrors.html">w-mirrors</a></li><li><a href="w-monitor.html">w-monitor</a></li><li><a href="w-nightlight.html">w-nightlight</a></li><li><a href="w-notify.html">w-notify</a></li><li><a href="w-pack.html">w-pack</a></li><li><a href="w-pointer.html">w-pointer</a></li><li><a href="w-power.html">w-power</a></li><li><a href="w-record.html">w-record</a></li><li><a href="w-reset.html">w-reset</a></li><li><a href="w-rollback.html">w-rollback</a></li><li><a href="w-screenshot.html" aria-current="page">w-screenshot</a></li><li><a href="w-secureboot.html">w-secureboot</a></li><li><a href="w-session.html">w-session</a></li><li><a href="w-ssh.html">w-ssh</a></li><li><a href="w-style.html">w-style</a></li><li><a href="w-sync.html">w-sync</a></li><li><a href="w-term.html">w-term</a></li><li><a href="w-theme.html">w-theme</a></li><li><a href="w-time.html">w-time</a></li><li><a href="w-update.html">w-update</a></li><li><a href="w-userdirs.html">w-userdirs</a></li><li><a href="w-wallpaper.html">w-wallpaper</a></li></ul></li></ul></nav>
+  <main>
+    <article>
+      <h1>w-screenshot</h1>
+      <p><code>w-screenshot</code> — Capture the screen — region/window/output, annotate/copy/save.</p>
+<h2 id="usage">Usage <a class="anchor" href="#usage" aria-hidden="true">#</a></h2>
+<pre><code>Usage: <span class="w">w-screenshot</span> &lt;mode&gt; [action] | get [KEY] | set KEY VALUE
+
+Info: Capture the screen — region/window/output, annotate/copy/save.
+
+Modes:
+  region    Select a rectangular region
+  window    Capture the focused window (Hyprland geometry)
+  output    Capture the focused monitor
+  full      Capture all monitors
+
+Actions (default: annotate):
+  <span class="f">--annotate</span>   Select and draw in one frozen overlay (Flameshot; its toolbar
+               copies, saves or pins). Back to the two-step satty stack:
+               `<span class="w">w-screenshot</span> set ANNOTATOR satty`; return with
+               `<span class="w">w-screenshot</span> set ANNOTATOR flameshot`.
+               `full <span class="f">--annotate</span>` is always satty: a Flameshot overlay is one
+               window on one monitor.
+  <span class="f">--copy</span>       Copy the capture straight to the clipboard (wl-copy), no UI
+  <span class="f">--save</span>       Save the capture to $SCREENSHOT_DIR and notify
+
+Commands:
+  get          Print the settings as KEY=value, or one value
+  set          Change a setting for your account
+
+Settings (in effect from the next capture):
+  ANNOTATOR      flameshot | satty — the editor `<span class="f">--annotate</span>` opens
+  WINDOW_SHADOW  yes | no — a `window` capture gets transparent rounded corners;
+                 yes also adds a soft drop shadow. Not applied in Flameshot, which
+                 saves its own frame: only `<span class="f">--copy</span>`/`<span class="f">--save</span>` and satty.
+
+Exit codes:
+  0  Success or user-cancelled selection
+  1  Runtime error
+  2  Usage error
+
+Examples:
+  <span class="w">w-screenshot</span> region                <span class="c"># drag an area and draw on it in place</span>
+  <span class="w">w-screenshot</span> output <span class="f">--copy</span>         <span class="c"># focused monitor → clipboard</span>
+  <span class="w">w-screenshot</span> full <span class="f">--save</span>           <span class="c"># every monitor → PNG file</span>
+  <span class="w">w-screenshot</span> set ANNOTATOR satty   <span class="c"># annotate in satty from the next capture</span>
+  <span class="w">w-screenshot</span> set WINDOW_SHADOW no  <span class="c"># window shots: rounded corners, no shadow</span></code></pre>
+<p>This page is generated from the command's own help text (w-docs-refgen). The
+live version of the same text on a W machine: <code>w-screenshot help</code>.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="w-rollback.html"><small>Previous</small>w-rollback</a><a class="next" href="w-secureboot.html"><small>Next</small>w-secureboot</a></nav>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

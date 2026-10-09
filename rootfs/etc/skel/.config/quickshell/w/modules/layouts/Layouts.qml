@@ -426,7 +426,7 @@ Scope {
                         // same 8 back, so rows do not move.
                         width: parent.width + 8
                         height: parent.height - name.height - saveRow.height
-                                - footer.height - parent.spacing * 3
+                                - footerHints.height - parent.spacing * 3
                         clip: true
                         model: root.view()
                         currentIndex: 0
@@ -584,7 +584,7 @@ Scope {
 
                     // ── Footer hints ──────────────────────────────────────────
                     Item {
-                        id: footer
+                        id: footerHints
                         width: parent.width
                         height: 18
 

@@ -35,7 +35,8 @@
 #                    sources: is the curation machinery and may name the
 #                    library; prose may not (the skill-layer lesson: a shipped
 #                    pointer to a tree the reader does not have).
-#   4. links         relative .md and image targets resolve (both languages).
+#   4. links         relative .md (with or without #anchor) and image targets
+#                    resolve (both languages).
 #   4a. Info: line  the one-line summary two consumers share — `w-info`'s
 #                   catalog on the machine and every reference page's subtitle,
 #                   `summary:` and TOC entry — is ONE line ending in a period.
@@ -44,6 +45,10 @@
 #                   four places at once (two tools shipped that way).
 #   5. gold          the generated reference is byte-current
 #                    (w-docs-refgen --check — the same script regenerates).
+#   6. site          the rendered site (html/, w-docs-site) is byte-current and
+#                    stays file://-safe: no fetch/XHR/modules, nothing remote
+#                    or site-root. A guide's `category:` places it in the
+#                    site's navigation and is checked with the frontmatter.
 
 DOCS_DIR="rootfs/usr/share/doc/w"
 
@@ -60,6 +65,10 @@ _chk_frontmatter() {
     grep -q '^section:' <<<"$fm" || continue
     grep -qE '^section: (start|guide|reference)[ \t]*$' <<<"$fm" || {
       echo "  $page: unknown frontmatter section (start|guide|reference)"; rc=1; }
+    # A guide's category places it in the site's navigation (w-docs-site CATS).
+    grep -q '^section: guide' <<<"$fm" || continue
+    grep -qE '^category: (desktop|system|apps|ai)[ \t]*$' <<<"$fm" || {
+      echo "  $page: guide lacks a known category: (desktop|system|apps|ai)"; rc=1; }
   done < <(_doc_pages)
   [[ $rc == 0 ]]
 }
@@ -238,7 +247,7 @@ _chk_links() {
       esac
       out="$dir/$link"
       [[ -e "$out" ]] || { echo "  $page: broken link target '$link'"; rc=1; }
-    done < <(grep -hoE '\]\(([^)#]+\.md|img/[^)]+)\)' "$page" | sed 's/^\](//;s/)$//')
+    done < <(grep -hoE '\]\(([^)#]+\.md(#[^)]*)?|img/[^)]+)\)' "$page" | sed 's/^\](//;s/)$//;s/#.*//')
   done < <(_doc_pages)
   [[ $rc == 0 ]]
 }
@@ -272,6 +281,32 @@ _chk_info_line() {
   [[ $rc == 0 ]]
 }
 
+# The site (w-docs-site → $DOCS_DIR/html) opens from file:// in the Help window,
+# where Firefox gives every document its own origin: a fetch()/XHR or an ES
+# module import of a neighbour fails there while the published copy works — the
+# "fine on the web, broken offline" split nobody sees until a user opens Help.
+# Same for anything loaded from the network or from a site-root path.
+_chk_site() {
+  local rc=0 hits
+  hits="$(grep -nE 'fetch\(|XMLHttpRequest|type="module"|^\s*import ' site/assets/*.js site/template.html \
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' || true)"
+  [[ -n "$hits" ]] && { echo "  site/: fetch/XHR/module — fails from file:// in the Help window:"
+    sed 's/^/      /' <<<"$hits"; rc=1; }
+  hits="$(grep -rnoE '(src|href)="(/|https?:)[^"]*"' site/template.html "$DOCS_DIR/html" \
+    | grep -E 'src="|href="/' || true)"
+  [[ -n "$hits" ]] && { echo "  site: remote or site-root resource — impossible offline:"
+    sed 's/^/      /' <<<"$hits" | head -5; rc=1; }
+  devtools/usr/local/bin/w-docs-site --check || {
+    echo "  the docs site (html/) is stale — run w-docs-site"; rc=1; }
+  # The web target is the API the website repository builds on (w-linux-website):
+  # not committed, so no golden — but it has to render and every link resolve.
+  local web; web="$(mktemp -d)"
+  devtools/usr/local/bin/w-docs-site --target web --out "$web/site" > /dev/null || {
+    echo "  the web target of w-docs-site fails (see above)"; rc=1; }
+  rm -rf "$web"
+  [[ $rc == 0 ]]
+}
+
 chk_docs() {
   local rc=0
   [[ -d "$DOCS_DIR" ]] || { echo "  no docs tree at $DOCS_DIR"; return 1; }
@@ -287,6 +322,7 @@ chk_docs() {
 
   devtools/usr/local/bin/w-docs-refgen --check > /dev/null || {
     echo "  generated reference docs are stale (see w-docs-refgen --check above)"; rc=1; }
+  _chk_site || rc=1
 
   [[ $rc == 0 ]] && echo "  docs tree: $(count_md) pages consistent"
   return $rc

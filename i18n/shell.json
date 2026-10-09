@@ -2788,6 +2788,10 @@
     "en": "Full page",
     "ru": "Вся страница"
   },
+  "docs.openInHelp": {
+    "en": "Open in Help",
+    "ru": "Открыть в справке"
+  },
   "docs.notFoundTitle": {
     "en": "Documentation not found",
     "ru": "Документация не найдена"

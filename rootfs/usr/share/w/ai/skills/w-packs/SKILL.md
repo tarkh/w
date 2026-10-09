@@ -7,7 +7,7 @@ description: >-
   already-installed bundle is covered by that bundle's own skill (skills/<bundle>).
 sources:
   - path: .claude/library/packs.md
-    sha256: 112e2d5e040e11d34d90c8906e86e234c9f68e3d63b3c7d7b00c2aa97de82e62
+    sha256: 6f81eda1657c3edb13c34a80ca6fa02c5bc89606f990720f86a7317e9fdc7a44
 tools:
   - w_pack_list
   - w_pack_status
@@ -181,7 +181,9 @@ launches, so those tools simply appear in your session next to `w_*`. The
 `graphics` bundle is the first: an Inkscape server (`mcpinkscape`, typed SVG
 drawing/export tools) and a GIMP bridge (`gimpmcp`, Python inside a running
 GIMP + viewport screenshots); `3d` adds a Blender server (`mcp-for-blender`,
-bpy code inside a running Blender, safe mode on). Two rules follow from how they are installed:
+bpy code inside a running Blender, safe mode on); `audio` registers Ardour's
+own built-in server by URL — it answers only while the user has switched it on
+in Ardour (see `skills/audio`). Two rules follow from how stdio servers are installed:
 
 - They are **per account** (a uv tool in `~/.local/bin`, a plug-in in
   `~/.config`), so a server is offered only when its files exist for the

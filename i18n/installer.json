@@ -238,6 +238,10 @@
     "en": "3D creation: Blender with an AI assistant bridge, themed by W",
     "ru": "3D-графика: Blender с мостом для AI-ассистента, в теме W"
   },
+  "p_audio": {
+    "en": "Music production: Ardour DAW, PipeWire routing, plugin starter set, AI assistant bridge",
+    "ru": "Создание музыки: DAW Ardour, маршрутизация PipeWire, стартовый набор плагинов, мост для AI-ассистента"
+  },
   "p_virt": {
     "en": "Desktop virtualization: libvirt + QEMU/KVM, virt-manager, GNOME Boxes",
     "ru": "Десктопная виртуализация: libvirt + QEMU/KVM, virt-manager, GNOME Boxes"

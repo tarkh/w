@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security · W Linux</title>
+<meta name="description" content="What W enables out of the box — hardening, sudo-rs, firewall, encrypted DNS, keyring, firmware updates, fingerprint and Secure Boot controls.">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../en/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Menu" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../en/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Documentation</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Search the docs" aria-label="Search" autocomplete="off" spellcheck="false" data-empty="Nothing found">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><b>en</b><a href="../../ru/guide/security.html" hreflang="ru">ru</a></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Getting started</h2><ul><li><a href="../index.html">W Linux documentation</a></li><li><a href="../hotkeys.html">Keyboard shortcuts</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Desktop</h2><ul><li><a href="theming.html">Themes and wallpapers</a></li><li><a href="desktop.html">The desktop</a></li><li><a href="displays.html">Displays and night light</a></li><li><a href="input.html">Keyboard, mouse and touchpad</a></li></ul><h2>System</h2><ul><li><a href="updates.html">Keeping W up to date</a></li><li><a href="security.html" aria-current="page">Security</a></li><li><a href="network.html">Network, DNS and the firewall</a></li><li><a href="power.html">Power and battery</a></li><li><a href="../recovery.html">Recovery — when W will not boot, or boots wrong</a></li></ul><h2>Software</h2><ul><li><a href="packs.html">Packs — optional software bundles</a></li></ul><h2>AI</h2><ul><li><a href="ai.html">The AI assistant</a></li></ul><h2>Reference</h2><ul><li><a href="../reference/index.html">Commands</a></li></ul></nav>
+  <main>
+    <article>
+      <h1>Security</h1>
+      <p>W enables a set of protections on every installation and gives you switches
+for the parts worth adjusting. The graphical controls concentrate in
+<strong>Hub → System → Security</strong>.</p>
+<h2 id="what-is-on-by-default">What is on by default <a class="anchor" href="#what-is-on-by-default" aria-hidden="true">#</a></h2>
+<ul>
+<li><strong>Kernel hardening</strong> — a curated sysctl and command-line tightening of the
+default kernel (<code>w-kernel harden status</code>). It is a toggle, not a fork: the
+everyday kernel is the responsive one.</li>
+<li><strong>sudo-rs</strong> as the privilege tool with the familiar <code>sudo</code> coexisting —
+escalation prompts behave the same as any Arch system.</li>
+<li><strong>Encrypted DNS</strong> — systemd-resolved resolving over TLS to a privacy-respecting
+provider (Quad9 by default). <code>w-dns</code> changes the provider or the mode.</li>
+<li><strong>Firewall</strong> — firewalld with an <code>nftables</code> backend and a permissive default
+zone appropriate for home networks. <code>w-firewall public|home</code> moves the
+machine between zones; <strong>Hub → Network</strong> has the same dropdowns.</li>
+<li><strong>Keyring</strong> — gnome-keyring stores the user's secrets (WiFi, saved
+passwords); the SSH agent side is a neutral slot (<code>w-ssh</code>) that works with
+any backend.</li>
+<li><strong>Firmware updates</strong> — <code>fwupd</code> and its timer; <code>fwupdmgr refresh &amp;&amp; fwupdmgr update</code> applies them.</li>
+</ul>
+<h2 id="sandboxed-applications-optional">Sandboxed applications (optional) <a class="anchor" href="#sandboxed-applications-optional" aria-hidden="true">#</a></h2>
+<p>Third-party GUI applications are best run sandboxed, and W keeps the slots that
+takes ready — the desktop portals and the kernel's unprivileged user namespaces
+are enabled out of the box. The channel itself is opt-in: <code>sudo w-pack install flatpak</code> adds Flatpak with the Flathub remote, the <strong>Bazaar</strong> store, <strong>Flatseal</strong>
+for per-app permissions, and W's theme inside the sandbox. Install it if you
+want that ecosystem; a machine that takes its software from the repositories
+does not need it.</p>
+<h2 id="fingerprint-login">Fingerprint login <a class="anchor" href="#fingerprint-login" aria-hidden="true">#</a></h2>
+<p>If the machine has a fingerprint reader, <code>w-fingerprint</code> records your fingers
+and the login screen, the lock screen and privilege prompts will accept them.
+<strong>Hub → Input → Fingerprint</strong> does the same thing graphically.</p>
+<p>The same panel decides how the reader behaves under the lock screen. By
+default it stays lit for the whole lock and hyprlock verifies the finger
+itself. Some readers overheat under that and stop answering after a few
+minutes; for them choose <strong>Sensor → On activity</strong> (<code>w-fingerprint lock-sensor mode wake</code>): the sensor lights up for a short window after locking, waking the
+machine or any activity while locked, then sleeps. The window is adjustable
+(10–300 s); the change applies from the next lock.</p>
+<h2 id="secure-boot">Secure Boot <a class="anchor" href="#secure-boot" aria-hidden="true">#</a></h2>
+<p>On encrypted installs W ships a two-phase Secure Boot setup: enroll the keys,
+reboot once, turn Secure Boot on in the firmware. <strong>Hub → System → Security</strong>
+walks through it (<code>w-secureboot</code> from a terminal). The installer does not turn
+it on automatically on purpose — the firmware requires steps outside the OS.</p>
+<h2 id="kernel-controls">Kernel controls <a class="anchor" href="#kernel-controls" aria-hidden="true">#</a></h2>
+<p><code>w-kernel</code> changes the active kernel (default, LTS, vanilla) and carries the
+hardening profile. Both live in the Hub; kernel switching suggests the
+graceful reboot when the running kernel changed.</p>
+<h2 id="what-is-not-yet-protected">What is (not yet) protected <a class="anchor" href="#what-is-not-yet-protected" aria-hidden="true">#</a></h2>
+<p>USB quarantine (USBGuard) is designed but optional and not yet shipped —
+plugging in a foreign USB device is currently trusted like any other storage.
+Snapshots are the answer to a bad update; they are not a backup — if the drive
+is lost or the disk dies, there is nothing to roll back to. Back up whatever
+you cannot reproduce.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="updates.html"><small>Previous</small>Keeping W up to date</a><a class="next" href="network.html"><small>Next</small>Network, DNS and the firewall</a></nav>
+  </main>
+  <aside class="toc"><h2>On this page</h2><ul><li><a href="#what-is-on-by-default">What is on by default</a></li><li><a href="#sandboxed-applications-optional">Sandboxed applications (optional)</a></li><li><a href="#fingerprint-login">Fingerprint login</a></li><li><a href="#secure-boot">Secure Boot</a></li><li><a href="#kernel-controls">Kernel controls</a></li><li><a href="#what-is-not-yet-protected">What is (not yet) protected</a></li></ul></aside>
+</div>
+</body>
+</html>

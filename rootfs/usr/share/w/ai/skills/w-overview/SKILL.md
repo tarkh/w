@@ -7,7 +7,9 @@ description: >-
   before answering questions about how W is organized or which command to use.
 sources:
   - path: .claude/library/essentials.md
-    sha256: 6989a0bec65569e2aa1fb2a3c1a1bb9f831641d11d12c5d6b4d6a523d8c830c5
+    sha256: 9683ea12b9594817dcacbf46a7537dfce7761a57a174f20e5e712bf155a325cc
+  - path: .claude/library/w-help.md
+    sha256: 8c25257c356a6703463d4673b42a6bb157315ae70ff646b15cce82a259b58410
 ---
 
 # W Overview
@@ -35,15 +37,17 @@ W keeps its own state and configuration under predictable roots:
 | `~/.config/quickshell/w/` | The Quickshell UI config tree, live. Split by ownership: `shell.qml`, `core/`, `modules/` are W's (refreshed by every update, in EVERY account's home); `config/*.json` (bar, launcher, notifications, …) are the user's — written once, never overwritten. |
 | `/run/w/` | Runtime state: the resolved wallpaper manifest under `/run/w/wallpaper/`, and `/run/w/fp/` where the auth dialog parks its per-user "ask me for the password, not my fingerprint" flag. |
 | `/usr/share/w/ai/` | This AI knowledge base (read-only, shipped). |
-| `/usr/share/doc/w/` | The user documentation, on disk: `index.md`, `faq.md`, `guide/`, a page per command under `reference/`, and `RECOVERY.md`. |
+| `/usr/share/doc/w/` | The user documentation, on disk: `index.md`, `faq.md`, `guide/`, a page per command under `reference/`, and `RECOVERY.md` — read these Markdown files. `html/` is the same content rendered as the offline documentation site (for people, not for you). |
 | `/usr/bin/w-*` | The first-party W command-line tools — everything a person, a unit or a config calls by name. |
 | `/usr/lib/w/` | W's internals: sourced shell libraries, the polkit dispatchers, the `w-mcp` Python package, the `w-style` rendering axes. Not on `PATH`, and not meant to be run by hand. |
 
 Point people at the shipped documentation rather than improvising an answer: it is
-the same text the desktop shows on <kbd>Super+F1</kbd> (and behind the **?** button
-in a Hub panel), it works with no network, and `reference/w-<cmd>.md` is generated
+the same text the desktop shows in the Help window (<kbd>Super+F1</kbd>) and behind
+the **?** button in a Hub panel, it works with no network, and `reference/w-<cmd>.md` is generated
 from that command's own help, so it cannot drift from the tool. `w-info` lists every
-command with a one-line description.
+command with a one-line description. To show a person a page, open it for them:
+`w-help guide/<page>[#<heading-slug>]` (or `w-help --search <words>`) brings up the
+Help window on that page — the path is the Markdown file's, without `.md`.
 
 Themes resolve **user over system**: a per-user theme in `~/.config/w/` shadows the
 system one in `/etc/w/`, and both sit above W's defaults in `/usr/share/w/defaults/`

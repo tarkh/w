@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>w-help · W Linux</title>
+<meta name="description" content="Открыть документацию W в окне «Справка W».">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../ru/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Меню" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../ru/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Документация</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Поиск по документации" aria-label="Поиск" autocomplete="off" spellcheck="false" data-empty="Ничего не найдено">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><a href="../../en/reference/w-help.html" hreflang="en">en</a><b>ru</b></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Начало</h2><ul><li><a href="../index.html">Документация W Linux</a></li><li><a href="../hotkeys.html">Горячие клавиши</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Рабочий стол</h2><ul><li><a href="../guide/theming.html">Темы и обои</a></li><li><a href="../guide/desktop.html">Рабочий стол</a></li><li><a href="../guide/displays.html">Мониторы и ночной свет</a></li><li><a href="../guide/input.html">Клавиатура, мышь и тачпад</a></li></ul><h2>Система</h2><ul><li><a href="../guide/updates.html">Поддержание W в актуальном состоянии</a></li><li><a href="../guide/security.html">Безопасность</a></li><li><a href="../guide/network.html">Сеть, DNS и фаервол</a></li><li><a href="../guide/power.html">Питание и батарея</a></li><li><a href="../recovery.html">Восстановление — когда W не загружается или загружается неправильно</a></li></ul><h2>Программы</h2><ul><li><a href="../guide/packs.html">Наборы — опциональные пакеты софта</a></li></ul><h2>ИИ</h2><ul><li><a href="../guide/ai.html">Ассистент ИИ</a></li></ul><h2>Справочник</h2><ul><li><a href="index.html">Команды</a><ul><li><a href="w-ai.html">w-ai</a></li><li><a href="w-appearance.html">w-appearance</a></li><li><a href="w-bar.html">w-bar</a></li><li><a href="w-conf.html">w-conf</a></li><li><a href="w-crypt.html">w-crypt</a></li><li><a href="w-dns.html">w-dns</a></li><li><a href="w-fingerprint.html">w-fingerprint</a></li><li><a href="w-firewall.html">w-firewall</a></li><li><a href="w-help.html" aria-current="page">w-help</a></li><li><a href="w-hotkeys.html">w-hotkeys</a></li><li><a href="w-info.html">w-info</a></li><li><a href="w-kbdlight.html">w-kbdlight</a></li><li><a href="w-kernel.html">w-kernel</a></li><li><a href="w-keyboard.html">w-keyboard</a></li><li><a href="w-langpack.html">w-langpack</a></li><li><a href="w-locale.html">w-locale</a></li><li><a href="w-logs.html">w-logs</a></li><li><a href="w-mirrors.html">w-mirrors</a></li><li><a href="w-monitor.html">w-monitor</a></li><li><a href="w-nightlight.html">w-nightlight</a></li><li><a href="w-notify.html">w-notify</a></li><li><a href="w-pack.html">w-pack</a></li><li><a href="w-pointer.html">w-pointer</a></li><li><a href="w-power.html">w-power</a></li><li><a href="w-record.html">w-record</a></li><li><a href="w-reset.html">w-reset</a></li><li><a href="w-rollback.html">w-rollback</a></li><li><a href="w-screenshot.html">w-screenshot</a></li><li><a href="w-secureboot.html">w-secureboot</a></li><li><a href="w-session.html">w-session</a></li><li><a href="w-ssh.html">w-ssh</a></li><li><a href="w-style.html">w-style</a></li><li><a href="w-sync.html">w-sync</a></li><li><a href="w-term.html">w-term</a></li><li><a href="w-theme.html">w-theme</a></li><li><a href="w-time.html">w-time</a></li><li><a href="w-update.html">w-update</a></li><li><a href="w-userdirs.html">w-userdirs</a></li><li><a href="w-wallpaper.html">w-wallpaper</a></li></ul></li></ul></nav>
+  <main>
+    <article>
+      <h1>w-help</h1>
+      <p><code>w-help</code> — Открыть документацию W в окне «Справка W».</p>
+<h2 id="использование">Использование <a class="anchor" href="#использование" aria-hidden="true">#</a></h2>
+<pre><code>Использование: <span class="w">w-help</span> [страница[#якорь]] [<span class="f">--search</span> запрос]
+
+Info: Открыть документацию W в окне «Справка W».
+
+Аргументы:
+  страница        Страница документации — путь Markdown-файла или без
+                  расширения: guide/updates, guide/updates.md, faq, recovery.
+                  По умолчанию — оглавление. Уже открытое окно без указания
+                  страницы только получает фокус
+  <span class="c">#якорь          Заголовок на странице (его слаг, как в ссылках «?» Хаба)</span>
+
+Опции:
+  <span class="f">--search</span> ЗАПРОС Открыть страницу с уже выполненным поиском ЗАПРОСА
+  <span class="f">-h</span>, <span class="f">--help</span>      Показать эту справку
+
+Коды выхода:
+  0  Успех   1  Ошибка выполнения (нет такой страницы)   2  Ошибка вызова
+
+Примеры:
+  <span class="w">w-help</span>
+  <span class="w">w-help</span> guide/updates#where-you-see-updates
+  <span class="w">w-help</span> <span class="f">--search</span> snapshot</code></pre>
+<p>Эта страница генерируется из собственной справки команды (w-docs-refgen). Живая
+версия того же текста на машине с W: <code>w-help help</code>.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="w-firewall.html"><small>Назад</small>w-firewall</a><a class="next" href="w-hotkeys.html"><small>Далее</small>w-hotkeys</a></nav>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

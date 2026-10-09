@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Сеть, DNS и фаервол · W Linux</title>
+<meta name="description" content="Подключение к Wi-Fi и ethernet, имя машины, шифрованный DNS и переключение зоны фаервола для недоверенной сети.">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../ru/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Меню" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../ru/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Документация</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Поиск по документации" aria-label="Поиск" autocomplete="off" spellcheck="false" data-empty="Ничего не найдено">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><a href="../../en/guide/network.html" hreflang="en">en</a><b>ru</b></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Начало</h2><ul><li><a href="../index.html">Документация W Linux</a></li><li><a href="../hotkeys.html">Горячие клавиши</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Рабочий стол</h2><ul><li><a href="theming.html">Темы и обои</a></li><li><a href="desktop.html">Рабочий стол</a></li><li><a href="displays.html">Мониторы и ночной свет</a></li><li><a href="input.html">Клавиатура, мышь и тачпад</a></li></ul><h2>Система</h2><ul><li><a href="updates.html">Поддержание W в актуальном состоянии</a></li><li><a href="security.html">Безопасность</a></li><li><a href="network.html" aria-current="page">Сеть, DNS и фаервол</a></li><li><a href="power.html">Питание и батарея</a></li><li><a href="../recovery.html">Восстановление — когда W не загружается или загружается неправильно</a></li></ul><h2>Программы</h2><ul><li><a href="packs.html">Наборы — опциональные пакеты софта</a></li></ul><h2>ИИ</h2><ul><li><a href="ai.html">Ассистент ИИ</a></li></ul><h2>Справочник</h2><ul><li><a href="../reference/index.html">Команды</a></li></ul></nav>
+  <main>
+    <article>
+      <h1>Сеть, DNS и фаервол</h1>
+      <p><strong>Хаб → Сеть</strong> держит настройки, которые вы меняете редко и хотите найти
+без поисков: имя машины, DNS-резолвер и зону фаервола. Подключение к
+реальной сети — задача аплета, он в одном клике.</p>
+<span id="connections"></span><h2 id="соединения">Соединения <a class="anchor" href="#соединения" aria-hidden="true">#</a></h2>
+<p>Соединениями управляет <strong>NetworkManager</strong>. К нему ведут три двери, и все
+они приводят в одно и то же место:</p>
+<ul>
+<li><strong>сетевой аплет</strong> в трее — интерактивный, для выбора сети Wi-Fi и ввода
+её пароля;</li>
+<li><strong>блок сети в баре</strong>, который показывает, через что вы подключены, и по
+клику открывает редактор соединений;</li>
+<li><strong>Соединения…</strong> в этой панели, которая открывает тот же редактор.</li>
+</ul>
+<p>Блок бара только для чтения намеренно: он сообщает, на ethernet вы, на
+Wi-Fi, на VPN или вообще ни на чём, а управление оставляет аплету.</p>
+<p>У Bluetooth рядом свой собственный аплет в трее.</p>
+<h2 id="имя-хоста">Имя хоста <a class="anchor" href="#имя-хоста" aria-hidden="true">#</a></h2>
+<p><strong>Имя хоста</strong> — это имя, которым машина отзывается в сети и которое
+показывается в строке терминала. Изменение запрашивает ваш пароль, и W сама
+держит в порядке системную таблицу хостов.</p>
+<h2 id="dns">DNS <a class="anchor" href="#dns" aria-hidden="true">#</a></h2>
+<p>W резолвит имена через <strong>systemd-resolved с DNS-over-TLS</strong>, поэтому запросы
+вашей машины зашифрованы, а не читаемы чем-либо между вами и резолвером. Два
+элемента управления:</p>
+<ul>
+<li><strong>Провайдер</strong> — Quad9 (по умолчанию), Cloudflare, Mullvad, Google или
+AdGuard.</li>
+<li><strong>Режим</strong> — <em>вкл</em> — зашифрован, с откатом, если сеть ломает TLS,
+<em>строгий</em> отказывается резолвить вовсе, если это не удаётся сделать
+зашифрованно, а <em>выкл</em> отдаёт DNS тому, что выдаёт сеть или ваш VPN.</li>
+</ul>
+<p><em>вкл</em> — правильное значение по умолчанию: оно держит шифрование везде, где
+это возможно, не оставляя вас без доступа к странице в отельной сети, которая
+портит DNS. Выбирайте <em>строгий</em>, когда знаете, что сеть ведёт себя как
+положено, и предпочитаете отказ утечке.</p>
+<p>DNS — это одна настройка на всю машину, персонального резолвера на
+пользователя нет. Из терминала это <code>w-dns</code>.</p>
+<p>Если каждая страница по десять секунд только начинает грузиться, а само
+соединение в порядке — застрял шифрованный резолвер: <code>w-dns off</code> сразу отдаёт
+DNS сети (без шифрования), а <code>w-dns status</code> показывает, чем машина пользуется
+сейчас.</p>
+<p>На машине, которой управляет кто-то другой, любой из элементов управления
+может показывать <em>Задано политикой сайта</em>; тогда это закреплено
+централизованно, и локального способа обойти это нет.</p>
+<h2 id="фаервол">Фаервол <a class="anchor" href="#фаервол" aria-hidden="true">#</a></h2>
+<p>Фаервол по умолчанию запрещает входящие, и <strong>Зона</strong> задаёт, насколько
+строго:</p>
+<ul>
+<li><strong>дом</strong> — значение по умолчанию. Разрешает входящий SSH и обнаружение
+устройств в локальной сети — это то, что нужно в своей сети для обмена
+файлами и принтеров.</li>
+<li><strong>публичн.</strong> — для кафе, отелей, конференций и любой другой сети, которую
+вы не контролируете.</li>
+</ul>
+<p>Обе зоны всегда разрешают SSH, поэтому переключение не может закрыть вам
+доступ к машине, которой вы управляете удалённо. Исходящие соединения не
+блокируются никогда.</p>
+<p>Для чего-то более тонкого, чем две зоны, W поставляет приложение
+<code>firewall-config</code>, которое подхватывает тему. Из терминала зона — это
+<code>w-firewall</code>.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="security.html"><small>Назад</small>Безопасность</a><a class="next" href="power.html"><small>Далее</small>Питание и батарея</a></nav>
+  </main>
+  <aside class="toc"><h2>На этой странице</h2><ul><li><a href="#соединения">Соединения</a></li><li><a href="#имя-хоста">Имя хоста</a></li><li><a href="#dns">DNS</a></li><li><a href="#фаервол">Фаервол</a></li></ul></aside>
+</div>
+</body>
+</html>

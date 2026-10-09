@@ -24,7 +24,8 @@
 # issue say something more useful than "it failed". The workflows are staged on
 # purpose — static checks, then the image, then the install — and which stage
 # went red already narrows the cause a long way: a red `check` is a defect in
-# this repository, a red `iso` is usually upstream Arch, a red `e2e` means the
+# this repository (unless the same commit was green before — then the toolchain
+# moved), a red `iso` is usually upstream Arch, a red `e2e` means the
 # image built and then did not install. stage_meaning below carries that
 # sentence for each, so the person opening the issue starts in the right place
 # instead of at the top of a 20 000-line log.
@@ -100,6 +101,19 @@ fi
 stage="${failed[0]}"
 where="failed at: ${failed[*]}"
 
+# Did the tree move since the last green run? The canary rebuilds an unchanged
+# release every night, so a red run on the very commit that was green is the
+# world moving, not the repository: a new qmllint in Qt 6.12 failed `check` on an
+# untouched tree, and the issue said "defect in this repository". Best-effort —
+# a lookup that fails (no actions:read, API hiccup) leaves the stage sentence as
+# it was rather than turning the report itself red.
+meaning="$(stage_meaning "$stage")"
+green_sha="$(gh run list --workflow "${GITHUB_WORKFLOW:-}" --status success --limit 1 \
+              --json headSha --jq '.[0].headSha // empty' 2>/dev/null || true)"
+if [[ -n "$green_sha" && "$green_sha" == "${GITHUB_SHA:-}" ]]; then
+  meaning="This commit (${GITHUB_SHA:0:12}) already passed this workflow, so the tree did not change — what moved is upstream: a new package version, typically a toolchain (a stricter linter, a compiler, a tool's flags). Diff the package versions in the two runs' logs rather than the tree."
+fi
+
 if [[ -n "$num" ]]; then
   gh issue comment "$num" --body "Still failing ($where) — $RUN_URL"
   echo "red: commented on #$num"
@@ -109,7 +123,7 @@ fi
 gh issue create --title "$TITLE" --label "$LABEL" --body "$(cat <<EOF
 $TITLE — $where.
 
-$(stage_meaning "$stage")
+$meaning
 
 Run: $RUN_URL
 

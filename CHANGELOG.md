@@ -8,6 +8,40 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.23.0
+
+- **Audio pack.** `w-pack install audio` sets up music production on W's
+  PipeWire stack: Ardour 9, qpwgraph for routing, Audacity, and a plugin starter
+  set (Surge XT, the LSP suite, Dragonfly Reverb). PipeWire takes over the JACK
+  API — `pipewire-jack` replaces `jack2`, and stays if the pack is removed,
+  because other apps link against it — and your account gets realtime audio
+  priority from your next login. Ardour, Audacity and qpwgraph open in your W
+  colours. The W assistant can work inside an open Ardour session — tracks,
+  plugins, mixer, MIDI — once you turn on *MCP HTTP Server (Experimental)* in
+  Ardour's Preferences → Control Surfaces; it is off by default because Ardour's
+  server listens on every network interface without authentication. About
+  660 MiB. The installer offers the pack as well.
+- **W Help.** `SUPER+F1`, Hub → Documentation and the new *Open in Help* button
+  on documentation cards now open the W documentation as a site in its own
+  window: pages by category, search, English and Russian, painted in your
+  current theme. It is the copy on disk in `/usr/share/doc/w/html`, so it works
+  offline. From a terminal: `w-help [page[#section]]`.
+- **Assistant, Calendar, Power menu and Volume control start from any app.**
+  Their launcher entries carried an escape that GLib rejects, so Nemo,
+  `gio launch` and the desktop portals could not start them — only W's own
+  launcher could. Fixed.
+- **Arrow keys in W dialogs** moved focus the wrong way in rows of buttons.
+  Fixed.
+- **Assistant: remote MCP servers.** A drop-in in `mcp.d` can name its server
+  with `URL=` (streamable HTTP) instead of `COMMAND`/`ARGS`; every assistant
+  host receives it in its own native form.
+- **Signed install images.** From the next nightly build the ISO carries a
+  Sigstore build-provenance attestation, made by the build itself. Check it with
+  `gh attestation verify w-*-x86_64.iso --repo tarkh/w`; the `edge` release
+  notes show the steps.
+- A broken link to the FAQ in *Keeping W up to date* (English and Russian) is
+  fixed.
+
 ## v0.22.0
 
 - **3D pack.** `w-pack install 3d` sets up Blender 5 with the Cycles GPU runtime

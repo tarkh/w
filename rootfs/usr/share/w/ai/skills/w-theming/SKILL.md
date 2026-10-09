@@ -13,7 +13,7 @@ sources:
   - path: .claude/library/w-theme.md
     sha256: b2a973c39eac5eebda173cfc43b710a91ab4cb68ae63a599c3ccf45e6e6eaa04
   - path: .claude/library/w-style.md
-    sha256: 9926ae076e08184f69148cc04ff6afb7111750b88ea13528201b041e3bfddc4d
+    sha256: 47db1212768d548f3c1df1d2bde549d97c105cf7c24703e8a93625657102ffd6
   - path: .claude/library/w-wallpaper.md
     sha256: 2499a3c31263d765ac650f83ea6e84264c64424627e28df47631e425f9740f41
   - path: .claude/library/w-appearance.md

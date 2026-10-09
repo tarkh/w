@@ -22,22 +22,12 @@
 //   }
 import Quickshell
 import Quickshell.Wayland
-import Quickshell.Hyprland
 import QtQuick
 import QtQuick.Controls
 import qs.core
 
 Scope {
     id: root
-
-    // The hotkey (catalog token "docs", SUPER + F1): documentation on demand,
-    // landing on index.md. Handled here because this module already owns the
-    // rendering surface; the resolution logic is core/DocsViewer's.
-    GlobalShortcut {
-        appid: "quickshell"
-        name: "docs"
-        onPressed: DocsViewer.openIndex()
-    }
 
     readonly property bool active: Overlays.current === "infobox"
     // Reset the roving cursor on every real open (not suspend/resume) — a fresh
@@ -171,12 +161,14 @@ Scope {
                         }
                     }
                     if (card.actionsList.length === 0) return;
+                    // The row lays out right-to-left (actions[0] rightmost), so
+                    // the arrows walk the index the other way round.
                     switch (e.key) {
                     case HubNavKeys.left:
-                        card.focusIndex = Math.max(0, card.focusIndex - 1);
+                        card.focusIndex = Math.min(card.actionsList.length - 1, card.focusIndex + 1);
                         e.accepted = true; return;
                     case HubNavKeys.right:
-                        card.focusIndex = Math.min(card.actionsList.length - 1, card.focusIndex + 1);
+                        card.focusIndex = Math.max(0, card.focusIndex - 1);
                         e.accepted = true; return;
                     case HubNavKeys.confirm:
                     case Qt.Key_Enter:

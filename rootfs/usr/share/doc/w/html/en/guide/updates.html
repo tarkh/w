@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keeping W up to date · W Linux</title>
+<meta name="description" content="The single update path, the badge in the bar, Arch news, and what to do when an upgrade goes wrong.">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../en/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Menu" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../en/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Documentation</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Search the docs" aria-label="Search" autocomplete="off" spellcheck="false" data-empty="Nothing found">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><b>en</b><a href="../../ru/guide/updates.html" hreflang="ru">ru</a></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Getting started</h2><ul><li><a href="../index.html">W Linux documentation</a></li><li><a href="../hotkeys.html">Keyboard shortcuts</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Desktop</h2><ul><li><a href="theming.html">Themes and wallpapers</a></li><li><a href="desktop.html">The desktop</a></li><li><a href="displays.html">Displays and night light</a></li><li><a href="input.html">Keyboard, mouse and touchpad</a></li></ul><h2>System</h2><ul><li><a href="updates.html" aria-current="page">Keeping W up to date</a></li><li><a href="security.html">Security</a></li><li><a href="network.html">Network, DNS and the firewall</a></li><li><a href="power.html">Power and battery</a></li><li><a href="../recovery.html">Recovery — when W will not boot, or boots wrong</a></li></ul><h2>Software</h2><ul><li><a href="packs.html">Packs — optional software bundles</a></li></ul><h2>AI</h2><ul><li><a href="ai.html">The AI assistant</a></li></ul><h2>Reference</h2><ul><li><a href="../reference/index.html">Commands</a></li></ul></nav>
+  <main>
+    <article>
+      <h1>Keeping W up to date</h1>
+      <p>W has one native update path built on <code>pacman</code> and <code>yay</code>. There are no
+third-party update managers. Every upgrade transaction is snapshotted
+automatically (snap-pac), so an update is always reversible — see
+<a href="../faq.html">the FAQ</a> and
+<a href="../recovery.html">Recovery</a>.</p>
+<h2 id="the-wupdate-command">The <code>w-update</code> command <a class="anchor" href="#the-wupdate-command" aria-hidden="true">#</a></h2>
+<ul>
+<li><code>w-update</code> (or <code>w-update upgrade</code>) — interactive full upgrade: repository and
+AUR packages in one pass. It runs without <code>--noconfirm</code> on purpose — you
+review the package list and AUR build diffs before anything is applied. When
+the kernel changed it offers a reboot at the end, and that reboot closes your
+windows gracefully first, so unsaved work still asks for confirmation.</li>
+<li><code>w-update check</code> — checks for repository and AUR updates <strong>without root</strong> and
+remembers the result. Never run a bare <code>pacman -Sy</code>; W's checker uses a
+private temporary database instead.</li>
+<li><code>w-update status</code> — the last recorded status.</li>
+<li><code>w-update news</code> — the latest <a href="https://archlinux.org/news/" class="ext">Arch Linux news</a>
+items. Read this <strong>before a large upgrade</strong>; it surfaces the rare
+manual-intervention announcements.</li>
+<li><code>w-update enable</code> / <code>disable</code> / <code>interval [minutes]</code> — per-user control of
+the background checker that keeps the badge in the bar current.</li>
+<li><code>w-update plan</code> — a read-only preflight: what a repo upgrade would touch,
+pending AUR builds, whether a kernel change means a reboot, free disk space.</li>
+</ul>
+<h2 id="where-you-see-updates">Where you see updates <a class="anchor" href="#where-you-see-updates" aria-hidden="true">#</a></h2>
+<ul>
+<li><strong>The bar</strong> shows an updates block with a count once updates are available.</li>
+<li><strong>The Hub → System</strong> shows the same counter and, after an upgrade that
+requires it, a &quot;reboot pending&quot; hint.</li>
+<li>Clicking the bar block (or the Updates tile in the Hub) opens <code>w-update</code> in
+a terminal.</li>
+<li>New releases of pack engines (comfyui, invokeai) are <strong>not</strong> in that count and
+are never installed by <code>w-update</code> — they show in <strong>Hub → Packs</strong>, in
+<code>w-update status</code>, and as a note at the end of <code>w-update</code>. See
+<a href="packs.html">the packs guide</a>.</li>
+</ul>
+<p>W-specific <code>/etc</code> files get their <code>.pacnew</code> reconciled automatically by a
+pacman hook; third-party <code>.pacnew</code> files stay manual, and <code>w-update</code> points
+them out.</p>
+<h2 id="if-an-update-goes-wrong">If an update goes wrong <a class="anchor" href="#if-an-update-goes-wrong" aria-hidden="true">#</a></h2>
+<ul>
+<li>A failed download is most often mirror trouble: <code>w-mirrors status</code> and
+<code>w-mirrors sync</code> re-rank and refresh the mirrorlist; then retry.</li>
+<li>If the system misbehaves after an upgrade, reboot into the pre-upgrade
+snapshot: the boot menu (GRUB or Limine, depending on the install) lists
+snapshots, and <a href="../recovery.html">Recovery</a> walks the restore step by step. W
+also ships a copy of that page on disk, so it is readable even when the
+system does not boot.</li>
+</ul>
+<h2 id="the-update-channel-of-w-itself">The update channel of W itself <a class="anchor" href="#the-update-channel-of-w-itself" aria-hidden="true">#</a></h2>
+<p><code>w-update</code> upgrades <em>packages</em>; the distribution's own configuration travels
+the <code>w-sync</code> channel (edge) — see <code>w-sync check</code> and the update chapter of the
+FAQ.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="input.html"><small>Previous</small>Keyboard, mouse and touchpad</a><a class="next" href="security.html"><small>Next</small>Security</a></nav>
+  </main>
+  <aside class="toc"><h2>On this page</h2><ul><li><a href="#the-wupdate-command">The w-update command</a></li><li><a href="#where-you-see-updates">Where you see updates</a></li><li><a href="#if-an-update-goes-wrong">If an update goes wrong</a></li><li><a href="#the-update-channel-of-w-itself">The update channel of W itself</a></li></ul></aside>
+</div>
+</body>
+</html>

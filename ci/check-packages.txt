@@ -50,6 +50,10 @@
 #                      w-docs-refgen diffs generated reference pages against the
 #                      committed ones. All three FAILED rather than skipped,
 #                      which is the right behaviour and how this was found.
+#   python-markdown-it-py  w-docs-site renders the docs tree into the committed
+#                      site (rootfs/usr/share/doc/w/html) and the docs suite runs
+#                      its --check. Without the parser the golden check cannot
+#                      render and the suite fails on the container, not the docs.
 #
 # NOT here: archiso and base-devel. Those are the ISO BUILD, not the checks, and
 # they stay in ci/iso-build-entrypoint.sh where the build lives.
@@ -78,3 +82,4 @@ python-numpy
 python-cryptography
 qt6-declarative
 quickshell
+python-markdown-it-py

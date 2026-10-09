@@ -1,6 +1,7 @@
 ---
 title: Безопасность
 section: guide
+category: system
 order: 3
 summary: Что W включает из коробки — защита ядра, sudo-rs, фаервол, шифрованный DNS, keyring, обновления прошивки, отпечаток пальца и Secure Boot.
 sources:

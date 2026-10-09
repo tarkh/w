@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Документация W Linux · W Linux</title>
+<meta name="description" content="Где искать что — разделы, FAQ, справочник команд и восстановление.">
+<link rel="icon" href="../assets/logo.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../ru/search-index.js" defer></script>
+<script src="../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Меню" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../ru/index.html"><img src="../assets/logo.svg" alt="W Linux"><span>Документация</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Поиск по документации" aria-label="Поиск" autocomplete="off" spellcheck="false" data-empty="Ничего не найдено">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><a href="../en/index.html" hreflang="en">en</a><b>ru</b></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Начало</h2><ul><li><a href="index.html" aria-current="page">Документация W Linux</a></li><li><a href="hotkeys.html">Горячие клавиши</a></li><li><a href="faq.html">FAQ</a></li></ul><h2>Рабочий стол</h2><ul><li><a href="guide/theming.html">Темы и обои</a></li><li><a href="guide/desktop.html">Рабочий стол</a></li><li><a href="guide/displays.html">Мониторы и ночной свет</a></li><li><a href="guide/input.html">Клавиатура, мышь и тачпад</a></li></ul><h2>Система</h2><ul><li><a href="guide/updates.html">Поддержание W в актуальном состоянии</a></li><li><a href="guide/security.html">Безопасность</a></li><li><a href="guide/network.html">Сеть, DNS и фаервол</a></li><li><a href="guide/power.html">Питание и батарея</a></li><li><a href="recovery.html">Восстановление — когда W не загружается или загружается неправильно</a></li></ul><h2>Программы</h2><ul><li><a href="guide/packs.html">Наборы — опциональные пакеты софта</a></li></ul><h2>ИИ</h2><ul><li><a href="guide/ai.html">Ассистент ИИ</a></li></ul><h2>Справочник</h2><ul><li><a href="reference/index.html">Команды</a></li></ul></nav>
+  <main>
+    <article>
+      <h1>Документация W Linux</h1>
+      <p><strong>W Linux</strong> — дистрибутив на базе Arch Linux: рабочий стол
+Hyprland/Quickshell, набор инструментов <code>w-*</code>, которые управляют системой, и
+автоматические снапшоты, делающие повседневные операции обратимыми. Эта
+документация открывается прямо в рабочем столе (кнопка <strong>?</strong> в панелях
+Хаба, либо <kbd>Super+F1</kbd>) и публикуется вместе с репозиторием.</p>
+<h2 id="как-здесь-ориентироваться">Как здесь ориентироваться <a class="anchor" href="#как-здесь-ориентироваться" aria-hidden="true">#</a></h2>
+<ul>
+<li><strong>Хаб</strong> (<kbd>Super+Space</kbd>) — графический центр управления: тут
+живут настройки и панель Горячих клавиш со списком всех сочетаний.</li>
+<li><strong><kbd>Super+F1</kbd></strong> открывает эту документацию в любой момент.</li>
+<li><code>w-info</code> выводит в терминале список всех команд <code>w-*</code> с однострочным
+описанием.</li>
+<li><a href="recovery.html">Восстановление</a> — страница на случай «система не
+загружается»; она хранится отдельной самостоятельной копией в том же
+месте на каждой машине W.</li>
+</ul>
+<h2 id="разделы">Разделы <a class="anchor" href="#разделы" aria-hidden="true">#</a></h2>
+<ul>
+<li><a href="guide/updates.html">Поддержание W в актуальном состоянии</a> — обновления,
+значок в баре и что делать, если обновление пошло не так.</li>
+<li><a href="guide/theming.html">Темы и обои</a> — переключение и создание тем, обои и
+панель Оформление.</li>
+<li><a href="guide/security.html">Безопасность</a> — что W включает из коробки и какие
+элементы управления есть в Хабе.</li>
+<li><a href="guide/desktop.html">Рабочий стол</a> — окна, рабочие столы, попапы,
+уведомления и восстановление сессии.</li>
+<li><a href="guide/displays.html">Мониторы и ночной свет</a> — раскладка монитора,
+масштаб, собственная раскладка экрана входа и фильтр синего света.</li>
+<li><a href="guide/input.html">Клавиатура, мышь и тачпад</a> — раскладки и клавиша
+переключения, поведение указателя, жесты, считыватель отпечатков.</li>
+<li><a href="guide/network.html">Сеть, DNS и фаервол</a> — подключение, шифрованный DNS и
+зона для недоверенной сети.</li>
+<li><a href="guide/power.html">Питание и батарея</a> — профили, цепочка простоя
+блокировка/гашение/сон, действия крышки, лимит заряда.</li>
+<li><a href="guide/ai.html">Ассистент ИИ</a> — профили, модели и ключи, сколько он может
+делать сам.</li>
+<li><a href="guide/packs.html">Наборы</a> — опциональные пакеты софта и как добавить один.</li>
+<li><a href="faq.html">FAQ</a> — короткие ответы на частые вопросы.</li>
+</ul>
+<h2 id="справочник-команд">Справочник команд <a class="anchor" href="#справочник-команд" aria-hidden="true">#</a></h2>
+<p>У каждой пользовательской команды <code>w-*</code> есть страница в <a href="reference/index.html">reference/</a>,
+сгенерированная из её собственного текста справки. Тот же список на любой машине
+W выводит <code>w-info</code>.</p>
+<!-- W-DOCS:reference-toc START (generated — do not edit here) -->
+<ul>
+<li><a href="reference/w-ai.html"><code>w-ai</code></a> — Запуск и настройка AI-ассистента W — хосты, ключи, память, вопросы.</li>
+<li><a href="reference/w-appearance.html"><code>w-appearance</code></a> — Персональные переопределения сильнее активной темы (Хаб W -&gt; Оформление -&gt; Настройки).</li>
+<li><a href="reference/w-bar.html"><code>w-bar</code></a> — Выбор блоков статус-панели для каждого монитора (Хаб W -&gt; Оформление -&gt; Панель).</li>
+<li><a href="reference/w-conf.html"><code>w-conf</code></a> — Чтение и запись слоёной конфигурации W (вендор → админ → пользователь).</li>
+<li><a href="reference/w-crypt.html"><code>w-crypt</code></a> — Управление факторами шифрования диска — авторазблокировка TPM2 и ключи восстановления.</li>
+<li><a href="reference/w-dns.html"><code>w-dns</code></a> — Переключение DNS-провайдера и режима DNS-over-TLS (systemd-resolved).</li>
+<li><a href="reference/w-fingerprint.html"><code>w-fingerprint</code></a> — Запись, просмотр и удаление отпечатков пальцев текущего пользователя.</li>
+<li><a href="reference/w-firewall.html"><code>w-firewall</code></a> — Переключение зоны файрвола между домашней и публичной (firewalld).</li>
+<li><a href="reference/w-help.html"><code>w-help</code></a> — Открыть документацию W в окне «Справка W».</li>
+<li><a href="reference/w-hotkeys.html"><code>w-hotkeys</code></a> — Управление горячими клавишами Hyprland — профили, каталог, свои бинды.</li>
+<li><a href="reference/w-info.html"><code>w-info</code></a> — Список всех инструментов W с однострочным описанием каждого.</li>
+<li><a href="reference/w-kbdlight.html"><code>w-kbdlight</code></a> — Подсветка клавиатуры — уровень, медиаклавиши и свет на запросе пароля LUKS.</li>
+<li><a href="reference/w-kernel.html"><code>w-kernel</code></a> — Выбор активного ядра и переключение профиля защиты.</li>
+<li><a href="reference/w-keyboard.html"><code>w-keyboard</code></a> — Управление кольцом раскладок клавиатуры Wayland-сессии (XKB).</li>
+<li><a href="reference/w-langpack.html"><code>w-langpack</code></a> — Показать и доставить то, что нужно локали помимо LANG (переводы, словарь, шрифт).</li>
+<li><a href="reference/w-locale.html"><code>w-locale</code></a> — Показать и переключить язык интерфейса системы (LANG).</li>
+<li><a href="reference/w-logs.html"><code>w-logs</code></a> — Срок хранения логов W (журнал + /var/log + собственные логи W), одна политика.</li>
+<li><a href="reference/w-mirrors.html"><code>w-mirrors</code></a> — Поддержание списка зеркал pacman свежим — ранжирование по расписанию или вручную.</li>
+<li><a href="reference/w-monitor.html"><code>w-monitor</code></a> — Настройка мониторов (разрешение, масштаб, поворот, расположение).</li>
+<li><a href="reference/w-nightlight.html"><code>w-nightlight</code></a> — Ночной свет — тёплый экран по расписанию, чтобы убрать синий свет вечером.</li>
+<li><a href="reference/w-notify.html"><code>w-notify</code></a> — Управление уведомлениями — «Не беспокоить», история, глушение приложений.</li>
+<li><a href="reference/w-pack.html"><code>w-pack</code></a> — Установка и просмотр дополнительных наборов ПО W (паков).</li>
+<li><a href="reference/w-pointer.html"><code>w-pointer</code></a> — Настройки мыши, тачпада и жестов Wayland-сессии.</li>
+<li><a href="reference/w-power.html"><code>w-power</code></a> — Схемы питания, политика простоя (блокировка/экран/сон), крышка, лимит заряда.</li>
+<li><a href="reference/w-record.html"><code>w-record</code></a> — Запись экрана — область/окно/монитор, одна клавиша на старт и стоп.</li>
+<li><a href="reference/w-reset.html"><code>w-reset</code></a> — Принудительный возврат конфига любого модуля или бандла W к дефолту.</li>
+<li><a href="reference/w-rollback.html"><code>w-rollback</code></a> — Откат системы к btrfs-снапшоту, на любом из путей загрузки.</li>
+<li><a href="reference/w-screenshot.html"><code>w-screenshot</code></a> — Снимок экрана — область/окно/монитор, разметить/скопировать/сохранить.</li>
+<li><a href="reference/w-secureboot.html"><code>w-secureboot</code></a> — Настройка и управление Secure Boot (ключи sbctl + хеш Limine).</li>
+<li><a href="reference/w-session.html"><code>w-session</code></a> — Запоминание и восстановление сессии (окна, рабочие столы, раскладка).</li>
+<li><a href="reference/w-ssh.html"><code>w-ssh</code></a> — Выбор SSH-агента сессии и генерация из него пер-хостовых селекторов ключей.</li>
+<li><a href="reference/w-style.html"><code>w-style</code></a> — Отрисовка активной темы во всех оформляемых подсистемах.</li>
+<li><a href="reference/w-sync.html"><code>w-sync</code></a> — Отслеживание dev-репозитория W (канал edge) и обновление без потери настроек.</li>
+<li><a href="reference/w-term.html"><code>w-term</code></a> — Запуск и опрос настроенного терминала (единая точка входа).</li>
+<li><a href="reference/w-theme.html"><code>w-theme</code></a> — Переключение, создание и управление темами W с плавным переходом.</li>
+<li><a href="reference/w-time.html"><code>w-time</code></a> — Настройка часового пояса, системных часов и NTP (systemd-timesyncd).</li>
+<li><a href="reference/w-update.html"><code>w-update</code></a> — Обновление всех системных и AUR-пакетов (репозитории + AUR за один проход).</li>
+<li><a href="reference/w-userdirs.html"><code>w-userdirs</code></a> — Стандартные папки дома (Документы, Изображения, ...), следующие за языком.</li>
+<li><a href="reference/w-wallpaper.html"><code>w-wallpaper</code></a> — Выбор обоев под текущую ступень разрешения.</li>
+</ul>
+<!-- W-DOCS:reference-toc END -->
+
+    </article>
+    <nav class="pager"><a class="next" href="hotkeys.html"><small>Далее</small>Горячие клавиши</a></nav>
+  </main>
+  <aside class="toc"><h2>На этой странице</h2><ul><li><a href="#как-здесь-ориентироваться">Как здесь ориентироваться</a></li><li><a href="#разделы">Разделы</a></li><li><a href="#справочник-команд">Справочник команд</a></li></ul></aside>
+</div>
+</body>
+</html>

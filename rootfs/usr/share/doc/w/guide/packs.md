@@ -1,11 +1,12 @@
 ---
 title: Packs — optional software bundles
 section: guide
+category: apps
 order: 10
 summary: What a pack is, the bundles W offers, installing one for the machine and setting it up for your account, and how to undo it.
 sources:
   - path: .claude/library/packs.md
-    sha256: 112e2d5e040e11d34d90c8906e86e234c9f68e3d63b3c7d7b00c2aa97de82e62
+    sha256: 6f81eda1657c3edb13c34a80ca6fa02c5bc89606f990720f86a7317e9fdc7a44
 ---
 
 W installs in two layers. The **base** is everything a working desktop needs and
@@ -65,6 +66,16 @@ it into the desktop — so a pack arrives configured, not merely downloaded.
   GLB/FBX. Its code runs in a safe mode: Blender's own tools only — no shell
   commands, no network, no add-on installs. Cycles renders on AMD and Intel Arc graphics out of the
   box.
+- **audio** — music production: the Ardour DAW (recording, editing, mixing,
+  MIDI), qpwgraph to wire apps and devices together, Audacity for quick edits,
+  and a starter set of plugins (the Surge XT synth, LSP mixing and mastering
+  tools, Dragonfly reverb). The pack switches the system to PipeWire's JACK
+  support and gives your account realtime audio priority (from your next
+  login). Ardour, Audacity and qpwgraph open in your W colours. [The AI
+  assistant](ai.md) can work inside an open Ardour session — tracks, plugins,
+  mixer, MIDI notes — once you turn on *MCP HTTP Server (Experimental)* in
+  Ardour's Preferences → Control Surfaces; it is off by default because it
+  listens without a password, so switch it off again when you are done.
 - **gaming** — Steam, Lutris and Heroic side by side on one shared
   Proton/Wine/MangoHud/gamemode foundation: Steam covers most of a typical
   library, Lutris is the catch-all for everything else (GOG, Amazon, native

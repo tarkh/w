@@ -1,6 +1,7 @@
 ---
 title: Сеть, DNS и фаервол
 section: guide
+category: system
 order: 7
 summary: Подключение к Wi-Fi и ethernet, имя машины, шифрованный DNS и переключение зоны фаервола для недоверенной сети.
 sources:

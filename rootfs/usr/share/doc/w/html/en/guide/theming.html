@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Themes and wallpapers · W Linux</title>
+<meta name="description" content="Switching themes, creating a theme from a wallpaper, wallpaper sets, and the Appearance panel.">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../en/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Menu" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../en/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Documentation</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Search the docs" aria-label="Search" autocomplete="off" spellcheck="false" data-empty="Nothing found">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><b>en</b><a href="../../ru/guide/theming.html" hreflang="ru">ru</a></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Getting started</h2><ul><li><a href="../index.html">W Linux documentation</a></li><li><a href="../hotkeys.html">Keyboard shortcuts</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Desktop</h2><ul><li><a href="theming.html" aria-current="page">Themes and wallpapers</a></li><li><a href="desktop.html">The desktop</a></li><li><a href="displays.html">Displays and night light</a></li><li><a href="input.html">Keyboard, mouse and touchpad</a></li></ul><h2>System</h2><ul><li><a href="updates.html">Keeping W up to date</a></li><li><a href="security.html">Security</a></li><li><a href="network.html">Network, DNS and the firewall</a></li><li><a href="power.html">Power and battery</a></li><li><a href="../recovery.html">Recovery — when W will not boot, or boots wrong</a></li></ul><h2>Software</h2><ul><li><a href="packs.html">Packs — optional software bundles</a></li></ul><h2>AI</h2><ul><li><a href="ai.html">The AI assistant</a></li></ul><h2>Reference</h2><ul><li><a href="../reference/index.html">Commands</a></li></ul></nav>
+  <main>
+    <article>
+      <h1>Themes and wallpapers</h1>
+      <p>A theme in W is one palette that the system renders onto every surface: the
+Hyprland UI, the Quickshell shell, GTK and Qt applications, the terminal, GRUB,
+Plymouth, the login greeter. Switching a theme re-skins all of them at once —
+down to the colour of the boot logo — with a live crossfade.</p>
+<h2 id="switching-themes">Switching themes <a class="anchor" href="#switching-themes" aria-hidden="true">#</a></h2>
+<p><strong>Hub → Appearance</strong> lists installed themes with wallpaper previews. Clicking a
+theme switches it for your user; a system-wide change is done from the CLI by
+an administrator (<code>w-theme set &lt;name&gt;</code> with privileges). The list has two
+sections: <strong>System</strong> themes and <strong>My</strong> themes (per-user, created by you).</p>
+<p>From a terminal: <code>w-theme list</code> and <code>w-theme set &lt;name&gt;</code>.</p>
+<h2 id="creating-a-theme-from-a-wallpaper">Creating a theme from a wallpaper <a class="anchor" href="#creating-a-theme-from-a-wallpaper" aria-hidden="true">#</a></h2>
+<p><strong>Hub → Appearance → Add</strong> (or <code>w-theme new</code> in a terminal) builds a theme out
+of an image:</p>
+<ol>
+<li>Pick a wallpaper image and a name, choose <strong>Dark</strong> or <strong>Light</strong>.</li>
+<li>W extracts the dominant colors from the image and builds an accessible
+palette around the base color you pick — contrast is checked automatically
+so text stays readable in both modes.</li>
+<li>Choose an intensity (low/medium/high) for the palette ramp and confirm.</li>
+</ol>
+<p>Light themes get special care: ink colors are recalculated against the light
+surfaces, so buttons and icons keep their contrast.</p>
+<p>The same screen, opened with the pencil badge on one of <strong>your</strong> generated
+themes, rebuilds that theme from its own wallpaper (new base color, new
+contrast) — the wallpaper itself does not change.</p>
+<p>Wallpapers are per-resolution images in a small set of size tiers; a theme
+ships what it ships and the system falls back to the nearest size. See
+<code>w-wallpaper</code> if you maintain a theme's assets.</p>
+<h2 id="the-appearance-panel">The Appearance panel <a class="anchor" href="#the-appearance-panel" aria-hidden="true">#</a></h2>
+<ul>
+<li><strong>Themes</strong> tab — the theme grids above, plus creating and removing themes.</li>
+<li><strong>Bar</strong> tab — which bar blocks are shown, per monitor (see <code>w-bar</code>).</li>
+<li><strong>Settings</strong> tab — backdrop blur and animation toggles, and the bar position.</li>
+</ul>
+<h2 id="theming-from-the-cli">Theming from the CLI <a class="anchor" href="#theming-from-the-cli" aria-hidden="true">#</a></h2>
+<p><code>w-style</code> renders the theme onto each subsystem, <code>w-theme</code> manages which theme
+is active and what exists, <code>w-wallpaper</code> manages the wallpaper files. For
+hands-on maintenance (for example after editing a system theme by hand):
+<code>w-style apply</code> re-renders, <code>w-reset all</code> returns the W defaults.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="../faq.html"><small>Previous</small>FAQ</a><a class="next" href="desktop.html"><small>Next</small>The desktop</a></nav>
+  </main>
+  <aside class="toc"><h2>On this page</h2><ul><li><a href="#switching-themes">Switching themes</a></li><li><a href="#creating-a-theme-from-a-wallpaper">Creating a theme from a wallpaper</a></li><li><a href="#the-appearance-panel">The Appearance panel</a></li><li><a href="#theming-from-the-cli">Theming from the CLI</a></li></ul></aside>
+</div>
+</body>
+</html>

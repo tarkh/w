@@ -7,10 +7,14 @@ pragma Singleton
 // openPage() is the ONE entry point for every surface that wants to show
 // documentation:
 //
-//   • the hotkey (catalog token "docs", SUPER+F1) → DocsViewer.openIndex();
 //   • the Hub's "help on this panel" button (HubHeader, fed by HubRegistry.help)
 //     → openPage(page, anchor) — anchor is a GitHub-style heading slug;
 //   • links inside a rendered page (relative .md navigate, http opens).
+//
+// The whole documentation is the Help window (w-help — the site rendered from
+// the same pages; SUPER+F1 and the Hub's "Documentation" row open it). Every
+// card offers "Open in Help" → the same page and anchor there: the site keeps
+// the English slugs as aliases on translated pages, so the anchor carries over.
 //
 // What happens to a page before it reaches the card:
 //   1. LOCALE RESOLUTION: the path is first tried under the active UI language
@@ -59,6 +63,14 @@ Singleton {
 
     function openIndex() {
         root.openPage("index.md", "", "");
+    }
+
+    // The Help window on a page (docs-root-relative .md path, "" = index) and an
+    // optional anchor. Through uwsm, like every GUI app the shell starts, so the
+    // window gets its own scope and outlives a shell restart.
+    function openHelp(page, anchor) {
+        const arg = (page || "") + (anchor ? "#" + anchor : "");
+        Quickshell.execDetached(["uwsm", "app", "--", "w-help"].concat(arg ? [arg] : []));
     }
 
     // page — docs-root-relative path ("guide/updates.md"); anchor — a heading
@@ -173,6 +185,8 @@ Singleton {
             full.exec = () => root.openPage(root.wantedPage, "", "");
             actions.push(full);
         }
+        const page = root.wantedPage, wanted = root.wantedAnchor;
+        actions.push({ label: Strings.t("docs.openInHelp"), exec: () => root.openHelp(page, wanted) });
         // Back returns to the index (locale-resolved). Everything except the
         // index itself gets it; the header renders it compactly left of the
         // title, so "Contents"/glyph duplication is unnecessary.
@@ -183,7 +197,7 @@ Singleton {
             bodyMarkdown: body,
             tall: true,
             back: back,
-            actions: actions.length ? actions : undefined,
+            actions: actions,
             onLink: (link) => root._openLink(link, pageDir)
         });
     }

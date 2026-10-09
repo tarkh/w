@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>w-power · W Linux</title>
+<meta name="description" content="Схемы питания, политика простоя (блокировка/экран/сон), крышка, лимит заряда.">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../ru/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Меню" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../ru/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Документация</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Поиск по документации" aria-label="Поиск" autocomplete="off" spellcheck="false" data-empty="Ничего не найдено">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><a href="../../en/reference/w-power.html" hreflang="en">en</a><b>ru</b></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Начало</h2><ul><li><a href="../index.html">Документация W Linux</a></li><li><a href="../hotkeys.html">Горячие клавиши</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Рабочий стол</h2><ul><li><a href="../guide/theming.html">Темы и обои</a></li><li><a href="../guide/desktop.html">Рабочий стол</a></li><li><a href="../guide/displays.html">Мониторы и ночной свет</a></li><li><a href="../guide/input.html">Клавиатура, мышь и тачпад</a></li></ul><h2>Система</h2><ul><li><a href="../guide/updates.html">Поддержание W в актуальном состоянии</a></li><li><a href="../guide/security.html">Безопасность</a></li><li><a href="../guide/network.html">Сеть, DNS и фаервол</a></li><li><a href="../guide/power.html">Питание и батарея</a></li><li><a href="../recovery.html">Восстановление — когда W не загружается или загружается неправильно</a></li></ul><h2>Программы</h2><ul><li><a href="../guide/packs.html">Наборы — опциональные пакеты софта</a></li></ul><h2>ИИ</h2><ul><li><a href="../guide/ai.html">Ассистент ИИ</a></li></ul><h2>Справочник</h2><ul><li><a href="index.html">Команды</a><ul><li><a href="w-ai.html">w-ai</a></li><li><a href="w-appearance.html">w-appearance</a></li><li><a href="w-bar.html">w-bar</a></li><li><a href="w-conf.html">w-conf</a></li><li><a href="w-crypt.html">w-crypt</a></li><li><a href="w-dns.html">w-dns</a></li><li><a href="w-fingerprint.html">w-fingerprint</a></li><li><a href="w-firewall.html">w-firewall</a></li><li><a href="w-help.html">w-help</a></li><li><a href="w-hotkeys.html">w-hotkeys</a></li><li><a href="w-info.html">w-info</a></li><li><a href="w-kbdlight.html">w-kbdlight</a></li><li><a href="w-kernel.html">w-kernel</a></li><li><a href="w-keyboard.html">w-keyboard</a></li><li><a href="w-langpack.html">w-langpack</a></li><li><a href="w-locale.html">w-locale</a></li><li><a href="w-logs.html">w-logs</a></li><li><a href="w-mirrors.html">w-mirrors</a></li><li><a href="w-monitor.html">w-monitor</a></li><li><a href="w-nightlight.html">w-nightlight</a></li><li><a href="w-notify.html">w-notify</a></li><li><a href="w-pack.html">w-pack</a></li><li><a href="w-pointer.html">w-pointer</a></li><li><a href="w-power.html" aria-current="page">w-power</a></li><li><a href="w-record.html">w-record</a></li><li><a href="w-reset.html">w-reset</a></li><li><a href="w-rollback.html">w-rollback</a></li><li><a href="w-screenshot.html">w-screenshot</a></li><li><a href="w-secureboot.html">w-secureboot</a></li><li><a href="w-session.html">w-session</a></li><li><a href="w-ssh.html">w-ssh</a></li><li><a href="w-style.html">w-style</a></li><li><a href="w-sync.html">w-sync</a></li><li><a href="w-term.html">w-term</a></li><li><a href="w-theme.html">w-theme</a></li><li><a href="w-time.html">w-time</a></li><li><a href="w-update.html">w-update</a></li><li><a href="w-userdirs.html">w-userdirs</a></li><li><a href="w-wallpaper.html">w-wallpaper</a></li></ul></li></ul></nav>
+  <main>
+    <article>
+      <h1>w-power</h1>
+      <p><code>w-power</code> — Схемы питания, политика простоя (блокировка/экран/сон), крышка, лимит заряда.</p>
+<h2 id="использование">Использование <a class="anchor" href="#использование" aria-hidden="true">#</a></h2>
+<pre><code>Использование: <span class="w">w-power</span> &lt;команда&gt; [аргументы]
+
+Info: Схемы питания, политика простоя (блокировка/экран/сон), крышка, лимит заряда.
+
+Команды:
+  status                     Режим, схема, батарея, таймеры простоя, состояние hypridle
+  profile &lt;имя&gt;              Сменить схему сразу (performance|balanced|power-saver)
+  profile auto on|off        Автопереключение схемы на сеть&lt;-&gt;батарею (root)
+  idle &lt;ac|bat&gt; &lt;lock|display|suspend&gt; &lt;секунды&gt;
+                             Задать звено каскада (0 = выкл), ОТНОСИТЕЛЬНО предыдущего
+  idle &lt;ac|bat&gt; kbdlight &lt;секунды&gt;
+                             Гасить подсветку клавиатуры через N с простоя (0 = никогда);
+                             не входит в каскад, считается от последней активности
+                             связь: lock считается от последней активности, display — от
+                             срабатывания lock, suspend — от срабатывания display;
+                             перегенерирует hypridle (пользователь). display &lt; 5
+                             принимается, но с предупреждением (hyprlock нужен
+                             включённый экран, чтобы снять свой фон)
+  charge-limit &lt;0..100&gt;      Потолок заряда батареи, напр. 80 (root; прошивка ноутбука)
+  lid &lt;ac|bat|docked&gt; &lt;lock|suspend|ignore&gt;
+                             Действие при закрытии крышки по состоянию питания (root)
+  lid-wake &lt;auto|keep&gt;       Может ли крышка будить машину (root). auto (по умолчанию)
+                             убирает её из источников пробуждения ACPI при уходе в сон с
+                             УЖЕ ОТКРЫТОЙ крышкой — где она бесполезна, а на части
+                             будит машину через считанные секунды — и возвращает при
+                             пробуждении, так что закрыть-открыть крышку всё ещё будит.
+                             keep вообще не трогает источники пробуждения.
+  power-key &lt;poweroff|suspend|menu|ignore&gt;
+                             Действие кнопки питания (root; menu = меню питания W)
+  mode &lt;laptop|desktop|auto&gt; Применить пресет режима машины ко всем ручкам (root)
+  sleep                      Уснуть правильно: заблокировать экран, дождаться, пока
+                             локскрин полностью отрисуется, и только потом в сон.
+                             Предпочтительнее голого <span class="s">&#x27;systemctl suspend&#x27;</span>, который
+                             замораживает машину, пока локер ещё проявляется
+  apply                      Перегенерировать все узлы из $CONF (root)
+  help                       Показать эту справку
+
+Параметры:
+  <span class="f">--user</span> &lt;имя&gt;               Работать для этой учётной записи, а не вызвавшего (root).
+                             apply.sh <span class="f">--power</span> использует это, чтобы отрисовать политику
+                             простоя всех учётных записей, а не только первой.
+
+Системная политика: $CONF   Пользовательские правки простоя: ~/.config/w/power.conf
+
+Коды выхода: 0 успех · 1 ошибка выполнения/проверки · 2 ошибка вызова
+
+Примеры:
+  <span class="w">w-power</span> status
+  <span class="w">w-power</span> profile performance
+  <span class="w">w-power</span> idle bat suspend 600
+  sudo <span class="w">w-power</span> charge-limit 80
+  sudo <span class="w">w-power</span> lid ac ignore
+  sudo <span class="w">w-power</span> lid-wake keep
+  sudo <span class="w">w-power</span> mode laptop</code></pre>
+<p>Эта страница генерируется из собственной справки команды (w-docs-refgen). Живая
+версия того же текста на машине с W: <code>w-power help</code>.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="w-pointer.html"><small>Назад</small>w-pointer</a><a class="next" href="w-record.html"><small>Далее</small>w-record</a></nav>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

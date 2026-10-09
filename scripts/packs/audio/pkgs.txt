@@ -1,0 +1,36 @@
+# audio bundle — packages (all in the official extra repo, no AUR).
+# One per line; '#' comments and blank lines ignored. Installed by w-pack via yay
+# (repo + AUR in one pass) as the build user; pacman fallback if yay is absent.
+#
+# NOT here on purpose: pipewire-jack — pre.sh installs it (--asdeps), because it
+# replaces jack2, which the base system already carries as ffmpeg's `jack`
+# provider, and that conflict needs an answer a plain install cannot give.
+#
+# Excluded on purpose (pack-audio.md): reaper (deferred), yabridge + wine
+# (Windows VSTs — Wine 10+ is outside upstream's support, deferred), Bitwig /
+# Renoise (proprietary, AUR), Zrythm 2 (alpha), LMMS (1.2, stale), Carla
+# (Ardour hosts plugins itself), Helvum (no saved patchbays), EasyEffects / Furnace (not asked for). Not duplicated
+# from the base: pipewire + wireplumber + wiremix (the stack and its mixer).
+
+ardour                # Ardour 9 — the open DAW: recording, editing, mixing,
+                      # MIDI (pianoroll windows, clip launching). JACK/Pipewire
+                      # backend by default (seeded config). Themed by 400-ardour.
+qpwgraph              # PipeWire patchbay (Qt): wire apps, DAWs and devices,
+                      # save the wiring as a patchbay. Qt → the qt axis themes it.
+audacity              # Audio editor for the quick cut/convert/denoise jobs a
+                      # DAW session is too heavy for. Draws its own light/dark
+                      # theme (400-audacity flips it); dialogs ride the gtk axis.
+realtime-privileges   # The `realtime` group: rtprio 98 + unlimited memlock
+                      # (/etc/security/limits.d). setup-user.sh adds the account.
+
+# Plugin starter set — one format per plugin, picked by what the hosts actually
+# load (verified on the VM), instead of the meta packages' every-format split
+# (standalone, VST2, CLAP, LADSPA, GStreamer: ~250 MiB of duplicates):
+#   LV2 where it exists — Ardour's native format, found at every start without
+#   a scan, and Audacity loads it (it rejects LSP's VST3 bundle as incompatible);
+#   VST3 where it is the only choice — Ardour finds it because the seeded config
+#   turns on discover-plugins-on-start (pack-audio.md).
+lsp-plugins-lv2       # LSP — EQs, compressors, limiters, analysers, mastering
+dragonfly-reverb-lv2  # Dragonfly — hall / room / plate / early reflections
+surge-xt-vst3         # Surge XT — the open hybrid synth (VST3/CLAP only; pulls
+                      # surge-xt-common, its ~370 MiB wavetable/patch library)

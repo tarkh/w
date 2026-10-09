@@ -55,6 +55,10 @@ docs/*				--skip
 # Unlisted it falls to the catch-all, and a one-word translation fix forces a
 # full --all apply on every edge machine.
 i18n/*				--skip
+# The docs site's layout and assets, read only by w-docs-site at BUILD time. What
+# ships is the rendered rootfs/usr/share/doc/w/html (routed with rootfs/), and
+# its golden keeps it in the same commit as any edit here.
+site/*				--skip
 *.md				--skip
 LICENSE*			--skip
 .gitignore			--skip

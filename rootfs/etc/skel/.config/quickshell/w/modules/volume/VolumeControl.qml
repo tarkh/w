@@ -42,8 +42,12 @@ Scope {
                   Pipewire.defaultAudioSink, Pipewire.defaultAudioSource]
     }
 
+    // ObjectModel is a QAbstractListModel, but Qt >= 6.12 module qmltypes stub it
+    // as an opaque value type, so qmllint rejects it as a Connections target.
     Connections {
+        // qmllint disable incompatible-type
         target: Pipewire.nodes
+        // qmllint enable incompatible-type
         function onValuesChanged() { root.updateNodes() }
     }
 

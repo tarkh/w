@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keyboard, mouse and touchpad · W Linux</title>
+<meta name="description" content="Keyboard layouts and the switch key, key repeat, mouse and touchpad behaviour, gestures, and where the fingerprint reader is set up.">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../en/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Menu" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../en/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Documentation</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Search the docs" aria-label="Search" autocomplete="off" spellcheck="false" data-empty="Nothing found">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><b>en</b><a href="../../ru/guide/input.html" hreflang="ru">ru</a></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Getting started</h2><ul><li><a href="../index.html">W Linux documentation</a></li><li><a href="../hotkeys.html">Keyboard shortcuts</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Desktop</h2><ul><li><a href="theming.html">Themes and wallpapers</a></li><li><a href="desktop.html">The desktop</a></li><li><a href="displays.html">Displays and night light</a></li><li><a href="input.html" aria-current="page">Keyboard, mouse and touchpad</a></li></ul><h2>System</h2><ul><li><a href="updates.html">Keeping W up to date</a></li><li><a href="security.html">Security</a></li><li><a href="network.html">Network, DNS and the firewall</a></li><li><a href="power.html">Power and battery</a></li><li><a href="../recovery.html">Recovery — when W will not boot, or boots wrong</a></li></ul><h2>Software</h2><ul><li><a href="packs.html">Packs — optional software bundles</a></li></ul><h2>AI</h2><ul><li><a href="ai.html">The AI assistant</a></li></ul><h2>Reference</h2><ul><li><a href="../reference/index.html">Commands</a></li></ul></nav>
+  <main>
+    <article>
+      <h1>Keyboard, mouse and touchpad</h1>
+      <p><strong>Hub → Input</strong> is where the hardware you type and point with is configured. It
+opens on <strong>Keyboard</strong> and grows tabs to match the machine: <strong>Touchpad</strong> appears
+only where there is one, <strong>Fingerprint</strong> only where there is a reader.</p>
+<p>Two neighbours are deliberately elsewhere. Which key does what is <strong>Hub →
+Hotkeys</strong>, not this panel — see <a href="desktop.html#windows-and-workspaces">the desktop guide</a>.
+The language of the interface itself is <strong>Hub → System → Language</strong>, described
+at the end of this page.</p>
+<h2 id="keyboard-layouts-and-the-switch-key">Keyboard layouts and the switch key <a class="anchor" href="#keyboard-layouts-and-the-switch-key" aria-hidden="true">#</a></h2>
+<p><strong>Layouts</strong> is an ordered ring. <strong>Add language</strong> appends to it, the ring's first
+entry is the one you get at the login screen, and the <strong>Switch key</strong> cycles
+through them.</p>
+<p>The switch key is not an ordinary shortcut — it is a combination of modifiers
+alone, which the compositor cannot express as a binding, so it is set here
+rather than in Hotkeys. The offered choices are Alt+Shift (the default),
+Ctrl+Shift, Right Alt, Both Shifts, Ctrl+Space and Super+Space. The last three
+carry a warning, and it is worth reading: Right Alt is AltGr on many layouts and
+would swallow special-character input, Ctrl+Space is autocompletion in most
+editors and terminals, and Super+Space already opens the Hub.</p>
+<h2 id="typing">Typing <a class="anchor" href="#typing" aria-hidden="true">#</a></h2>
+<ul>
+<li><strong>Key repeat rate</strong> — how many repeats per second a held key produces.</li>
+<li><strong>Repeat delay</strong> — how long you must hold it before repeating starts.</li>
+<li><strong>NumLock at login</strong> — applied when a keyboard is initialised, so it takes
+effect at your next login rather than right now.</li>
+</ul>
+<p>From a terminal these are <code>w-keyboard</code>; <code>w-keyboard status</code> prints the current
+ring, <code>w-keyboard list</code> the ~99 layouts available.</p>
+<h2 id="mouse">Mouse <a class="anchor" href="#mouse" aria-hidden="true">#</a></h2>
+<ul>
+<li><strong>Speed</strong> and <strong>Acceleration</strong> — <em>Adaptive</em> speeds up with the movement,
+<em>Flat</em> keeps the ratio constant. Flat is what you want for anything where the
+distance you move should always mean the same thing on screen.</li>
+<li><strong>Natural scrolling</strong> and <strong>Scroll speed</strong>.</li>
+<li><strong>Left-handed (swap buttons)</strong>.</li>
+</ul>
+<h2 id="touchpad">Touchpad <a class="anchor" href="#touchpad" aria-hidden="true">#</a></h2>
+<p>The touchpad tab carries the settings that make a pad feel like yours:</p>
+<ul>
+<li><strong>Touchpad enabled</strong>, <strong>Speed</strong>, <strong>Acceleration</strong>, <strong>Natural scrolling</strong> and
+<strong>Scroll speed</strong> — as on the mouse.</li>
+<li><strong>Disable while typing</strong> — stops the heel of your hand from moving the cursor
+mid-sentence.</li>
+<li><strong>Tap to click</strong>, and <strong>Two- / three-finger tap</strong>, which chooses whether two
+fingers mean right-click and three mean middle, or the other way round.</li>
+<li><strong>Physical click</strong> — <em>By area</em> treats the bottom corners of the pad as
+buttons; <em>By finger count</em> decides from how many fingers rest on the pad,
+which is the behaviour most laptops ship with today.</li>
+<li><strong>Middle-click emulation</strong> — pressing both buttons at once.</li>
+<li><strong>Drag by tapping</strong> and <strong>Drag lock</strong>, which keeps a drag alive when you lift
+a finger briefly — <em>with timeout</em> releases it on its own, <em>sticky</em> waits for
+another tap.</li>
+<li><strong>Multi-finger drag</strong> — drag with three or four fingers instead of pressing.</li>
+</ul>
+<p>If the tab shows the pad but <strong>Speed</strong>, <strong>Acceleration</strong> and the on/off switch
+do nothing, the session has not identified the device yet: run <code>w-pointer detect</code> once from a terminal inside the session. Those three are per-device
+settings and need the pad's name; the rest are not.</p>
+<h2 id="gestures">Gestures <a class="anchor" href="#gestures" aria-hidden="true">#</a></h2>
+<ul>
+<li><strong>Swipe to switch workspaces</strong> — off, or with three or four fingers.</li>
+<li><strong>Natural swipe direction</strong> — which way the workspaces move under your
+fingers.</li>
+<li><strong>Swiping past the last one creates a workspace</strong>.</li>
+</ul>
+<h2 id="cursor-timeouts">Cursor timeouts <a class="anchor" href="#cursor-timeouts" aria-hidden="true">#</a></h2>
+<p>Two numbers, both in seconds, that hide the pointer when it is not being used —
+<code>0</code> means never:</p>
+<ul>
+<li><strong>Hide when idle — system</strong> applies to the session as a whole.</li>
+<li><strong>Hide when idle — menus</strong> applies only while the launcher, the Hub or the
+clipboard is open, so the pointer gets out of the way of keyboard navigation.
+While it is hidden the menu stops highlighting whatever it happens to rest
+on, which is the point: one selection instead of two. Any mouse movement
+brings both back.</li>
+</ul>
+<p>From a terminal all of this is <code>w-pointer</code>: <code>w-pointer status</code> prints
+everything, <code>w-pointer keys</code> lists every setting with its accepted values, and
+<code>w-pointer reset --all</code> returns to the W defaults.</p>
+<h2 id="fingerprint">Fingerprint <a class="anchor" href="#fingerprint" aria-hidden="true">#</a></h2>
+<p>Where the machine has a reader, the <strong>Fingerprint</strong> tab enrols one. Press
+<strong>Add</strong>, choose a finger, and swipe until the card says it is done. With at
+least one fingerprint enrolled, W's password dialog offers the reader as an
+alternative; deleting the last one turns that off again. The password always
+keeps working — see <a href="security.html#fingerprint-login">the security guide</a>.</p>
+<h2 id="the-interface-language">The interface language <a class="anchor" href="#the-interface-language" aria-hidden="true">#</a></h2>
+<p>The language W itself speaks is a system setting rather than a keyboard one, so
+it lives in <strong>Hub → System → Language</strong> and asks for your password. It applies
+to sessions started afterwards, so log out and back in to see it. Adding a
+<em>layout</em> to type in that language is the Keyboard tab above; the two are
+independent.</p>
+<p>The list shows each language under its own name — «русский», 日本語, Deutsch —
+with its locale code beside it. Searching matches either, so you can type <code>рус</code>
+or <code>ru_RU</code>, whichever your current keyboard can produce.</p>
+<h3 id="after-you-switch-some-things-stay-english-for-a-while">After you switch, some things stay English for a while <a class="anchor" href="#after-you-switch-some-things-stay-english-for-a-while" aria-hidden="true">#</a></h3>
+<p>Changing the language is instant and works with no network, which means it does
+not download anything. A few parts of the system need an extra package before
+they can speak your language — the Firefox interface, the spell checker, the
+translated manual pages. They arrive on the next system update, or immediately
+with:</p>
+<pre><code>sudo <span class="w">w-langpack</span> apply</code></pre>
+<p><code>w-langpack status</code> says what is missing before you run it. Nothing is broken in
+the meantime: anything without its language pack simply stays in English.</p>
+<h3 id="your-folders-follow-the-language">Your folders follow the language <a class="anchor" href="#your-folders-follow-the-language" aria-hidden="true">#</a></h3>
+<p>The standard folders in your home — Documents, Downloads, Pictures, Music,
+Videos, Desktop — are created in your language at your first login, and the
+programs find them by their role, not their name (a screenshot lands in the
+Pictures folder whatever it is called). When you switch the language, they are
+<strong>renamed at your next login</strong>: <code>~/Pictures</code> becomes <code>~/Изображения</code>, with
+everything in it exactly where it was — a rename is all that happens, nothing is
+copied, merged or deleted.</p>
+<p>Two things are left alone on purpose. A folder you moved or renamed yourself
+(<code>xdg-user-dirs-update --set DOWNLOAD /path</code> is the command; a file manager
+does the same) is yours and keeps its name in every language. And if the new
+name is already taken by a folder with files in it, both stay as they are —
+<code>w-userdirs status</code> says so, and merging them is your call.</p>
+<p>If you would rather keep the English names, the switch is right under the
+language: <strong>Hub → System → Language → Folder names follow the language → No</strong>.
+It is per user and needs no password. <code>w-userdirs sync --dry-run</code> previews what
+the next login would rename.</p>
+<h3 id="what-will-not-translate">What will not translate <a class="anchor" href="#what-will-not-translate" aria-hidden="true">#</a></h3>
+<p>Some of the terminal programs W ships have no translations at all — not missing
+from W, absent from the programs themselves. The file lister (<code>eza</code>), the shell
+history search (<code>atuin</code>), the editors (<code>helix</code>, <code>micro</code>), the file manager
+(<code>yazi</code>) and the system monitor (<code>btop</code>) are English-only whatever your language
+is. Their <em>dates and numbers</em> do follow your locale; only their own words do not.
+So <code>ls</code> shows you Russian month names, but if you list a directory you may not
+read, the refusal comes back in English — that message belongs to the program,
+not to W.</p>
+<p>W's own <code>w-</code> commands are a different case, and worth knowing the shape of:
+their <strong>help is translated</strong> — <code>w-&lt;command&gt; help</code>, the <code>w-info</code> catalog, and the
+whole command reference in this documentation. What stays English is what they
+print <em>while working</em>: errors, status lines, progress. An English error under a
+Russian help page is expected, not a half-finished translation.</p>
+<p>For the same reason a Japanese or Chinese web page shows real characters rather
+than empty boxes: W installs full Unicode font coverage regardless of the
+language you picked.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="displays.html"><small>Previous</small>Displays and night light</a><a class="next" href="updates.html"><small>Next</small>Keeping W up to date</a></nav>
+  </main>
+  <aside class="toc"><h2>On this page</h2><ul><li><a href="#keyboard-layouts-and-the-switch-key">Keyboard layouts and the switch key</a></li><li><a href="#typing">Typing</a></li><li><a href="#mouse">Mouse</a></li><li><a href="#touchpad">Touchpad</a></li><li><a href="#gestures">Gestures</a></li><li><a href="#cursor-timeouts">Cursor timeouts</a></li><li><a href="#fingerprint">Fingerprint</a></li><li><a href="#the-interface-language">The interface language</a></li><li><a href="#after-you-switch-some-things-stay-english-for-a-while" class="sub">After you switch, some things stay English for a while</a></li><li><a href="#your-folders-follow-the-language" class="sub">Your folders follow the language</a></li><li><a href="#what-will-not-translate" class="sub">What will not translate</a></li></ul></aside>
+</div>
+</body>
+</html>

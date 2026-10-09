@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Темы и обои · W Linux</title>
+<meta name="description" content="Переключение тем, создание темы из обоев, наборы обоев и панель Оформление.">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../ru/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Меню" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../ru/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Документация</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Поиск по документации" aria-label="Поиск" autocomplete="off" spellcheck="false" data-empty="Ничего не найдено">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><a href="../../en/guide/theming.html" hreflang="en">en</a><b>ru</b></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Начало</h2><ul><li><a href="../index.html">Документация W Linux</a></li><li><a href="../hotkeys.html">Горячие клавиши</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Рабочий стол</h2><ul><li><a href="theming.html" aria-current="page">Темы и обои</a></li><li><a href="desktop.html">Рабочий стол</a></li><li><a href="displays.html">Мониторы и ночной свет</a></li><li><a href="input.html">Клавиатура, мышь и тачпад</a></li></ul><h2>Система</h2><ul><li><a href="updates.html">Поддержание W в актуальном состоянии</a></li><li><a href="security.html">Безопасность</a></li><li><a href="network.html">Сеть, DNS и фаервол</a></li><li><a href="power.html">Питание и батарея</a></li><li><a href="../recovery.html">Восстановление — когда W не загружается или загружается неправильно</a></li></ul><h2>Программы</h2><ul><li><a href="packs.html">Наборы — опциональные пакеты софта</a></li></ul><h2>ИИ</h2><ul><li><a href="ai.html">Ассистент ИИ</a></li></ul><h2>Справочник</h2><ul><li><a href="../reference/index.html">Команды</a></li></ul></nav>
+  <main>
+    <article>
+      <h1>Темы и обои</h1>
+      <p>Тема в W — это одна палитра, которую система накладывает на каждую
+поверхность: интерфейс Hyprland, шелл Quickshell, приложения GTK и Qt,
+терминал, GRUB, Plymouth, экран входа. Переключение темы полностью меняет
+оформление везде и сразу — вплоть до цвета логотипа на загрузке — с живым
+перекрёстным затуханием.</p>
+<h2 id="переключение-тем">Переключение тем <a class="anchor" href="#переключение-тем" aria-hidden="true">#</a></h2>
+<p><strong>Хаб → Оформление</strong> показывает список установленных тем с превью обоев.
+Клик по теме переключает её для вашего пользователя; общесистемная смена
+делается из терминала администратором (<code>w-theme set &lt;name&gt;</code> с правами).
+Список разбит на два раздела: <strong>Системные</strong> темы и <strong>Мои</strong> темы (личные,
+созданные вами).</p>
+<p>Из терминала: <code>w-theme list</code> и <code>w-theme set &lt;name&gt;</code>.</p>
+<span id="creating-a-theme-from-a-wallpaper"></span><h2 id="создание-темы-из-обоев">Создание темы из обоев <a class="anchor" href="#создание-темы-из-обоев" aria-hidden="true">#</a></h2>
+<p><strong>Хаб → Оформление → Добавить тему</strong> (или <code>w-theme new</code> в терминале) строит
+тему из изображения:</p>
+<ol>
+<li>Выберите картинку для обоев и имя, укажите <strong>Тёмная</strong> или <strong>Светлая</strong>.</li>
+<li>W извлекает из изображения доминирующие цвета и строит доступную палитру
+вокруг выбранного базового цвета — контраст проверяется автоматически,
+чтобы текст оставался читаемым в обоих режимах.</li>
+<li>Выберите интенсивность (низкая/средняя/высокая) для рампы палитры и
+подтвердите.</li>
+</ol>
+<p>Светлым темам уделено особое внимание: цвета текста пересчитываются под
+светлые поверхности, чтобы кнопки и иконки не теряли контраст.</p>
+<p>Тот же экран, открытый значком карандаша у одной из <strong>ваших</strong> сгенерированных
+тем, пересобирает эту тему из её собственных обоев (новый базовый цвет, новый
+контраст) — сами обои не меняются.</p>
+<p>Обои — это изображения под конкретные разрешения в небольшом наборе
+размерных тиров; тема отдаёт то, что у неё есть, а система подставляет
+ближайший размер. Смотрите <code>w-wallpaper</code>, если вы сопровождаете набор
+ассетов темы.</p>
+<span id="the-appearance-panel"></span><h2 id="панель-оформление">Панель Оформление <a class="anchor" href="#панель-оформление" aria-hidden="true">#</a></h2>
+<ul>
+<li>Вкладка <strong>Темы</strong> — сетки тем выше, плюс создание и удаление тем.</li>
+<li>Вкладка <strong>Бар</strong> — какие блоки бара показаны, по монитору (см. <code>w-bar</code>).</li>
+<li>Вкладка <strong>Настройки</strong> — блюр подложки, переключатели анимации и
+расположение бара.</li>
+</ul>
+<h2 id="управление-темами-из-терминала">Управление темами из терминала <a class="anchor" href="#управление-темами-из-терминала" aria-hidden="true">#</a></h2>
+<p><code>w-style</code> отрисовывает тему на каждой подсистеме, <code>w-theme</code> управляет тем,
+какая тема активна и что существует, <code>w-wallpaper</code> управляет файлами обоев.
+Для ручного сопровождения (например, после правки системной темы руками):
+<code>w-style apply</code> перерисовывает, <code>w-reset all</code> возвращает настройки W.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="../faq.html"><small>Назад</small>FAQ</a><a class="next" href="desktop.html"><small>Далее</small>Рабочий стол</a></nav>
+  </main>
+  <aside class="toc"><h2>На этой странице</h2><ul><li><a href="#переключение-тем">Переключение тем</a></li><li><a href="#создание-темы-из-обоев">Создание темы из обоев</a></li><li><a href="#панель-оформление">Панель Оформление</a></li><li><a href="#управление-темами-из-терминала">Управление темами из терминала</a></li></ul></aside>
+</div>
+</body>
+</html>

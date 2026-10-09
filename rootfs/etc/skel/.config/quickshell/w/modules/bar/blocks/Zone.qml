@@ -104,10 +104,10 @@ Item {
     // Collapse the whole zone (and its gap) when there's nothing to show: no visible
     // child and no folded chrome to display.
     readonly property bool anyChildVisible: {
-        for (var i = 0; i < itemsRepeater.count; i++) {
-            var ld = itemsRepeater.itemAt(i);
+        for (let i = 0; i < itemsRepeater.count; i++) {
+            const ld = itemsRepeater.itemAt(i);
             if (ld && ld.item) {
-                var bv = ld.item.barVisible;
+                const bv = ld.item.barVisible;
                 if (bv === undefined || bv === true) return true;
             }
         }

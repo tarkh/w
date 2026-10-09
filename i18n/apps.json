@@ -5,6 +5,10 @@
   "w-calendar.Comment":  { "en": "Month view with today highlighted", "ru": "Месяц с подсветкой сегодняшнего дня" },
   "w-calendar.Keywords": { "en": "calendar;date;month;day;today;", "ru": "календарь;дата;месяц;день;сегодня;число;calendar;date;month;day;today;" },
 
+  "w-help.Name":     { "en": "W Help", "ru": "Справка W" },
+  "w-help.Comment":  { "en": "W documentation: guides, FAQ, commands, recovery", "ru": "Документация W: руководства, FAQ, команды, восстановление" },
+  "w-help.Keywords": { "en": "help;docs;documentation;manual;guide;faq;w-help;", "ru": "справка;документация;помощь;руководство;инструкция;help;docs;documentation;manual;guide;faq;w-help;" },
+
   "w-volume-control.Name":     { "en": "Volume Control", "ru": "Громкость" },
   "w-volume-control.Comment":  { "en": "W Linux audio control", "ru": "Управление звуком W Linux" },
   "w-volume-control.Keywords": { "en": "volume;audio;sound;pipewire;mixer;", "ru": "громкость;звук;аудио;микшер;динамик;volume;audio;sound;pipewire;mixer;" },

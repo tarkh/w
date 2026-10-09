@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# w-help — W Linux Help window: the documentation site in its own browser window
+#
+# Opens the offline documentation site (/usr/share/doc/w/html, rendered from the
+# same Markdown the shell's docs card reads) in a dedicated Firefox instance: its
+# own profile, its own app_id `w-help` (`--name`), so the window has its own
+# Hyprland rule (rules.d/w-help.lua — floating, centred) and never mixes with the
+# user's browser session.
+#
+# The profile is seeded from /usr/share/w/help/profile on EVERY launch: user.js
+# and chrome/userChrome.css are W's, not the user's, so an update reaches them
+# without a migration. chrome/userContent.css is not in the template — the w-style
+# axis `help` renders it from the current theme (palette, radii, fonts, logo).
+#
+# A second call does not open a second window: Firefox hands the URL to the
+# running instance of the same profile, and the profile's
+# browser.link.open_newwindow.override.external=1 loads it in the one tab. A call
+# with no page while the window is open only focuses it — SUPER+F1 brings the
+# window back where the reader left it instead of resetting it to the index.
+
+set -euo pipefail
+
+DOCS="${W_HELP_DOCS:-/usr/share/doc/w/html}"
+TEMPLATE="/usr/share/w/help/profile"
+PROFILE="$HOME/.local/share/w/help"   # fixed: the w-style axis `help` renders into it
+APP_ID="w-help"
+
+err() { echo "w-help: $*" >&2; }
+
+# shellcheck source=../lib/w/w-i18n-lib.sh
+source "${W_I18N_LIB:-/usr/lib/w/w-i18n-lib.sh}"
+
+usage() {
+  if w_help w-help; then return 0; fi
+  cat <<EOF
+Usage: w-help [page[#anchor]] [--search query]
+
+Info: Open the W documentation in the Help window.
+
+Arguments:
+  page            A documentation page, as its Markdown path or without the
+                  extension: guide/updates, guide/updates.md, faq, recovery.
+                  Default: the index. An already open window with no page given
+                  is only focused
+  #anchor         A heading on the page (its slug, as in the Hub's help links)
+
+Options:
+  --search QUERY  Open the page with QUERY already searched
+  -h, --help      Show this help
+
+Exit codes:
+  0  Success   1  Runtime error (no such page)   2  Usage error
+
+Examples:
+  w-help
+  w-help guide/updates#where-you-see-updates
+  w-help --search snapshot
+EOF
+}
+
+# ── Arguments ─────────────────────────────────────────────────────────────────
+page="" query="" searched=0
+while (($#)); do
+  case "$1" in
+    --search)       [[ $# -ge 2 ]] || { err "--search needs a query"; usage >&2; exit 2; }
+                    query="$2"; searched=1; shift 2 ;;
+    -h|--help|help) usage; exit 0 ;;
+    -*)             err "unknown option: $1"; usage >&2; exit 2 ;;
+    *)              [[ -z "$page" ]] || { err "one page at a time"; usage >&2; exit 2; }
+                    page="$1"; shift ;;
+  esac
+done
+
+# ── Focus an open window ──────────────────────────────────────────────────────
+window_open() {
+  [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] || return 1
+  hyprctl clients -j 2>/dev/null | jq -e --arg c "$APP_ID" 'any(.[]; .class == $c)' >/dev/null
+}
+focus() {
+  [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] || return 0
+  hyprctl dispatch "hl.dsp.focus({ window = \"class:^($APP_ID)\$\" })" >/dev/null 2>&1 || true
+}
+
+if [[ -z "$page" && $searched -eq 0 ]] && window_open; then
+  focus
+  exit 0
+fi
+
+# ── Page → URL ────────────────────────────────────────────────────────────────
+# The language of the site tree follows the UI language; a locale W has no tree
+# for reads English. Every page exists in every tree (an untranslated one is the
+# English text under a notice), and a translated page aliases the English slugs
+# its frontmatter `anchors:` maps — every anchor the Hub links to — so the same
+# page#anchor from the Hub works in any language.
+lang="${LC_ALL:-${LC_MESSAGES:-${LANG:-en}}}"
+lang="${lang%%[_.@]*}"
+[[ -n "$lang" && -d "$DOCS/$lang" ]] || lang="en"
+
+anchor=""
+[[ "$page" == *"#"* ]] && { anchor="${page#*#}"; page="${page%%#*}"; }
+page="${page#/}"
+page="${page#"$lang"/}"
+page="${page%.md}"
+page="${page%.html}"
+case "$page" in
+  ""|.)                page="index" ;;
+  RECOVERY*|recovery*) page="recovery" ;;   # RECOVERY.md / RECOVERY.ru.md → one page per tree
+esac
+file="$DOCS/$lang/$page.html"
+[[ -f "$file" ]] || { err "no such page: $page"; exit 1; }
+
+params=()
+((searched)) && params+=("q=$(jq -rn --arg q "$query" '$q | @uri')")
+open=0; window_open && open=1
+# A remote load that differs from the open page only by its #anchor is a
+# same-document navigation, and Firefox does not scroll on it (measured, FF 157):
+# a Hub link to another section of the page already shown would land nowhere.
+# A one-off query makes it a new document, which scrolls; the site ignores it.
+((open)) && [[ -n "$anchor" ]] && params+=("at=$(date +%s%N)")
+url="file://$file"
+((${#params[@]})) && url+="?$(IFS='&'; echo "${params[*]}")"
+[[ -n "$anchor" ]] && url+="#$anchor"
+
+# ── Profile + launch ──────────────────────────────────────────────────────────
+install -Dm644 "$TEMPLATE/user.js" "$PROFILE/user.js"
+install -Dm644 "$TEMPLATE/chrome/userChrome.css" "$PROFILE/chrome/userChrome.css"
+
+# Firefox exits at once when it hands the URL to a running instance; the
+# compositor does not raise a window on that remote load, so focus it here.
+if ((open)); then
+  firefox --name "$APP_ID" --profile "$PROFILE" "$url"
+  focus
+  exit 0
+fi
+exec firefox --name "$APP_ID" --profile "$PROFILE" "$url"

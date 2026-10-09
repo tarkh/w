@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>w-secureboot · W Linux</title>
+<meta name="description" content="Set up and manage Secure Boot (sbctl keys + Limine hash).">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../en/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Menu" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../en/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Documentation</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Search the docs" aria-label="Search" autocomplete="off" spellcheck="false" data-empty="Nothing found">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><b>en</b><a href="../../ru/reference/w-secureboot.html" hreflang="ru">ru</a></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Getting started</h2><ul><li><a href="../index.html">W Linux documentation</a></li><li><a href="../hotkeys.html">Keyboard shortcuts</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Desktop</h2><ul><li><a href="../guide/theming.html">Themes and wallpapers</a></li><li><a href="../guide/desktop.html">The desktop</a></li><li><a href="../guide/displays.html">Displays and night light</a></li><li><a href="../guide/input.html">Keyboard, mouse and touchpad</a></li></ul><h2>System</h2><ul><li><a href="../guide/updates.html">Keeping W up to date</a></li><li><a href="../guide/security.html">Security</a></li><li><a href="../guide/network.html">Network, DNS and the firewall</a></li><li><a href="../guide/power.html">Power and battery</a></li><li><a href="../recovery.html">Recovery — when W will not boot, or boots wrong</a></li></ul><h2>Software</h2><ul><li><a href="../guide/packs.html">Packs — optional software bundles</a></li></ul><h2>AI</h2><ul><li><a href="../guide/ai.html">The AI assistant</a></li></ul><h2>Reference</h2><ul><li><a href="index.html">Commands</a><ul><li><a href="w-ai.html">w-ai</a></li><li><a href="w-appearance.html">w-appearance</a></li><li><a href="w-bar.html">w-bar</a></li><li><a href="w-conf.html">w-conf</a></li><li><a href="w-crypt.html">w-crypt</a></li><li><a href="w-dns.html">w-dns</a></li><li><a href="w-fingerprint.html">w-fingerprint</a></li><li><a href="w-firewall.html">w-firewall</a></li><li><a href="w-help.html">w-help</a></li><li><a href="w-hotkeys.html">w-hotkeys</a></li><li><a href="w-info.html">w-info</a></li><li><a href="w-kbdlight.html">w-kbdlight</a></li><li><a href="w-kernel.html">w-kernel</a></li><li><a href="w-keyboard.html">w-keyboard</a></li><li><a href="w-langpack.html">w-langpack</a></li><li><a href="w-locale.html">w-locale</a></li><li><a href="w-logs.html">w-logs</a></li><li><a href="w-mirrors.html">w-mirrors</a></li><li><a href="w-monitor.html">w-monitor</a></li><li><a href="w-nightlight.html">w-nightlight</a></li><li><a href="w-notify.html">w-notify</a></li><li><a href="w-pack.html">w-pack</a></li><li><a href="w-pointer.html">w-pointer</a></li><li><a href="w-power.html">w-power</a></li><li><a href="w-record.html">w-record</a></li><li><a href="w-reset.html">w-reset</a></li><li><a href="w-rollback.html">w-rollback</a></li><li><a href="w-screenshot.html">w-screenshot</a></li><li><a href="w-secureboot.html" aria-current="page">w-secureboot</a></li><li><a href="w-session.html">w-session</a></li><li><a href="w-ssh.html">w-ssh</a></li><li><a href="w-style.html">w-style</a></li><li><a href="w-sync.html">w-sync</a></li><li><a href="w-term.html">w-term</a></li><li><a href="w-theme.html">w-theme</a></li><li><a href="w-time.html">w-time</a></li><li><a href="w-update.html">w-update</a></li><li><a href="w-userdirs.html">w-userdirs</a></li><li><a href="w-wallpaper.html">w-wallpaper</a></li></ul></li></ul></nav>
+  <main>
+    <article>
+      <h1>w-secureboot</h1>
+      <p><code>w-secureboot</code> — Set up and manage Secure Boot (sbctl keys + Limine hash).</p>
+<h2 id="usage">Usage <a class="anchor" href="#usage" aria-hidden="true">#</a></h2>
+<pre><code>Usage: <span class="w">w-secureboot</span> &lt;command&gt;
+
+Info: Set up and manage Secure Boot (sbctl keys + Limine hash).
+
+Commands:
+  status [<span class="f">--porcelain</span>]   Show sbctl setup-mode/enroll state and signed files
+  enable                 Turn Secure Boot on: enroll keys + sign Limine. Two-phase — the
+                          first call enrolls and asks for a reboot; run it again after
+                          rebooting to re-seal the TPM2 disk auto-unlock (PCR7 only
+                          updates on that reboot, not live)
+  disable                Turn Secure Boot off: drop TPM2 disk unlock + reset keys (back to Setup Mode)
+  setup                  One-time enable: create+enroll keys (Setup Mode) + sign Limine + enroll hash
+  sign                   Re-sign all sbctl-tracked binaries (after a Limine update)
+  reenroll               Re-enroll the Limine config hash (after limine.conf changed)
+  help                   Show this help
+
+Exit codes:
+  0 Success   1 Runtime error   2 Usage error
+
+Examples:
+  sudo <span class="w">w-secureboot</span> enable
+  <span class="w">w-secureboot</span> status <span class="f">--porcelain</span></code></pre>
+<p>This page is generated from the command's own help text (w-docs-refgen). The
+live version of the same text on a W machine: <code>w-secureboot help</code>.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="w-screenshot.html"><small>Previous</small>w-screenshot</a><a class="next" href="w-session.html"><small>Next</small>w-session</a></nav>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

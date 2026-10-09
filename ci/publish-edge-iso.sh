@@ -106,6 +106,18 @@ instead of being frozen per version.
 \`\`\`
 sha256sum $ISO_NAME
 \`\`\`
+
+The checksum only catches a broken download — it sits on the same page as the
+file. The image's signature is its build provenance: a Sigstore attestation that
+this file was built by this repository's \`edge-iso\` workflow from the commit
+above, which is a release snapshot signed with the W release key:
+
+\`\`\`
+gh attestation verify $ISO_NAME --repo $REPO
+# in a clone of the repository — the key is the one every W machine trusts
+git -c gpg.ssh.allowedSignersFile=rootfs/usr/share/w/update/w-release.allowed_signers \\
+  verify-commit ${SHA:0:12}
+\`\`\`
 EOF
 gh release edit "$TAG" --repo "$REPO" --notes-file "$NOTES" >/dev/null
 info "Published: https://github.com/$REPO/releases/tag/$TAG"

@@ -1,6 +1,7 @@
 ---
 title: Keeping W up to date
 section: guide
+category: system
 order: 1
 summary: The single update path, the badge in the bar, Arch news, and what to do when an upgrade goes wrong.
 sources:
@@ -13,7 +14,7 @@ sources:
 W has one native update path built on `pacman` and `yay`. There are no
 third-party update managers. Every upgrade transaction is snapshotted
 automatically (snap-pac), so an update is always reversible — see
-[the FAQ](faq.md#an-update-broke-my-system-how-do-i-roll-back) and
+[the FAQ](../faq.md) and
 [RECOVERY.md](../RECOVERY.md).
 
 ## The `w-update` command

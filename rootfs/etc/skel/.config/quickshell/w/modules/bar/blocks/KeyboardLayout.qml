@@ -109,7 +109,7 @@ Item {
     function cycle() {
         var targets = block.device !== "" ? [block.device]
                     : (block.kbNames.length > 0 ? block.kbNames : ["current"]);
-        for (var i = 0; i < targets.length; i++)
+        for (let i = 0; i < targets.length; i++)
             Quickshell.execDetached({ command: ["hyprctl", "switchxkblayout", targets[i], "next"] });
     }
 

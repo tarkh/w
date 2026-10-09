@@ -609,9 +609,8 @@ Item {
                     focused: root.focusedRow === channelRow
                 }
 
-                // Built-in documentation: the same pages the header "?" opens,
-                // starting from the index. The infobox takes over as the active
-                // popup, which closes the Hub behind it — the card is the viewer.
+                // Built-in documentation: the Help window (w-help) on the index — the
+                // full site, where the header "?" opens one section as a card.
                 HubRow {
                     id: docsRow
                     width: parent.width
@@ -619,7 +618,7 @@ Item {
                     label: Strings.t("hub.docs")
                     actionText: Strings.t("hub.docsOpen")
                     focused: root.focusedRow === docsRow
-                    onActivated: DocsViewer.openIndex()
+                    onActivated: { DocsViewer.openHelp("", ""); Overlays.close("hub"); }
                 }
 
                 // Kernel. Switching INSTALLS the chosen kernel and its paired headers and

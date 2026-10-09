@@ -4,8 +4,9 @@ Name[ru]=Громкость
 Comment=W Linux audio control
 Comment[ru]=Управление звуком W Linux
 # NB: no `sh -c` — a .desktop Exec does not treat ' as a quote character, so single
-# quotes are stripped and the shell then chokes on the bare `(`. See quickshell-hub.md.
-Exec=hyprctl dispatch "hl.dsp.global(\"quickshell:volumecontrol\")"
+# quotes are stripped and the shell then chokes on the bare `(`. A literal " inside the
+# quoted argument is \\" — the value is string-unescaped before the quoting rules.
+Exec=hyprctl dispatch "hl.dsp.global(\\"quickshell:volumecontrol\\")"
 Icon=audio-volume-high
 Type=Application
 Categories=AudioVideo;Audio;

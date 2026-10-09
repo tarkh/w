@@ -191,8 +191,12 @@ host_field() {
 # Shell-sourced like host.conf. Fields:
 #   COMMAND   the server executable (PATH name, or a path — `~` expands)
 #   ARGS      whitespace-split arguments (`~/` expands per word)
+#   URL       instead of COMMAND/ARGS: a streamable-HTTP endpoint the app itself
+#             serves (Ardour's built-in MCP surface) — every host gets its own
+#             native remote form, no stdio proxy in between. COMMAND and URL
+#             are exclusive; both or neither is invalid.
 #   REQUIRES  what must exist for THIS account before the server is offered:
-#             a path or a PATH name, default COMMAND. A drop-in is a machine
+#             a path or a PATH name, default COMMAND (none for a URL). A drop-in is a machine
 #             file, but the servers packs ship are per-user (uv tools in
 #             ~/.local/bin, plug-ins in ~/.config), so an account that never
 #             ran `w-pack setup <bundle>` must simply not see it — a missing
@@ -207,28 +211,30 @@ host_field() {
 # would collapse the empty ARGS of a server that takes none and shift `ok` into
 # the args column — the VM run of the graphics bundle showed exactly that.
 MCP_FS=$'\x1f'
-mcp_dropins() {                               # [all] → name<US>cmd<US>args<US>ok|missing|invalid<US>description
-  local want="${1:-active}" root f name cmd args req state desc seen=$'\n'
+mcp_dropins() {                               # [all] → name<US>cmd<US>args<US>ok|missing|invalid<US>description<US>url
+  local want="${1:-active}" root f name cmd args url req state desc seen=$'\n'
   for root in "$USER_ROOT" "$SYS_ROOT"; do
     for f in "$root"/mcp.d/*.conf; do
       [[ -f "$f" ]] || continue
       name="$(basename "$f" .conf)"
       [[ "$seen" == *$'\n'"$name"$'\n'* ]] && continue
       seen+="$name"$'\n'
-      cmd="$(conf_field "$f" COMMAND)"; args="$(conf_field "$f" ARGS)"
+      cmd="$(conf_field "$f" COMMAND)"; args="$(conf_field "$f" ARGS)"; url="$(conf_field "$f" URL)"
       req="$(conf_field "$f" REQUIRES)"; req="${req:-$cmd}"
       cmd="${cmd/#\~/$HOME}"; req="${req/#\~/$HOME}"
       local w expanded=""
       for w in $args; do expanded+="${w/#\~/$HOME} "; done
       args="${expanded% }"
       state=ok
-      if [[ -z "$cmd" || ! "$name" =~ ^[a-z0-9-]+$ ]]; then state=invalid
+      if [[ -z "$cmd" && -z "$url" ]] || [[ -n "$cmd" && -n "$url" ]] \
+         || [[ ! "$name" =~ ^[a-z0-9-]+$ ]]; then state=invalid
+      elif [[ -z "$req" ]]; then :
       elif [[ "$req" == */* ]]; then [[ -e "$req" ]] || state=missing
       else command -v "$req" >/dev/null 2>&1 || state=missing
       fi
       [[ "$want" == all || "$state" == ok ]] || continue
       desc="$(conf_field "$f" DESCRIPTION)"
-      printf '%s\n' "$name$MCP_FS$cmd$MCP_FS$args$MCP_FS$state$MCP_FS${desc//$'\n'/ }"
+      printf '%s\n' "$name$MCP_FS$cmd$MCP_FS$args$MCP_FS$state$MCP_FS${desc//$'\n'/ }$MCP_FS$url"
     done
   done
 }
@@ -251,8 +257,8 @@ with open(base, encoding="utf-8") as fh:
     cfg = json.load(fh)
 servers = cfg.setdefault("mcpServers", {})
 for row in os.environ["W_MCP_ROWS"].splitlines():
-    name, cmd, args = row.split("\x1f")[:3]
-    servers[name] = {"command": cmd, "args": args.split()}
+    name, cmd, args, _state, _desc, url = row.split("\x1f")
+    servers[name] = {"type": "http", "url": url} if url else {"command": cmd, "args": args.split()}
 with open(out, "w", encoding="utf-8") as fh:
     json.dump(cfg, fh, indent=2)
 EOF
@@ -277,8 +283,9 @@ cfg = {"mcp": {"w-mcp": {"type": "local", "command": ["w-mcp"], "enabled": True}
 for row in os.environ.get("W_MCP_ROWS", "").splitlines():
     if not row:
         continue
-    name, cmd, args = row.split("\x1f")[:3]
-    cfg["mcp"][name] = {"type": "local", "command": [cmd] + args.split(), "enabled": True}
+    name, cmd, args, _state, _desc, url = row.split("\x1f")
+    cfg["mcp"][name] = ({"type": "remote", "url": url, "enabled": True} if url else
+                        {"type": "local", "command": [cmd] + args.split(), "enabled": True})
     cfg["permission"]["mcp"][f"{name}_*"] = "allow"
 agents_md = os.environ.get("W_AGENTS_MD", "")
 if agents_md:
@@ -308,10 +315,12 @@ goose_mcp_layer() {
 import json, os, sys
 ext = {}
 for row in os.environ["W_MCP_ROWS"].splitlines():
-    name, cmd, args, _state, desc = row.split("\x1f")
-    ext[name] = {"enabled": False, "type": "stdio", "name": name,
+    name, cmd, args, _state, desc, url = row.split("\x1f")
+    ext[name] = {"enabled": False, "name": name,
                  "description": desc or f"MCP server '{name}' from a W-Pack",
-                 "cmd": cmd, "args": args.split(), "envs": {}, "timeout": 300}
+                 "envs": {}, "timeout": 300}
+    ext[name].update({"type": "streamable_http", "uri": url} if url else
+                     {"type": "stdio", "cmd": cmd, "args": args.split()})
 with open(sys.argv[1], "w", encoding="utf-8") as fh:
     json.dump({"extensions": ext}, fh, indent=2)
 EOF
@@ -335,7 +344,7 @@ goose_mcp_names() {
 # loading it. ~300 bytes a turn against the schemas' tens of KB.
 goose_mcp_hint() {
   local n d hint=""
-  while IFS="$MCP_FS" read -r n _ _ _ d; do
+  while IFS="$MCP_FS" read -r n _ _ _ d _; do
     [[ -n "$n" ]] && hint+="${hint:+; }$n${d:+ — $d}"
   done < <(mcp_dropins)
   [[ -n "$hint" ]] && echo "W pack MCP servers, off until needed — before working in one of these apps, load its server with extensionmanager's manage_extensions (action enable): $hint."
@@ -349,13 +358,17 @@ goose_mcp_hint() {
 # is consent for the assistant to drive that software, so Codex's per-call
 # prompts stay for its own tools and for servers wired up by hand.
 codex_mcp_args() {                            # → -c mcp_servers.<n>.command="…" -c …args=[…] -c …approval="approve" …
-  local n c a _ w list
-  while IFS="$MCP_FS" read -r n c a _; do
+  local n c a u _ w list
+  while IFS="$MCP_FS" read -r n c a _ _ u; do
     [[ -n "$n" ]] || continue
-    printf -- '-c\nmcp_servers.%s.command=%s\n' "$n" "$(printf '%s' "$c" | toml_string)"
-    list=""
-    for w in $a; do list+="${list:+, }$(printf '%s' "$w" | toml_string)"; done
-    printf -- '-c\nmcp_servers.%s.args=[%s]\n' "$n" "$list"
+    if [[ -n "$u" ]]; then
+      printf -- '-c\nmcp_servers.%s.url=%s\n' "$n" "$(printf '%s' "$u" | toml_string)"
+    else
+      printf -- '-c\nmcp_servers.%s.command=%s\n' "$n" "$(printf '%s' "$c" | toml_string)"
+      list=""
+      for w in $a; do list+="${list:+, }$(printf '%s' "$w" | toml_string)"; done
+      printf -- '-c\nmcp_servers.%s.args=[%s]\n' "$n" "$list"
+    fi
     printf -- '-c\nmcp_servers.%s.default_tools_approval_mode="approve"\n' "$n"
   done < <(mcp_dropins)
 }

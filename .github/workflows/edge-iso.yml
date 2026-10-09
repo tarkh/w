@@ -48,6 +48,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: write
   issues: write
 
@@ -70,11 +71,29 @@ jobs:
     needs: check
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    # The image's signature, with no key to keep: Sigstore certifies this run's
+    # GitHub identity for the one signing, and the attestation records "this file
+    # was built by edge-iso of this repository from commit X". X is a release
+    # snapshot signed with the release key, which never leaves its owner — so a
+    # user checks the image against the run, and the run's source against the key:
+    #   gh attestation verify w-*.iso --repo <owner>/<repo>   (prints X)
+    #   git verify-commit X
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - uses: actions/checkout@v7
 
       - name: Build the ISO
         run: bash ci/iso-build-container.sh
+
+      # Before publishing: an image that could not be attested is not uploaded.
+      - name: Attest the image's provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: archiso/out/*.iso
 
       - name: Publish it as the rolling edge image
         env:

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>w-record · W Linux</title>
+<meta name="description" content="Record the screen — region/window/monitor, one key to start and stop.">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../en/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Menu" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../en/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Documentation</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Search the docs" aria-label="Search" autocomplete="off" spellcheck="false" data-empty="Nothing found">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><b>en</b><a href="../../ru/reference/w-record.html" hreflang="ru">ru</a></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Getting started</h2><ul><li><a href="../index.html">W Linux documentation</a></li><li><a href="../hotkeys.html">Keyboard shortcuts</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Desktop</h2><ul><li><a href="../guide/theming.html">Themes and wallpapers</a></li><li><a href="../guide/desktop.html">The desktop</a></li><li><a href="../guide/displays.html">Displays and night light</a></li><li><a href="../guide/input.html">Keyboard, mouse and touchpad</a></li></ul><h2>System</h2><ul><li><a href="../guide/updates.html">Keeping W up to date</a></li><li><a href="../guide/security.html">Security</a></li><li><a href="../guide/network.html">Network, DNS and the firewall</a></li><li><a href="../guide/power.html">Power and battery</a></li><li><a href="../recovery.html">Recovery — when W will not boot, or boots wrong</a></li></ul><h2>Software</h2><ul><li><a href="../guide/packs.html">Packs — optional software bundles</a></li></ul><h2>AI</h2><ul><li><a href="../guide/ai.html">The AI assistant</a></li></ul><h2>Reference</h2><ul><li><a href="index.html">Commands</a><ul><li><a href="w-ai.html">w-ai</a></li><li><a href="w-appearance.html">w-appearance</a></li><li><a href="w-bar.html">w-bar</a></li><li><a href="w-conf.html">w-conf</a></li><li><a href="w-crypt.html">w-crypt</a></li><li><a href="w-dns.html">w-dns</a></li><li><a href="w-fingerprint.html">w-fingerprint</a></li><li><a href="w-firewall.html">w-firewall</a></li><li><a href="w-help.html">w-help</a></li><li><a href="w-hotkeys.html">w-hotkeys</a></li><li><a href="w-info.html">w-info</a></li><li><a href="w-kbdlight.html">w-kbdlight</a></li><li><a href="w-kernel.html">w-kernel</a></li><li><a href="w-keyboard.html">w-keyboard</a></li><li><a href="w-langpack.html">w-langpack</a></li><li><a href="w-locale.html">w-locale</a></li><li><a href="w-logs.html">w-logs</a></li><li><a href="w-mirrors.html">w-mirrors</a></li><li><a href="w-monitor.html">w-monitor</a></li><li><a href="w-nightlight.html">w-nightlight</a></li><li><a href="w-notify.html">w-notify</a></li><li><a href="w-pack.html">w-pack</a></li><li><a href="w-pointer.html">w-pointer</a></li><li><a href="w-power.html">w-power</a></li><li><a href="w-record.html" aria-current="page">w-record</a></li><li><a href="w-reset.html">w-reset</a></li><li><a href="w-rollback.html">w-rollback</a></li><li><a href="w-screenshot.html">w-screenshot</a></li><li><a href="w-secureboot.html">w-secureboot</a></li><li><a href="w-session.html">w-session</a></li><li><a href="w-ssh.html">w-ssh</a></li><li><a href="w-style.html">w-style</a></li><li><a href="w-sync.html">w-sync</a></li><li><a href="w-term.html">w-term</a></li><li><a href="w-theme.html">w-theme</a></li><li><a href="w-time.html">w-time</a></li><li><a href="w-update.html">w-update</a></li><li><a href="w-userdirs.html">w-userdirs</a></li><li><a href="w-wallpaper.html">w-wallpaper</a></li></ul></li></ul></nav>
+  <main>
+    <article>
+      <h1>w-record</h1>
+      <p><code>w-record</code> — Record the screen — region/window/monitor, one key to start and stop.</p>
+<h2 id="usage">Usage <a class="anchor" href="#usage" aria-hidden="true">#</a></h2>
+<pre><code>Usage: <span class="w">w-record</span> &lt;mode&gt; [action] | stop | status [<span class="f">--porcelain</span>] | get [KEY] | set KEY VALUE
+
+Info: Record the screen — region/window/monitor, one key to start and stop.
+
+Modes:
+  region    Select a rectangular region
+  window    Record the focused window (Hyprland geometry)
+  output    Record the focused monitor
+
+Actions (default: toggle):
+  <span class="f">--toggle</span>  Start recording, or stop the one already running. This is what the
+            keybinds do: the same chord begins and ends the take.
+  <span class="f">--start</span>   Start only; fail if a recording is already running
+
+Commands:
+  stop      Stop the running recording and finish the file
+  status    Report whether a recording is running, of what, and for how long
+  get       Print every setting as KEY=value (+ BACKENDS), or one value
+  set       Change one setting for your account
+
+Settings (in effect from the next recording):
+  RECORDER  wf (wf-recorder; gsr arrives with an optional W-Pack)
+  ENCODER   auto | cpu | vaapi — where the encoding happens
+  AUDIO     system | mic | none — what lands on the audio track
+  FORMAT    mp4 | mkv | webm; webm always encodes on the CPU
+  FRAMERATE constant frame rate, 1-240; 30 by default
+  WINDOW_MASK yes | no — paint the corners of a `window` recording black instead
+            of the wallpaper behind them; yes always encodes on the CPU
+
+Exit codes:
+  0  Success, or the user cancelled the selection
+  1  Runtime error
+  2  Usage error
+
+Examples:
+  <span class="w">w-record</span> output                    <span class="c"># focused monitor; press again to stop</span>
+  <span class="w">w-record</span> region <span class="f">--start</span>            <span class="c"># drag an area, start, fail if busy</span>
+  <span class="w">w-record</span> stop                      <span class="c"># finish the file and notify</span>
+  <span class="w">w-record</span> status <span class="f">--porcelain</span>        <span class="c"># machine-readable state</span>
+  <span class="w">w-record</span> set AUDIO mic             <span class="c"># narrate instead of the desktop&#x27;s sound</span></code></pre>
+<p>This page is generated from the command's own help text (w-docs-refgen). The
+live version of the same text on a W machine: <code>w-record help</code>.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="w-power.html"><small>Previous</small>w-power</a><a class="next" href="w-reset.html"><small>Next</small>w-reset</a></nav>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

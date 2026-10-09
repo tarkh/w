@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Displays and night light · W Linux</title>
+<meta name="description" content="Monitor layout, scaling and placement, the separate login-screen layout, the blue-light filter, and what to do about a black screen.">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../en/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Menu" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../en/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Documentation</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Search the docs" aria-label="Search" autocomplete="off" spellcheck="false" data-empty="Nothing found">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><b>en</b><a href="../../ru/guide/displays.html" hreflang="ru">ru</a></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Getting started</h2><ul><li><a href="../index.html">W Linux documentation</a></li><li><a href="../hotkeys.html">Keyboard shortcuts</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Desktop</h2><ul><li><a href="theming.html">Themes and wallpapers</a></li><li><a href="desktop.html">The desktop</a></li><li><a href="displays.html" aria-current="page">Displays and night light</a></li><li><a href="input.html">Keyboard, mouse and touchpad</a></li></ul><h2>System</h2><ul><li><a href="updates.html">Keeping W up to date</a></li><li><a href="security.html">Security</a></li><li><a href="network.html">Network, DNS and the firewall</a></li><li><a href="power.html">Power and battery</a></li><li><a href="../recovery.html">Recovery — when W will not boot, or boots wrong</a></li></ul><h2>Software</h2><ul><li><a href="packs.html">Packs — optional software bundles</a></li></ul><h2>AI</h2><ul><li><a href="ai.html">The AI assistant</a></li></ul><h2>Reference</h2><ul><li><a href="../reference/index.html">Commands</a></li></ul></nav>
+  <main>
+    <article>
+      <h1>Displays and night light</h1>
+      <p><strong>Hub → Displays</strong> holds two things that answer the same question — what the
+screen physically looks like. The first two tabs are the monitor layout, one for
+your session and one for the login screen; the third is the night light.</p>
+<h2 id="the-monitor-layout">The monitor layout <a class="anchor" href="#the-monitor-layout" aria-hidden="true">#</a></h2>
+<p>The <strong>Session</strong> tab lists every connected output with the controls you would
+expect:</p>
+<ul>
+<li><strong>Resolution</strong> and <strong>Refresh rate</strong> — the modes the monitor actually reports.</li>
+<li><strong>Scale</strong> — how large everything is drawn. <strong>Auto</strong> picks a sensible value for
+the panel's size and density. The list holds only scales the compositor
+accepts for this resolution, in roughly quarter steps — a panel that cannot
+divide by 1.5 offers 1.6 instead. Hyprland rejects anything else and quietly
+substitutes its own pick, so W never offers it; <code>w-monitor scales &lt;output&gt;</code>
+prints the full set.</li>
+<li><strong>Rotation</strong> — for a monitor standing on its side.</li>
+<li><strong>Position</strong> — where this output sits relative to the ones already placed:
+<em>Left</em>, <em>Right</em>, <em>Above</em>, <em>Below</em>. There is no pixel arithmetic to do; W
+chains the outputs for you.</li>
+<li><strong>Primary</strong> — a W concept rather than a Wayland one. The primary output is the
+one that carries the status bar, and the one the login card and the lock
+screen are drawn on.</li>
+<li><strong>Enabled</strong> — turn an output off without unplugging it.</li>
+</ul>
+<p>Your layout lives in a settings file, not in the compositor's memory, so it
+survives a reboot and a re-plug. From a terminal the same layout is <code>w-monitor</code>
+— <code>w-monitor status</code> prints what you have, and <code>w-monitor help</code> lists the rest.
+No administrator rights are involved: the session is yours.</p>
+<p>Changing <strong>Scale</strong> or <strong>Primary</strong> also moves the lock screen, which reads its
+size at the moment it locks — so the change lands the next time the screen
+locks, not immediately.</p>
+<h2 id="the-login-screen-has-its-own-layout">The login screen has its own layout <a class="anchor" href="#the-login-screen-has-its-own-layout" aria-hidden="true">#</a></h2>
+<p>The greeter is a separate program that runs before you log in, so it does not
+see your session's settings. The <strong>Login screen</strong> tab configures it separately,
+and because that file belongs to the machine rather than to you, saving it asks
+for your password.</p>
+<p>That tab behaves a little differently from the first one on purpose:</p>
+<ul>
+<li><strong>Copy from session</strong> takes the layout you just built for yourself as a
+starting point.</li>
+<li>Changes are staged and only land when you press <strong>Apply</strong> — you are editing a
+screen you are not currently looking at, so nothing happens behind your back.
+<strong>Discard</strong> throws the staged edits away.</li>
+<li>The hint <em>&quot;Changes apply on the next login screen&quot;</em> is literal: to see the
+result, log out.</li>
+</ul>
+<h2 id="night-light">Night light <a class="anchor" href="#night-light" aria-hidden="true">#</a></h2>
+<p>The <strong>Night light</strong> tab warms the screen in the evening to cut blue light. It
+shifts the compositor's colour transform rather than painting over the screen,
+which has two pleasant consequences: it costs nothing while you work, and it
+does <strong>not</strong> show up in screenshots or screen recordings.</p>
+<ul>
+<li><strong>Mode</strong> — <em>off</em>, <em>schedule</em> (warm only inside the night window), or <em>always</em>.</li>
+<li><strong>Temperature</strong> — the night value in kelvin; lower is warmer. 4300 is the
+default, 3000 is clearly amber, 2000 is candlelight.</li>
+<li><strong>Day temperature</strong> — what the screen returns to when the window closes. The
+default 6600 leaves the screen alone; any other value is a real tint that
+stays on all day, which is exactly what someone who wants a permanently warmer
+screen is after. It is not an off switch — <em>off</em> means an untouched screen
+whatever this says.</li>
+<li><strong>The night window</strong> — a start and an end time. Crossing midnight (21:00 →
+07:00) is normal. W uses clock times rather than sunset and sunrise: it ships
+no geolocation.</li>
+<li><strong>Transition</strong> — how long the scheduled change takes, in minutes. It paces
+only the scheduled change; a switch you flip yourself eases across in about
+two seconds, so you never wait.</li>
+</ul>
+<p><kbd>Super+Shift+N</kbd> toggles the filter between <em>off</em> and <em>schedule</em>.</p>
+<p>Two things surprise people, and neither is a fault. Setting the mode to
+<em>schedule</em> in the afternoon changes nothing visible until the window opens. And
+the login screen stays neutral — the night light lives in your session, and the
+greeter is a different program.</p>
+<p>From a terminal the same settings are <code>w-nightlight</code>.</p>
+<h2 id="a-black-screen-after-a-display-change">A black screen after a display change <a class="anchor" href="#a-black-screen-after-a-display-change" aria-hidden="true">#</a></h2>
+<p>This is a settings file, not a broken system, and it does not call for a
+rollback.</p>
+<p>W already refuses the two changes that would obviously blind you: you cannot
+disable the primary output, and you cannot disable the last one still drawing.
+What it cannot prevent is a legitimate change that goes wrong later — turning
+off the laptop panel while an external monitor is attached is reasonable until
+the external monitor is unplugged.</p>
+<p>If you end up looking at nothing, switch to a text console with
+<kbd>Ctrl+Alt+F2</kbd>, log in, and run:</p>
+<pre><code><span class="w">w-monitor</span> reset <span class="f">--all</span>
+sudo <span class="w">w-monitor</span> greeter reset</code></pre>
+<p>The first line restores your session's layout to automatic, the second does the
+same for the login screen. <a href="../recovery.html">Recovery</a> covers this and the
+other &quot;I cannot get back in&quot; situations.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="desktop.html"><small>Previous</small>The desktop</a><a class="next" href="input.html"><small>Next</small>Keyboard, mouse and touchpad</a></nav>
+  </main>
+  <aside class="toc"><h2>On this page</h2><ul><li><a href="#the-monitor-layout">The monitor layout</a></li><li><a href="#the-login-screen-has-its-own-layout">The login screen has its own layout</a></li><li><a href="#night-light">Night light</a></li><li><a href="#a-black-screen-after-a-display-change">A black screen after a display change</a></li></ul></aside>
+</div>
+</body>
+</html>

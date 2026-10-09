@@ -1,6 +1,7 @@
 ---
 title: Network, DNS and the firewall
 section: guide
+category: system
 order: 7
 summary: Connecting to Wi-Fi and ethernet, the machine's name, encrypted DNS, and switching the firewall zone for an untrusted network.
 sources:

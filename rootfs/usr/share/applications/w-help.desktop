@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=W Help
+Name[ru]=Справка W
+Comment=W documentation: guides, FAQ, commands, recovery
+Comment[ru]=Документация W: руководства, FAQ, команды, восстановление
+Exec=w-help
+Icon=help-browser
+Type=Application
+Categories=System;Documentation;
+Keywords=help;docs;documentation;manual;guide;faq;w-help;
+Keywords[ru]=справка;документация;помощь;руководство;инструкция;help;docs;documentation;manual;guide;faq;w-help;
+StartupWMClass=w-help

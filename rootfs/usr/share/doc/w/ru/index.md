@@ -60,6 +60,7 @@ W выводит `w-info`.
 - [`w-dns`](reference/w-dns.md) — Переключение DNS-провайдера и режима DNS-over-TLS (systemd-resolved).
 - [`w-fingerprint`](reference/w-fingerprint.md) — Запись, просмотр и удаление отпечатков пальцев текущего пользователя.
 - [`w-firewall`](reference/w-firewall.md) — Переключение зоны файрвола между домашней и публичной (firewalld).
+- [`w-help`](reference/w-help.md) — Открыть документацию W в окне «Справка W».
 - [`w-hotkeys`](reference/w-hotkeys.md) — Управление горячими клавишами Hyprland — профили, каталог, свои бинды.
 - [`w-info`](reference/w-info.md) — Список всех инструментов W с однострочным описанием каждого.
 - [`w-kbdlight`](reference/w-kbdlight.md) — Подсветка клавиатуры — уровень, медиаклавиши и свет на запросе пароля LUKS.

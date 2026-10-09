@@ -7,9 +7,9 @@ description: >-
   volume/mute, microphones, or a silent machine.
 sources:
   - path: .claude/library/package-audio.md
-    sha256: 79bc76686abbd884f6cfc2de8671cc751ed83990682ca46721d120a15e73f65d
+    sha256: c5b39c470bb5215b27120d9dc128c5a8f11f9ad41da6e6b8f49f886b2142d967
   - path: .claude/library/quickshell-volumecontrol.md
-    sha256: e73cf90a4c84ea1442c562cc694876d95c2011a33678a0c86aca7270dc714e38
+    sha256: 05dc4dfdd3d9e9c8881cf30ef55f727883b51c36b965d836d61db2f7bbb53edd
 tools:
   - w_audio_status
 ---
@@ -17,8 +17,9 @@ tools:
 # W Audio
 
 Sound on W is **PipeWire** with the **WirePlumber** session manager. There is no
-separate PulseAudio or JACK daemon — PipeWire implements both protocols itself
-through shims (`pipewire-pulse`, `pipewire-alsa`).
+separate PulseAudio or JACK daemon — PipeWire implements the protocols itself
+through shims (`pipewire-pulse`, `pipewire-alsa`; the JACK one, `pipewire-jack`,
+comes with the `audio` pack along with DAWs and realtime scheduling).
 
 ## The stack
 

@@ -1,6 +1,7 @@
 ---
 title: Power and battery
 section: guide
+category: system
 order: 8
 summary: Power profiles, the idle cascade of lock, screen-off and suspend, lid and power-button actions, and the battery charge limit.
 sources:

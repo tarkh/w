@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>w-theme · W Linux</title>
+<meta name="description" content="Переключение, создание и управление темами W с плавным переходом.">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../ru/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Меню" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../ru/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Документация</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Поиск по документации" aria-label="Поиск" autocomplete="off" spellcheck="false" data-empty="Ничего не найдено">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><a href="../../en/reference/w-theme.html" hreflang="en">en</a><b>ru</b></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Начало</h2><ul><li><a href="../index.html">Документация W Linux</a></li><li><a href="../hotkeys.html">Горячие клавиши</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Рабочий стол</h2><ul><li><a href="../guide/theming.html">Темы и обои</a></li><li><a href="../guide/desktop.html">Рабочий стол</a></li><li><a href="../guide/displays.html">Мониторы и ночной свет</a></li><li><a href="../guide/input.html">Клавиатура, мышь и тачпад</a></li></ul><h2>Система</h2><ul><li><a href="../guide/updates.html">Поддержание W в актуальном состоянии</a></li><li><a href="../guide/security.html">Безопасность</a></li><li><a href="../guide/network.html">Сеть, DNS и фаервол</a></li><li><a href="../guide/power.html">Питание и батарея</a></li><li><a href="../recovery.html">Восстановление — когда W не загружается или загружается неправильно</a></li></ul><h2>Программы</h2><ul><li><a href="../guide/packs.html">Наборы — опциональные пакеты софта</a></li></ul><h2>ИИ</h2><ul><li><a href="../guide/ai.html">Ассистент ИИ</a></li></ul><h2>Справочник</h2><ul><li><a href="index.html">Команды</a><ul><li><a href="w-ai.html">w-ai</a></li><li><a href="w-appearance.html">w-appearance</a></li><li><a href="w-bar.html">w-bar</a></li><li><a href="w-conf.html">w-conf</a></li><li><a href="w-crypt.html">w-crypt</a></li><li><a href="w-dns.html">w-dns</a></li><li><a href="w-fingerprint.html">w-fingerprint</a></li><li><a href="w-firewall.html">w-firewall</a></li><li><a href="w-help.html">w-help</a></li><li><a href="w-hotkeys.html">w-hotkeys</a></li><li><a href="w-info.html">w-info</a></li><li><a href="w-kbdlight.html">w-kbdlight</a></li><li><a href="w-kernel.html">w-kernel</a></li><li><a href="w-keyboard.html">w-keyboard</a></li><li><a href="w-langpack.html">w-langpack</a></li><li><a href="w-locale.html">w-locale</a></li><li><a href="w-logs.html">w-logs</a></li><li><a href="w-mirrors.html">w-mirrors</a></li><li><a href="w-monitor.html">w-monitor</a></li><li><a href="w-nightlight.html">w-nightlight</a></li><li><a href="w-notify.html">w-notify</a></li><li><a href="w-pack.html">w-pack</a></li><li><a href="w-pointer.html">w-pointer</a></li><li><a href="w-power.html">w-power</a></li><li><a href="w-record.html">w-record</a></li><li><a href="w-reset.html">w-reset</a></li><li><a href="w-rollback.html">w-rollback</a></li><li><a href="w-screenshot.html">w-screenshot</a></li><li><a href="w-secureboot.html">w-secureboot</a></li><li><a href="w-session.html">w-session</a></li><li><a href="w-ssh.html">w-ssh</a></li><li><a href="w-style.html">w-style</a></li><li><a href="w-sync.html">w-sync</a></li><li><a href="w-term.html">w-term</a></li><li><a href="w-theme.html" aria-current="page">w-theme</a></li><li><a href="w-time.html">w-time</a></li><li><a href="w-update.html">w-update</a></li><li><a href="w-userdirs.html">w-userdirs</a></li><li><a href="w-wallpaper.html">w-wallpaper</a></li></ul></li></ul></nav>
+  <main>
+    <article>
+      <h1>w-theme</h1>
+      <p><code>w-theme</code> — Переключение, создание и управление темами W с плавным переходом.</p>
+<h2 id="использование">Использование <a class="anchor" href="#использование" aria-hidden="true">#</a></h2>
+<pre><code>Использование: <span class="w">w-theme</span> &lt;команда&gt; [параметры]
+
+Info: Переключение, создание и управление темами W с плавным переходом.
+
+Команды:
+  set &lt;имя&gt; [<span class="f">--no-fade</span>]   Переключить тему.
+                            без root → для этого юзера, мгновенно, с переходом
+                            sudo     → системный фолбэк + skel + загрузка/вход
+                            <span class="f">--no-fade</span>  без плавного перехода
+  reset                   Снять личную тему, следовать системному фолбэку
+  new &lt;имя&gt; <span class="f">--wallpaper</span> &lt;изображение&gt; [параметры]
+                          Собрать тему из изображения: обои обрезаются по cover
+                          под каждую ступень разрешения, палитра извлекается из
+                          них же (matugen + отображение OKLCH).
+                            без root → ~/.config/w/themes/, sudo → /etc/w/themes/
+                            <span class="f">--appearance</span> dark|light   по умолчанию dark
+                            <span class="f">--contrast</span> low|medium|high
+                                                      насколько подкрашены
+                                                      поверхности и как далеко
+                                                      разведены тона; low —
+                                                      пастельный край, по
+                                                      умолчанию medium
+                            <span class="f">--seed-index</span> &lt;n&gt;          какой базовый цвет
+                                                      изображения брать за основу
+                                                      (0 = самый доминирующий)
+                            <span class="f">--scheme</span> &lt;тип matugen&gt;    по умолчанию: adaptive
+                            <span class="f">--activate</span>                переключиться на неё сразу
+                            <span class="f">--json</span>                    напечатать только матрицу
+                                                      палитр, ничего не создавая:
+                                                      каждый базовый цвет
+                                                      изображения × dark/light ×
+                                                      каждый уровень контраста
+                                                      (превью для GUI; остальные
+                                                      параметры тогда не важны,
+                                                      возвращается всё)
+  edit &lt;имя&gt; [параметры]  Пересобрать палитру сгенерированной темы на месте,
+                          сохранив её обои. Те же параметры, что у `new`, минус
+                          изображение (другие обои — это другая тема, для неё
+                          `new`), плюс <span class="f">--rename</span> &lt;новоеимя&gt;; что не указано,
+                          остаётся как было. Если тема активна, сессия (или
+                          система) перекрашивается. Темы, написанные руками,
+                          редактировать нельзя.
+  rm &lt;имя&gt;                Удалить тему (для системной нужен sudo). Если это ваша
+                          активная тема, привязка сначала сбрасывается.
+  list [<span class="f">--porcelain</span>]      Список системных и локальных тем (* = активная здесь)
+                            <span class="f">--porcelain</span>  TSV: имя, область, каталог, активна, ген.
+  current                 Показать действующие темы пользователя и системы
+
+Каталоги тем:
+  системные  /etc/w/themes/&lt;имя&gt;/
+  локальные  ~/.config/w/themes/&lt;имя&gt;/    (в каждом: theme.conf + wallpaper/)
+
+Сгенерированная тема несёт только theme.conf, wallpaper/ и preview.webp — анимации
+геометрия, эффекты, шрифты и база Kvantum наследуются от базовой темы <span class="s">&#x27;w&#x27;</span>, поэтому
+она идёт в ногу с W, а не замораживает копию.
+
+Коды выхода:
+  0  Успех
+  1  Ошибка выполнения
+  2  Ошибка вызова
+
+Примеры:
+  <span class="w">w-theme</span> list
+  <span class="w">w-theme</span> set midnight
+  sudo <span class="w">w-theme</span> set midnight
+  <span class="w">w-theme</span> reset
+  <span class="w">w-theme</span> new sunset <span class="f">--wallpaper</span> ~/Pictures/sunset.jpg <span class="f">--activate</span>
+  <span class="w">w-theme</span> new garden <span class="f">--wallpaper</span> ~/Pictures/park.jpg <span class="f">--seed-index</span> 1 <span class="f">--contrast</span> low
+  sudo <span class="w">w-theme</span> new corporate <span class="f">--wallpaper</span> /srv/brand.png
+  <span class="w">w-theme</span> edit sunset <span class="f">--contrast</span> low
+  <span class="w">w-theme</span> rm sunset</code></pre>
+<p>Эта страница генерируется из собственной справки команды (w-docs-refgen). Живая
+версия того же текста на машине с W: <code>w-theme help</code>.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="w-term.html"><small>Назад</small>w-term</a><a class="next" href="w-time.html"><small>Далее</small>w-time</a></nav>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

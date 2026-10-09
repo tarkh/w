@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Поддержание W в актуальном состоянии · W Linux</title>
+<meta name="description" content="Единый путь обновления, значок в баре, новости Arch и что делать, если обновление пошло не так.">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../ru/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Меню" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../ru/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Документация</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Поиск по документации" aria-label="Поиск" autocomplete="off" spellcheck="false" data-empty="Ничего не найдено">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><a href="../../en/guide/updates.html" hreflang="en">en</a><b>ru</b></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Начало</h2><ul><li><a href="../index.html">Документация W Linux</a></li><li><a href="../hotkeys.html">Горячие клавиши</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Рабочий стол</h2><ul><li><a href="theming.html">Темы и обои</a></li><li><a href="desktop.html">Рабочий стол</a></li><li><a href="displays.html">Мониторы и ночной свет</a></li><li><a href="input.html">Клавиатура, мышь и тачпад</a></li></ul><h2>Система</h2><ul><li><a href="updates.html" aria-current="page">Поддержание W в актуальном состоянии</a></li><li><a href="security.html">Безопасность</a></li><li><a href="network.html">Сеть, DNS и фаервол</a></li><li><a href="power.html">Питание и батарея</a></li><li><a href="../recovery.html">Восстановление — когда W не загружается или загружается неправильно</a></li></ul><h2>Программы</h2><ul><li><a href="packs.html">Наборы — опциональные пакеты софта</a></li></ul><h2>ИИ</h2><ul><li><a href="ai.html">Ассистент ИИ</a></li></ul><h2>Справочник</h2><ul><li><a href="../reference/index.html">Команды</a></li></ul></nav>
+  <main>
+    <article>
+      <h1>Поддержание W в актуальном состоянии</h1>
+      <p>У W один родной путь обновления, построенный на <code>pacman</code> и <code>yay</code>. Сторонних
+менеджеров обновлений нет. Каждая транзакция обновления снапшотится
+автоматически (snap-pac), поэтому обновление всегда обратимо — см.
+<a href="../faq.html">FAQ</a> и
+<a href="../recovery.html">Восстановление</a>.</p>
+<h2 id="команда-wupdate">Команда <code>w-update</code> <a class="anchor" href="#команда-wupdate" aria-hidden="true">#</a></h2>
+<ul>
+<li><code>w-update</code> (или <code>w-update upgrade</code>) — интерактивное полное обновление:
+пакеты репозитория и AUR за один проход. Она намеренно работает без
+<code>--noconfirm</code> — вы просматриваете список пакетов и диффы сборки AUR перед
+тем, как что-либо применяется. Если ядро изменилось, в конце предлагается
+перезагрузка, и эта перезагрузка сначала аккуратно закрывает ваши окна,
+так что несохранённая работа всё равно попросит подтверждения.</li>
+<li><code>w-update check</code> — проверяет обновления репозитория и AUR <strong>без root</strong> и
+запоминает результат. Никогда не запускайте голый <code>pacman -Sy</code>: проверка
+W использует отдельную временную базу.</li>
+<li><code>w-update status</code> — последний записанный статус.</li>
+<li><code>w-update news</code> — последние новости <a href="https://archlinux.org/news/" class="ext">Arch Linux</a>.
+Читайте их <strong>перед крупным обновлением</strong> — там всплывают редкие
+объявления о необходимости ручных действий.</li>
+<li><code>w-update enable</code> / <code>disable</code> / <code>interval [minutes]</code> — управление на
+пользователя фоновой проверкой, которая держит значок в баре актуальным.</li>
+<li><code>w-update plan</code> — предварительный просмотр без изменений: что затронет
+обновление репозитория, какие сборки AUR ожидают, означает ли смена ядра
+перезагрузку, сколько свободно места на диске.</li>
+</ul>
+<span id="where-you-see-updates"></span><h2 id="где-вы-видите-обновления">Где вы видите обновления <a class="anchor" href="#где-вы-видите-обновления" aria-hidden="true">#</a></h2>
+<ul>
+<li><strong>Бар</strong> показывает блок обновлений со счётчиком, когда обновления есть.</li>
+<li><strong>Хаб → Система</strong> показывает тот же счётчик и, после обновления, которое
+этого требует, подсказку «нужна перезагрузка».</li>
+<li>Клик по блоку в баре (или плитке Обновления в Хабе) открывает <code>w-update</code>
+в терминале.</li>
+<li>Новые релизы движков паков (comfyui, invokeai) в этот счётчик <strong>не</strong> входят и
+<code>w-update</code> их не ставит — они видны в <strong>Хаб → Наборы</strong>, в <code>w-update status</code> и
+заметкой в конце <code>w-update</code>. См. <a href="packs.html">руководство по пакам</a>.</li>
+</ul>
+<p>Файлы <code>/etc</code>, принадлежащие W, получают свои <code>.pacnew</code> автоматически
+согласованными хуком pacman; сторонние <code>.pacnew</code>-файлы остаются на ручное
+решение, и <code>w-update</code> их отдельно указывает.</p>
+<h2 id="если-обновление-пошло-не-так">Если обновление пошло не так <a class="anchor" href="#если-обновление-пошло-не-так" aria-hidden="true">#</a></h2>
+<ul>
+<li>Неудачная загрузка чаще всего — проблема с зеркалом: <code>w-mirrors status</code> и
+<code>w-mirrors sync</code> пересортируют и обновляют список зеркал; затем повторите.</li>
+<li>Если система ведёт себя плохо после обновления, перезагрузитесь в
+снапшот перед обновлением: меню загрузки (GRUB или Limine, в зависимости
+от установки) перечисляет снапшоты, а <a href="../recovery.html">Восстановление</a>
+проводит через восстановление шаг за шагом. W также хранит копию этой
+страницы на диске, так что она читается даже когда система не
+загружается.</li>
+</ul>
+<h2 id="канал-обновлений-самой-w">Канал обновлений самой W <a class="anchor" href="#канал-обновлений-самой-w" aria-hidden="true">#</a></h2>
+<p><code>w-update</code> обновляет <em>пакеты</em>; собственная конфигурация дистрибутива едет
+по каналу <code>w-sync</code> (edge) — см. <code>w-sync check</code> и главу об обновлениях в
+FAQ.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="input.html"><small>Назад</small>Клавиатура, мышь и тачпад</a><a class="next" href="security.html"><small>Далее</small>Безопасность</a></nav>
+  </main>
+  <aside class="toc"><h2>На этой странице</h2><ul><li><a href="#команда-wupdate">Команда w-update</a></li><li><a href="#где-вы-видите-обновления">Где вы видите обновления</a></li><li><a href="#если-обновление-пошло-не-так">Если обновление пошло не так</a></li><li><a href="#канал-обновлений-самой-w">Канал обновлений самой W</a></li></ul></aside>
+</div>
+</body>
+</html>

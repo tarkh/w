@@ -1,6 +1,7 @@
 ---
 title: Keyboard, mouse and touchpad
 section: guide
+category: desktop
 order: 6
 summary: Keyboard layouts and the switch key, key repeat, mouse and touchpad behaviour, gestures, and where the fingerprint reader is set up.
 sources:

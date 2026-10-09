@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Packs — optional software bundles · W Linux</title>
+<meta name="description" content="What a pack is, the bundles W offers, installing one for the machine and setting it up for your account, and how to undo it.">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../en/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Menu" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../en/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Documentation</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Search the docs" aria-label="Search" autocomplete="off" spellcheck="false" data-empty="Nothing found">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><b>en</b><a href="../../ru/guide/packs.html" hreflang="ru">ru</a></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Getting started</h2><ul><li><a href="../index.html">W Linux documentation</a></li><li><a href="../hotkeys.html">Keyboard shortcuts</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Desktop</h2><ul><li><a href="theming.html">Themes and wallpapers</a></li><li><a href="desktop.html">The desktop</a></li><li><a href="displays.html">Displays and night light</a></li><li><a href="input.html">Keyboard, mouse and touchpad</a></li></ul><h2>System</h2><ul><li><a href="updates.html">Keeping W up to date</a></li><li><a href="security.html">Security</a></li><li><a href="network.html">Network, DNS and the firewall</a></li><li><a href="power.html">Power and battery</a></li><li><a href="../recovery.html">Recovery — when W will not boot, or boots wrong</a></li></ul><h2>Software</h2><ul><li><a href="packs.html" aria-current="page">Packs — optional software bundles</a></li></ul><h2>AI</h2><ul><li><a href="ai.html">The AI assistant</a></li></ul><h2>Reference</h2><ul><li><a href="../reference/index.html">Commands</a></li></ul></nav>
+  <main>
+    <article>
+      <h1>Packs — optional software bundles</h1>
+      <p>W installs in two layers. The <strong>base</strong> is everything a working desktop needs and
+is always there. <strong>Packs</strong> are the second layer: optional bundles you add when
+you want them.</p>
+<p>A pack is named after a <em>direction</em> rather than a tool — <code>containers</code>, not
+<code>podman</code>; <code>dev</code>, not a list of editors. You choose the capability; which
+software delivers it is W's problem. Each pack brings its own packages, its own
+configuration, its own colours for the active theme, and a setup step that wires
+it into the desktop — so a pack arrives configured, not merely downloaded.</p>
+<h2 id="what-is-on-offer">What is on offer <a class="anchor" href="#what-is-on-offer" aria-hidden="true">#</a></h2>
+<ul>
+<li><strong>containers</strong> — rootless Podman with the Docker command line and a terminal
+UI for it.</li>
+<li><strong>dev</strong> — a development environment: the Zed editor, git tooling, a toolchain
+version manager.</li>
+<li><strong>flatpak</strong> — sandboxed third-party applications: Flatpak with Flathub, the
+Bazaar store and Flatseal for managing app permissions. This is the answer to
+&quot;how do I install an application that is not packaged for Arch&quot;.</li>
+<li><strong>office</strong> — the office direction: LibreOffice for documents, spreadsheets
+and presentations, pdfarranger and xournalpp for PDF page surgery and
+annotation, and the Obsidian markdown knowledge base for notes.</li>
+<li><strong>bitwarden</strong> — the Bitwarden desktop app wired into W's slots: SSH agent,
+biometric unlock, tray autostart.</li>
+<li><strong>telegram</strong> — Telegram Desktop with W's colours: the pack renders the active
+theme into Telegram's own theme file, flat chat wallpaper included, and a
+Telegram that has never been started on your account opens in those colours
+from its very first launch (with a plain window frame — no title bar of its
+own). If Telegram had already run before the pack was set up, its data is
+left alone and you pick the file once in the app (Settings → Chat settings →
+Chat background → Choose from file). Either way, from then on every theme
+switch recolours a running Telegram live.</li>
+<li><strong>localsend</strong> — LocalSend, an open-source AirDrop-like way to send files to
+your phone, tablet or another computer: official apps on Linux, Windows,
+macOS, Android and iOS all talk the same open protocol over the local
+network — no account, no cloud. The pack seeds W's accent colour into it,
+opens the firewall for it on trusted (home) networks only, and adds a
+right-click &quot;Send with LocalSend&quot; action to Nemo. It does not start
+automatically — open it when you need it, or turn on
+<code>systemctl --user enable --now localsend.service</code> for it to sit in the tray,
+always ready to receive.</li>
+<li><strong>graphics</strong> — 2D creative work: GIMP for raster editing and photo retouching
+(with the G'MIC filter suite), Inkscape for vector drawing and design, Krita
+for digital painting. All three follow the W theme (Krita through its &quot;W&quot;
+theme, selected for you unless you had picked another). The pack also
+wires <a href="ai.html">the AI assistant</a> into both editors: it can draw, edit and
+export vector documents through an Inkscape server, and run edits inside a
+running GIMP and look at the result — with whatever model your profile uses,
+local or cloud. Generative painting in Krita is planned for a companion pack.</li>
+<li><strong>3d</strong> — Blender for 3D modelling, sculpting, animation and rendering.
+Blender opens in W's colours and follows theme switches while
+running; pick another theme in Blender's preferences and it stays yours.
+<a href="ai.html">The AI assistant</a> can build and change scenes in a running Blender —
+add and edit objects, apply materials, look at the viewport, export to
+GLB/FBX. Its code runs in a safe mode: Blender's own tools only — no shell
+commands, no network, no add-on installs. Cycles renders on AMD and Intel Arc graphics out of the
+box.</li>
+<li><strong>audio</strong> — music production: the Ardour DAW (recording, editing, mixing,
+MIDI), qpwgraph to wire apps and devices together, Audacity for quick edits,
+and a starter set of plugins (the Surge XT synth, LSP mixing and mastering
+tools, Dragonfly reverb). The pack switches the system to PipeWire's JACK
+support and gives your account realtime audio priority (from your next
+login). Ardour, Audacity and qpwgraph open in your W colours. <a href="ai.html">The AI
+assistant</a> can work inside an open Ardour session — tracks, plugins,
+mixer, MIDI notes — once you turn on <em>MCP HTTP Server (Experimental)</em> in
+Ardour's Preferences → Control Surfaces; it is off by default because it
+listens without a password, so switch it off again when you are done.</li>
+<li><strong>gaming</strong> — Steam, Lutris and Heroic side by side on one shared
+Proton/Wine/MangoHud/gamemode foundation: Steam covers most of a typical
+library, Lutris is the catch-all for everything else (GOG, Amazon, native
+installers, emulation), Heroic talks to Epic/GOG's own APIs directly. The
+pack enables the <code>multilib</code> repository, matches the 32-bit graphics stack to
+your GPU, keeps your game library out of <code>@home</code> snapshots (it can run to
+hundreds of gigabytes and is fully recoverable from the storefronts
+themselves), and dresses the MangoHud FPS overlay (<code>Shift_F12</code>) and the
+Heroic window itself in your active W colours — Heroic opens in them from its
+very first launch, and follows every later theme change the next time you
+start it. Installing games on a second drive stays each launcher's own
+setting: Steam's <strong>Settings → Storage</strong>, Heroic's <strong>Default Installation
+Path</strong> together with <strong>Set Folder for new Wine Prefixes</strong> (otherwise the
+prefixes stay in <code>~/Games</code>), Lutris's <strong>Default installation folder</strong>. Use a Linux filesystem for
+that drive — games on NTFS or exFAT break under Proton.</li>
+<li><strong>virt</strong> — desktop virtualization: libvirt and QEMU/KVM underneath, with
+virt-manager for full control and GNOME Boxes for creating a VM in one click
+from an ISO. A default network is ready to go the moment the pack is set up,
+and your account gets passwordless access to it — no extra steps before your
+first VM. A hardware TPM for guests that need one (Windows 11, an encrypted
+disk) is not included; add it yourself if you need it.</li>
+<li><strong>ai-extra</strong> — the advanced stack for <a href="ai.html#advanced">the AI assistant</a>: local
+models, semantic memory, better web search.</li>
+<li><strong>comfyui</strong> — local image and video generation with ComfyUI, a node-based
+editor and backend running as a system service on <a href="ai.html#comfyui">localhost</a>.
+The engine is matched to your GPU at install; models are shared machine-wide
+in <code>/var/lib/w/ai-models</code>. Open <strong>ComfyUI</strong> from the app menu, or
+<code>systemctl start comfyui</code>, and visit <code>http://127.0.0.1:8188/</code>.</li>
+<li><strong>invokeai</strong> — local image generation with InvokeAI: a canvas, gallery and
+<a href="ai.html#invokeai">web interface</a> on <code>http://127.0.0.1:9090/</code>, run as a system
+service. Uses the same shared model store as comfyui, registering its files
+in place; the two bundles are independent of each other.</li>
+</ul>
+<p><strong>Hub → Packs</strong> lists them with their state and does the whole life cycle —
+installing, setting up and removing. Anything long or privileged opens a terminal
+so you can watch it happen. From a shell the same list is <code>w-pack list</code>.</p>
+<p>Packs are also offered during installation, so a new machine can arrive with the
+ones you want already set up. A couple of them only make sense from a running
+system and are deliberately absent from that checklist.</p>
+<h2 id="installing-and-setting-up-for-your-account">Installing, and setting up for your account <a class="anchor" href="#installing-and-setting-up-for-your-account" aria-hidden="true">#</a></h2>
+<p>A pack has two halves, and the panel names them:</p>
+<ul>
+<li><strong>The machine half</strong> — packages and system configuration. It is installed once
+for the whole machine and needs an administrator: <code>sudo w-pack install &lt;name&gt;</code>, or the <strong>Install</strong> button.</li>
+<li><strong>Your half</strong> — the parts that live in your home directory. It is set up per
+account, needs no password, and is <em>not</em> done for everybody automatically:
+spending someone else's disk on a choice they never made would be rude.</li>
+</ul>
+<p>That is why a pack can show <strong>On this machine, but not set up for you</strong> with a
+<strong>Set up</strong> button next to it. Nothing is broken — it is an honest &quot;not yet&quot;, and
+one click (or <code>w-pack setup &lt;name&gt;</code>) finishes it. On a single-account machine
+you will rarely see this state, because installing does both halves for you.</p>
+<p>Installing is snapshotted like any other package change, so it is reversible the
+same way — see <a href="updates.html#if-an-update-goes-wrong">the update guide</a>.</p>
+<h2 id="removing-a-pack">Removing a pack <a class="anchor" href="#removing-a-pack" aria-hidden="true">#</a></h2>
+<p>In <strong>Hub → Packs</strong>, every pack that is on the machine has a <strong>Remove</strong> button. It
+asks first, and the confirmation offers the same two answers the commands do —
+take the pack off the machine (needs an administrator), or undo only your own
+account's layer. From a shell:</p>
+<pre><code>sudo <span class="w">w-pack</span> remove &lt;pack&gt;</code></pre>
+<p>This undoes what W did, which is not the same as uninstalling the software.
+Removing a pack takes away its wiring: the pack stops being listed as installed,
+its colours stop being rendered, its session variables and shell hooks go, its
+configuration files that W owned are deleted (a backup is made first), and
+whatever it set up — a service, a command name, a system-wide setting — is put
+back the way it was.</p>
+<p><strong>Your packages stay by default.</strong> They are <code>pacman</code>'s business, not W's, so the
+exact command to remove them is printed for you to run — or add <code>--packages</code> and
+the removal does it in the same pass. The panel never adds that flag on your
+behalf: taking the packages is the one irreversible part, and it is not a choice to
+make before you have seen the list. That is also why the terminal a removal opens
+waits for you before it closes — the report at the end is the point of it. Anything another pack you still have also
+needs is left out of that list automatically.</p>
+<p><strong>Your data is never deleted.</strong> Downloaded models, container images, toolchains,
+installed Flatpak applications — those are yours, and W only tells you where they
+are and how much room they take. The same goes for configuration files you own
+rather than W: since the software usually stays installed, deleting your settings
+for it would be damage rather than an undo, so they are listed and left alone.</p>
+<p>If you removed a pack's packages by hand and it keeps coming back after an
+update, this is why: without <code>w-pack remove</code>, W still thinks the pack is yours
+and re-applies it. Run the command above and it stays gone.</p>
+<pre><code><span class="w">w-pack</span> unsetup &lt;pack&gt;</code></pre>
+<p>The same thing for <strong>your account only</strong>, with no administrator rights: the pack
+stays on the machine for everyone else, and it simply stops being set up for you.
+<code>w-pack setup &lt;pack&gt;</code> brings it back whenever you want.</p>
+<p>To put a pack's configuration back to the W default <strong>without removing it</strong>, use
+<code>w-reset &lt;pack&gt;</code> — it restores from the pack's own files, backing up your current
+copies first, and needs no administrator rights for your own home. The pre-install
+snapshot is also still in the boot menu if you would rather rewind everything.</p>
+<h2 id="keeping-packs-current">Keeping packs current <a class="anchor" href="#keeping-packs-current" aria-hidden="true">#</a></h2>
+<p>When a W update changes a pack you already have, it is re-applied for you — the
+configuration, theming and setup step, without touching packages. There is
+nothing to do by hand. If a pack's configuration ever looks stale, <code>sudo w-pack refresh</code> does that pass on demand; it works offline and takes seconds.</p>
+<p>Some packs install their main program from its own project rather than as a
+system package — the AI engines <strong>comfyui</strong> and <strong>invokeai</strong> are the two. A
+system update never touches them, on purpose: an engine update downloads
+gigabytes and can change how a working setup behaves, so it happens only when
+you ask for it.</p>
+<pre><code><span class="w">w-pack</span> outdated                 <span class="c"># which engines have a newer release</span>
+sudo <span class="w">w-pack</span> upgrade comfyui     <span class="c"># show the plan, ask, then upgrade</span></code></pre>
+<p><code>upgrade</code> waits for nothing to be generating, stops the engine, keeps a way back,
+installs the new release and checks that it starts and answers. If it does not,
+the previous version is put back by itself. The engine ends up running or
+stopped, just as it was. Your models, images and settings are not touched.</p>
+<p>To stay on one release — or to go back to an older one — name it, then upgrade:</p>
+<pre><code>sudo <span class="w">w-conf</span> set comfyui VERSION 0.37.2
+sudo <span class="w">w-pack</span> upgrade comfyui</code></pre>
+<p><code>VERSION=latest</code> (the default) follows the newest stable release again. Custom
+nodes in ComfyUI are updated from its own web interface (<strong>Manager → Update
+All</strong>), not by <code>w-pack upgrade</code>.</p>
+<p>You do not have to remember to look. W checks for a new engine release every few
+hours and tells you without mixing it into the system update count: <strong>Hub →
+Packs</strong> shows the version change on the pack's row with an <strong>Update</strong> button
+(it opens the same <code>sudo w-pack upgrade</code> in a terminal), <code>w-update status</code> lists
+it, and <code>w-update</code> mentions it at the end of a system upgrade. The assistant can
+run the upgrade too — it shows you the plan and waits for your yes first.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="../recovery.html"><small>Previous</small>Recovery — when W will not boot, or boots wrong</a><a class="next" href="ai.html"><small>Next</small>The AI assistant</a></nav>
+  </main>
+  <aside class="toc"><h2>On this page</h2><ul><li><a href="#what-is-on-offer">What is on offer</a></li><li><a href="#installing-and-setting-up-for-your-account">Installing, and setting up for your account</a></li><li><a href="#removing-a-pack">Removing a pack</a></li><li><a href="#keeping-packs-current">Keeping packs current</a></li></ul></aside>
+</div>
+</body>
+</html>

@@ -1,0 +1,540 @@
+#!/usr/bin/env python3
+# w-docs-site — W Linux DEV tool: render the user documentation tree into the
+# documentation SITE — plain HTML + one stylesheet + one script, no framework.
+#
+# ONE SOURCE, TWO PRODUCTS. The Markdown tree (rootfs/usr/share/doc/w) stays the
+# only place documentation is written: the AI layer reads it, GitHub renders it,
+# the Hub's "?" card shows it, w-docs-check anchors it to the library. This tool
+# turns the same tree into a navigable site, committed next to it as
+# rootfs/usr/share/doc/w/html/ — the offline copy every W machine carries (the
+# Help window opens it) and the base of the published site.
+#
+# Committed, not built on the machine — the idiom of w-docs-refgen/w-i18n-gen:
+# the machine needs no renderer, and what reaches it is byte-for-byte what the
+# check suite saw. `--check` renders in memory and diffs against the committed
+# tree, so a hand-edit of the HTML or a docs change without a re-render is red.
+#
+# THE OUTPUT MUST WORK FROM file://. Firefox gives every file:// document its
+# own origin, so nothing here may fetch(): the search index is a <script> that
+# sets a global, every link is relative, and nothing loads from the network.
+#
+# Inputs:
+#   rootfs/usr/share/doc/w/**.md   pages (frontmatter: title/section/order/
+#                                  summary; guides add category:); <lang>/ is a
+#                                  translation, a missing page falls back to EN
+#   RECOVERY.md / RECOVERY.<lang>.md   the standalone recovery page
+#   rootfs/usr/share/w/hotkeys/catalog.tokens + i18n/shell.json
+#                                  → the generated "Keyboard shortcuts" page
+#                                    (the Hub's own labels and defaults)
+#   i18n/site.json                 the site chrome's strings
+#   site/template.html, site/assets/   layout, style.css, site.js
+#
+# Heading ids use core/DocsViewer.slug()'s algorithm (the docs suite keeps it
+# equal to GitHub's for this tree), so every Hub `help:` anchor is a real id
+# here too; a translated page also carries its frontmatter `anchors:` EN slugs
+# as aliases, so one deep-link works in every language.
+#
+# TWO TARGETS. `offline` is html/ above. `web` is the documentation half of the
+# public site: the same pages, with the index at docs.html (the site's landing
+# page owns <lang>/index.html), an "Edit on GitHub" link, and the web chrome
+# (top navigation, footer, extra stylesheet) left to a `chrome` callback. The
+# rest of the site — landing, download, changelog — lives in its own repository
+# (w-linux-website, so its images never enter the history every W machine
+# clones) and builds on this file as a library: Site("web", chrome) renders the
+# docs, .md() renders any other Markdown of this repository with the same link
+# rules, .page() lays a page out in the same template, .verify() checks that
+# every relative link and #anchor of the whole output resolves. That is the
+# contract between the repositories; `--target web` exercises it in check.sh.
+#
+# Modes:
+#   w-docs-site                        (re)write rootfs/usr/share/doc/w/html
+#   w-docs-site --check                render in memory, diff against the committed tree
+#   w-docs-site --target web --out D   write the docs half of the public site to D
+#
+# Every mode verifies the links of what it renders; a dangling one is fatal.
+#
+# DEV-ONLY: lives in devtools/, needs python-markdown-it-py, never ships.
+import html
+import json
+import os
+import posixpath
+import re
+import shutil
+import sys
+from pathlib import Path
+from string import Template
+from urllib.parse import unquote
+
+from markdown_it import MarkdownIt
+
+CATS = ["start", "desktop", "system", "apps", "ai", "reference"]
+MODS = {"SUPER": "Super", "SHIFT": "Shift", "CTRL": "Ctrl", "CONTROL": "Ctrl", "ALT": "Alt"}
+
+
+def find_root():
+    d = Path(__file__).resolve().parent
+    while d != d.parent:
+        if (d / "rootfs/usr/share/doc/w").is_dir() and (d / "site/template.html").is_file():
+            return d
+        d = d.parent
+    sys.exit("w-docs-site: repository root not found")
+
+
+ROOT = find_root()
+DOCS = ROOT / "rootfs/usr/share/doc/w"
+OUT = DOCS / "html"
+STRINGS = json.loads((ROOT / "i18n/site.json").read_text())
+SHELL = json.loads((ROOT / "i18n/shell.json").read_text())
+LANGS = ["en"] + sorted(d.name for d in DOCS.iterdir()
+                        if re.fullmatch(r"[a-z]{2}", d.name) and (d / "index.md").is_file())
+OS_RELEASE = dict(re.findall(r'^(\w+)="?([^"\n]*)"?$', (ROOT / "rootfs/etc/os-release").read_text(), re.MULTILINE))
+REPO_URL = OS_RELEASE["HOME_URL"]
+# Root documents that are also pages of the docs tree, byte for byte (paths.sh).
+ALIASES = {"RECOVERY.md": ("RECOVERY.md", "en"), "docs/ru/RECOVERY.md": ("RECOVERY.md", "ru")}
+
+
+def t(key, lang, src=STRINGS):
+    v = src[key]
+    return v.get(lang) or v["en"]
+
+
+def slug(text):
+    """core/DocsViewer.slug(): lowercase, ASCII punctuation dropped, spaces → '-'."""
+    return re.sub(r" +", "-", re.sub(r"[!-/:-@\[-`{-~]", "", text.lower()).strip())
+
+
+def frontmatter(text):
+    """The tree's frontmatter subset: `key: value`, plus one level of `  a: b`
+    under a bare `key:` (anchors:). List items (sources:) are not needed here."""
+    m = re.match(r"---[ \t]*\n(.*?)\n---[ \t]*\n?", text, re.DOTALL)
+    if not m:
+        return {}, text
+    meta, cur = {}, None
+    for line in m.group(1).splitlines():
+        if not line.startswith(" "):
+            k, _, v = line.partition(":")
+            cur, meta[k.strip()] = k.strip(), v.strip() or {}
+        elif isinstance(meta.get(cur), dict) and not line.strip().startswith("-"):
+            k, _, v = line.strip().partition(":")
+            meta[cur][k.strip()] = v.strip()
+    return meta, text[m.end():]
+
+
+# ── Pages ─────────────────────────────────────────────────────────────────────
+class Page:
+    """One page in one language. `key` is the lang-neutral EN source path
+    ("guide/ai.md"); `url` is the output path under the language root."""
+
+    def __init__(self, key, lang, url, title, summary, cat, order, body="", html_body=None,
+                 translated=True, anchors=None, src=None):
+        self.key, self.lang, self.url, self.title, self.summary = key, lang, url, title, summary
+        self.cat, self.order, self.body, self.html_body = cat, order, body, html_body
+        self.translated, self.anchors, self.src = translated, anchors or {}, src
+
+
+def source_of(key, lang):
+    if key == "RECOVERY.md":
+        p = DOCS / ("RECOVERY.md" if lang == "en" else f"RECOVERY.{lang}.md")
+    else:
+        p = DOCS / key if lang == "en" else DOCS / lang / key
+    return p if p.is_file() else None
+
+
+def md_page(key, lang, web=False):
+    src = source_of(key, lang) or source_of(key, "en")
+    meta, body = frontmatter(src.read_text())
+    if key == "RECOVERY.md":
+        # A standalone page: its H1 is the title, and its language line under
+        # the H1 is the site's job (the header switcher) — both come off.
+        h1, body = re.match(r"# ([^\n]+)\n+(.*)", body, re.DOTALL).groups()
+        body = re.sub(r"\A(\*\*English\*\*|\[English\]).*?\n\n", "", body, flags=re.DOTALL)
+        meta = {"title": h1, "summary": "", "section": "guide", "category": "system", "order": "99"}
+    sec = meta["section"]
+    cat = meta.get("category") if sec == "guide" else sec
+    url = ("recovery.html" if key == "RECOVERY.md" else "docs.html" if web and key == "index.md"
+           else key[:-3] + ".html")
+    return Page(key, lang, url, meta["title"], meta.get("summary", ""), cat, float(meta["order"]),
+                body=body, translated=src == source_of(key, lang),
+                anchors=meta.get("anchors") or {}, src=src)
+
+
+def en_keys():
+    keys = [p.relative_to(DOCS).as_posix() for p in DOCS.rglob("*.md")
+            if p.parts[len(DOCS.parts)] not in LANGS[1:] + ["html"] and not p.name.startswith("RECOVERY")]
+    return sorted(keys) + ["RECOVERY.md"]
+
+
+# ── Markdown → HTML ───────────────────────────────────────────────────────────
+HL = re.compile(r"(?P<c>(?<!\S)#.*$)|(?P<s>(?<!\w)(['\"])(?:(?!\3).)*\3)"
+                r"|(?P<f>(?<![\w-])--?[A-Za-z][\w-]*)|(?P<w>\bw-[a-z][a-z0-9-]*)")
+
+
+def highlight(code):
+    """The card's shell highlight (core/Markdown.qml): comment, quoted string,
+    flag, `w-*` command — one pass, per line, a quote never crosses a line."""
+    out = []
+    for line in code.split("\n"):
+        pos, parts = 0, []
+        for m in HL.finditer(line):
+            kind = next(k for k in "csfw" if m.group(k))
+            parts += [html.escape(line[pos:m.start()]),
+                      f'<span class="{kind}">{html.escape(m.group(0))}</span>']
+            pos = m.end()
+        out.append("".join(parts) + html.escape(line[pos:]))
+    return "\n".join(out)
+
+
+def make_md():
+    md = MarkdownIt("commonmark", {"html": True}).enable(["table", "strikethrough"])
+
+    def fence(self, tokens, idx, options, env):
+        return f"<pre><code>{highlight(tokens[idx].content.rstrip(chr(10)))}</code></pre>\n"
+
+    def heading_open(self, tokens, idx, options, env):
+        tok = tokens[idx]
+        hid = tok.attrGet("id")
+        return f'<{tok.tag} id="{html.escape(hid)}">' if hid else f"<{tok.tag}>"
+
+    def heading_close(self, tokens, idx, options, env):
+        tok, hid = tokens[idx], tokens[idx - 2].attrGet("id")
+        mark = (f' <a class="anchor" href="#{html.escape(hid)}" aria-hidden="true">#</a>'
+                if hid and tok.tag in ("h2", "h3") else "")
+        return f"{mark}</{tok.tag}>\n"
+
+    md.add_render_rule("fence", fence)
+    md.add_render_rule("code_block", fence)
+    md.add_render_rule("heading_open", heading_open)
+    md.add_render_rule("heading_close", heading_close)
+    return md
+
+
+MD = make_md()
+
+
+def inline_text(tok):
+    return "".join(" " if c.type in ("softbreak", "hardbreak") else c.content
+                   for c in tok.children or [] if c.type in ("text", "code_inline", "softbreak", "hardbreak"))
+
+
+def render(page, pages, extra=None):
+    """Body HTML + the page's TOC and search entries. Links to other pages are
+    resolved against the SOURCE tree and re-pointed at their output files.
+    `extra` is set for Markdown from outside the docs tree (Site.md)."""
+    tokens = MD.parse(page.body)
+    seen, toc, entries = {}, [], []
+    sect = {"h": "", "u": page.url, "x": []}
+    out_dir = (OUT / page.lang / page.url).parent
+
+    def flush():
+        if sect["x"] or sect["h"]:
+            entries.append({"t": page.title, "h": sect["h"], "u": sect["u"],
+                            "x": re.sub(r"\s+", " ", " ".join(sect["x"])).strip()[:1200]})
+
+    for i, tok in enumerate(tokens):
+        if tok.type == "heading_open" and tok.tag != "h1":
+            raw = tokens[i + 1].content
+            s = slug(raw)
+            n = seen.get(s, 0)
+            seen[s] = n + 1
+            hid = s if n == 0 else f"{s}-{n}"
+            tok.attrSet("id", hid)
+            text = inline_text(tokens[i + 1])
+            if tok.tag in ("h2", "h3"):
+                toc.append((tok.tag, hid, text))
+                flush()
+                sect = {"h": text, "u": f"{page.url}#{hid}", "x": []}
+        elif tok.type == "inline":
+            if tokens[i - 1].type != "heading_open":
+                sect["x"].append(inline_text(tok))
+            kids = tok.children or []
+            for j, c in enumerate(kids):
+                if c.type != "link_open":
+                    continue
+                href, dest = link(c.attrGet("href"), page, pages, out_dir, c, extra)
+                c.attrSet("href", href)
+                # A bare file name as link text ("RECOVERY.md") is right on GitHub
+                # and in the card, but on the site the reader is not browsing
+                # files: show the page's short title ("Recovery") instead.
+                text = kids[j + 1] if j + 1 < len(kids) else None
+                if dest and text and text.type == "text" and re.fullmatch(r"[\w.-]+\.md", text.content):
+                    text.content = dest.title.split(" — ")[0]
+        elif tok.type in ("fence", "code_block"):
+            sect["x"].append(tok.content)
+    flush()
+
+    body = MD.renderer.render(tokens, MD.options, {})
+    body = body.replace("<table>", '<div class="table"><table>').replace("</table>", "</table></div>")
+    for en, local in page.anchors.items():
+        body = re.sub(rf'(<h\d id="{re.escape(local)}">)', rf'<span id="{en}"></span>\1', body, count=1)
+    return body, toc, entries
+
+
+def link(href, page, pages, out_dir, tok, extra=None):
+    """A docs-tree page may link only inside the tree. Other Markdown (extra is
+    not None) may also link its repository: a path `extra` maps to a site page
+    ({"CHANGELOG.md": ("changelog.html", "en")}) goes there, a root document
+    that is a docs page too (ALIASES) goes to that page, any other existing
+    file to its GitHub view."""
+    if re.match(r"[a-z]+:", href):
+        if href.startswith("http"):
+            tok.attrSet("class", "ext")
+        return href, None
+    if href.startswith("#") or not href:
+        return href, None
+    path, _, frag = href.partition("#")
+    target = (page.src.parent / path).resolve()
+    frag = f"#{frag}" if frag else ""
+    try:
+        rel = target.relative_to(DOCS).as_posix()
+    except ValueError:
+        repo = target.relative_to(ROOT).as_posix() if target.is_relative_to(ROOT) else None
+        if extra is None or not repo or not target.exists():
+            sys.exit(f"w-docs-site: {page.src}: link '{href}' leaves the docs tree")
+        if repo in extra:
+            url, lang = extra[repo]
+            return os.path.relpath(OUT / lang / url, out_dir) + frag, None
+        if repo not in ALIASES:
+            tok.attrSet("class", "ext")
+            return f"{REPO_URL}/{'tree' if target.is_dir() else 'blob'}/main/{repo}{frag}", None
+        rel = "RECOVERY.md" if ALIASES[repo][1] == "en" else f"RECOVERY.{ALIASES[repo][1]}.md"
+    lang, key = "en", rel
+    if rel.split("/")[0] in LANGS[1:]:
+        lang, key = rel.split("/", 1)
+    if m := re.fullmatch(r"RECOVERY(?:\.([a-z]{2}))?\.md", key):
+        lang, key = m.group(1) or "en", "RECOVERY.md"
+    if target.is_dir():   # reference/ — the directory's own (generated) index page
+        return os.path.relpath(OUT / lang / key / "index.html", out_dir) + frag, None
+    if not key.endswith(".md"):
+        return href, None
+    dest = pages.get((key, lang))
+    if not dest:
+        sys.exit(f"w-docs-site: {page.src}: link '{href}' has no page")
+    return os.path.relpath(OUT / lang / dest.url, out_dir) + frag, dest
+
+
+# ── Generated pages ───────────────────────────────────────────────────────────
+def hotkeys_page(lang):
+    rows, cats = [], {}
+    for line in (ROOT / "rootfs/usr/share/w/hotkeys/catalog.tokens").read_text().splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        token, cat, chord = line.split("\t")[0], line.split("\t")[1], line.split("\t")[-1]
+        cats.setdefault(cat, []).append((token, chord))
+    entries = []
+    for cat, items in cats.items():
+        title = t(f"hotkeys.cat.{cat}", lang, SHELL)
+        rows.append(f'<h2 id="{slug(title)}">{html.escape(title)}'
+                    f' <a class="anchor" href="#{slug(title)}" aria-hidden="true">#</a></h2>\n'
+                    f'<div class="table"><table><thead><tr><th>{t("page.hotkeys.action", lang)}</th>'
+                    f'<th>{t("page.hotkeys.keys", lang)}</th></tr></thead><tbody>')
+        labels = []
+        for token, chord in items:
+            m = re.fullmatch(r"(move_ws|ws)_(\d+)", token)
+            label = (t(f"hotkeys.{m.group(1)}", lang, SHELL).replace("%n%", m.group(2)) if m
+                     else t(f"hotkeys.{token}", lang, SHELL))
+            keys = " + ".join(f"<kbd>{html.escape(MODS.get(k, k))}</kbd>" for k in chord.split(" + "))
+            rows.append(f"<tr><td>{html.escape(label)}</td><td>{keys}</td></tr>")
+            labels.append(f"{label} {chord}")
+        rows.append("</tbody></table></div>")
+        entries.append({"t": t("page.hotkeys.title", lang), "h": title,
+                        "u": f"hotkeys.html#{slug(title)}", "x": "; ".join(labels)})
+    body = MD.render(t("page.hotkeys.intro", lang)) + "\n".join(rows) + "\n"
+    toc = [("h2", slug(t(f"hotkeys.cat.{c}", lang, SHELL)), t(f"hotkeys.cat.{c}", lang, SHELL)) for c in cats]
+    return Page("hotkeys", lang, "hotkeys.html", t("page.hotkeys.title", lang),
+                t("page.hotkeys.summary", lang), "start", 1.5, html_body=(body, toc, entries))
+
+
+def commands_page(lang, refs):
+    items = "".join(f'<dt><a href="{os.path.relpath(r.url, "reference")}">{html.escape(r.title)}</a></dt>'
+                    f"<dd>{html.escape(r.summary)}</dd>" for r in refs)
+    body = MD.render(t("page.commands.intro", lang)) + f'<dl class="cmds">{items}</dl>\n'
+    return Page("reference/index", lang, "reference/index.html", t("page.commands.title", lang),
+                t("page.commands.summary", lang), "reference", 0,
+                html_body=(body, [], [{"t": t("page.commands.title", lang), "h": "", "u": "reference/index.html",
+                                       "x": " ".join(r.title for r in refs)}]))
+
+
+# ── Assembly ──────────────────────────────────────────────────────────────────
+def nav_html(page, lang_pages, commands, refs):
+    here = (OUT / page.lang / page.url).parent
+    a = (lambda p: f'<a href="{os.path.relpath(OUT / p.lang / p.url, here)}"'
+         f'{" aria-current=\"page\"" if p is page else ""}>{html.escape(p.title)}</a>')
+    out = []
+    for cat in CATS:
+        items = sorted((p for p in lang_pages if p.cat == cat and p not in refs), key=lambda p: p.order)
+        if not items:
+            continue
+        lis = []
+        for p in items:
+            sub = ("<ul>" + "".join(f"<li>{a(r)}</li>" for r in refs) + "</ul>"
+                   if p is commands and (page is commands or page in refs) else "")
+            lis.append(f"<li>{a(p)}{sub}</li>")
+        out.append(f"<h2>{t(f'nav.cat.{cat}', page.lang)}</h2><ul>{''.join(lis)}</ul>")
+    return "".join(out)
+
+
+class Site:
+    """The rendered site as {path: bytes}, paths relative to its root."""
+
+    def __init__(self, target="offline", chrome=None):
+        self.web = target == "web"
+        # chrome(lang, root, url) → {"head", "topnav", "foot"}: web-only HTML put
+        # in the template's slots; `root` is the page's relative path to the site.
+        self.chrome = chrome or (lambda lang, root, url: {})
+        self.tpl = Template((ROOT / "site/template.html").read_text())
+        self.files = {}
+        for asset in sorted((ROOT / "site/assets").iterdir()):
+            self.files[f"assets/{asset.name}"] = asset.read_bytes()
+        self.files["assets/logo.svg"] = (ROOT / "rootfs/etc/w/themes/w/logo/W-logo.svg").read_bytes()
+
+        self.pages = {(k, lang): md_page(k, lang, self.web) for k in en_keys() for lang in LANGS}
+        for lang in LANGS:
+            self._docs(lang)
+
+        # The site root: pick the reader's language. The Help window and every link
+        # go straight to <lang>/, so this only serves someone opening html/ itself.
+        self.files["index.html"] = redirect("en/index.html", LANGS)
+        if self.web:
+            # The landing page's place; a site without one lands on the docs.
+            for lang in LANGS:
+                self.files[f"{lang}/index.html"] = redirect("docs.html")
+
+    def _docs(self, lang):
+        pages = self.pages
+        refs = sorted((p for (k, lg), p in pages.items() if lg == lang and p.cat == "reference"),
+                      key=lambda p: p.title)
+        commands = commands_page(lang, refs)
+        lang_pages = [p for (k, lg), p in pages.items() if lg == lang] + [hotkeys_page(lang), commands]
+        flat = []
+        for cat in CATS:
+            for p in sorted((p for p in lang_pages if p.cat == cat and p not in refs), key=lambda p: p.order):
+                flat.append(p)
+                if p is commands:
+                    flat += refs
+        search = []
+        for i, p in enumerate(flat):
+            body, toc, entries = p.html_body or render(p, pages)
+            search += entries
+            here = (OUT / lang / p.url).parent
+
+            def rel(q, here=here):
+                return os.path.relpath(OUT / q.lang / q.url, here)
+
+            pager = "".join(
+                f'<a class="{cls}" href="{rel(q)}"><small>{t(f"ui.{cls}", lang)}</small>{html.escape(q.title)}</a>'
+                for cls, q in (("prev", flat[i - 1] if i else None),
+                               ("next", flat[i + 1] if i + 1 < len(flat) else None)) if q)
+            # Generated pages have no source worth editing (reference/ is rewritten
+            # from the commands' help text), so only Markdown pages get the link.
+            edit = p.src.relative_to(ROOT).as_posix() if p.src and p.key.split("/")[0] != "reference" else None
+            self.page(lang, p.url, p.title, body, summary=p.summary, toc=toc, pager=pager, edit=edit,
+                      nav=nav_html(p, lang_pages, commands, refs),
+                      notice="" if p.translated else f'<p class="notice">{t("ui.untranslated", lang)}</p>\n')
+        self.files[f"{lang}/search-index.js"] = (
+            "window.W_SEARCH=" + json.dumps(search, ensure_ascii=False, separators=(",", ":")) + ";\n").encode()
+
+    def page(self, lang, url, title, body, *, summary="", toc=(), nav="", pager="", notice="",
+             langs=LANGS, edit=None):
+        """Lay one page out in the site template: <lang>/<url>. `langs` are the
+        languages the page exists in (the header switcher), `edit` its source
+        path in this repository (the web's "Edit on GitHub")."""
+        here = (OUT / lang / url).parent
+        root = os.path.relpath(OUT, here)
+        chrome = self.chrome(lang, root, url) if self.web else {}
+        toc_html = ("" if len(toc) < 2 else f"<h2>{t('ui.toc', lang)}</h2><ul>" + "".join(
+            f'<li><a href="#{hid}"{" class=\"sub\"" if tag == "h3" else ""}>{html.escape(text)}</a></li>'
+            for tag, hid, text in toc) + "</ul>")
+        switch = "".join(
+            f"<b>{lg}</b>" if lg == lang else
+            f'<a href="{os.path.relpath(OUT / lg / url, here)}" hreflang="{lg}">{lg}</a>' for lg in langs)
+        edit_html = (f'<p class="edit"><a class="ext" href="{REPO_URL}/edit/main/{edit}">{t("ui.edit", lang)}</a></p>\n'
+                     if self.web and edit else "")
+        self.files[f"{lang}/{url}"] = self.tpl.substitute(
+            lang=lang, root=root, title=html.escape(title),
+            summary=html.escape(summary, quote=True), site_name=t("site.name", lang),
+            site_docs=t("site.docs", lang), ui_menu=t("ui.menu", lang), ui_search=t("ui.search", lang),
+            ui_search_hint=t("ui.searchHint", lang), ui_no_results=t("ui.noResults", lang),
+            langs=switch, nav=nav, toc=toc_html, pager=pager, body=body, notice=notice,
+            html_attr=f' class="web{"" if nav else " solo"}"' if self.web else "", edit=edit_html,
+            head=chrome.get("head", ""), topnav=chrome.get("topnav", ""), foot=chrome.get("foot", ""),
+        ).encode()
+
+    def md(self, text, src, lang, url, links=None):
+        """Markdown from elsewhere in the repository (README, CHANGELOG…) for the
+        page <lang>/<url> → (body HTML, TOC). Links resolve against `src`, the
+        file it came from: into the docs tree, to `links` ({repo path: (url,
+        lang)}), or out to GitHub."""
+        p = Page(None, lang, url, "", "", None, 0, body=text, src=(ROOT / src).resolve())
+        body, toc, _ = render(p, self.pages, links or {})
+        return body, toc
+
+    def verify(self):
+        """Every relative href/src of every page names a file of the output, and
+        its #fragment an id there; nothing is site-root or protocol-relative —
+        the site has to work from file:// and under any domain or sub-path."""
+        bad, text = [], {f: d.decode() for f, d in self.files.items() if f.endswith(".html")}
+        for f, page in text.items():
+            for u in re.findall(r'\s(?:href|src)="([^"]*)"', page):
+                u = html.unescape(u)
+                if re.match(r"[a-z][a-z0-9+.-]*:", u):
+                    continue
+                if u.startswith("/"):
+                    bad.append(f"{f}: '{u}' is site-root or protocol-relative")
+                    continue
+                path, _, frag = u.partition("#")
+                target = posixpath.normpath(posixpath.join(posixpath.dirname(f), unquote(path))) if path else f
+                if target not in self.files:
+                    bad.append(f"{f}: '{u}' — no such file")
+                elif frag and target in text and f' id="{unquote(frag)}"' not in text[target]:
+                    bad.append(f"{f}: '{u}' — no such anchor")
+        return bad
+
+
+def redirect(to, langs=None):
+    """A page that only forwards: to `to`, or — given `langs` — to the reader's
+    language (to's first path segment swapped for it)."""
+    pick = "" if not langs else (
+        f"<script>var l={json.dumps(langs)},n=(navigator.languages||[navigator.language]).map(function(x){{"
+        "return x.slice(0,2)}).filter(function(x){return l.indexOf(x)>=0})[0]||\"en\";"
+        f"location.replace(n+\"/{to.split('/', 1)[1]}\")</script>\n")
+    return ('<!doctype html><meta charset="utf-8"><title>W Linux</title>\n'
+            f'<meta http-equiv="refresh" content="{1 if langs else 0}; url={to}">\n{pick}').encode()
+
+
+def write(files, out):
+    shutil.rmtree(out, ignore_errors=True)
+    for rel, data in files.items():
+        (out / rel).parent.mkdir(parents=True, exist_ok=True)
+        (out / rel).write_bytes(data)
+
+
+def main():
+    args = sys.argv[1:]
+    if args[:1] in (["-h"], ["--help"]):
+        lines = Path(__file__).read_text().splitlines()
+        print("\n".join(l[2:] for l in lines[1:lines.index("import html")]))
+        return 0
+    web = args[:2] == ["--target", "web"] and len(args) == 4 and args[2] == "--out"
+    if not web and args not in ([], ["--check"]):
+        print(f"w-docs-site: unknown arguments: {' '.join(args)} (see --help)", file=sys.stderr)
+        return 2
+    site = Site("web" if web else "offline")
+    if bad := site.verify():
+        print("\n".join(f"  {b}" for b in bad), file=sys.stderr)
+        return 1
+    files = site.files
+    if args == ["--check"]:
+        have = {p.relative_to(OUT).as_posix() for p in OUT.rglob("*") if p.is_file()} if OUT.is_dir() else set()
+        bad = sorted(set(files) ^ have) + sorted(
+            f for f in set(files) & have if (OUT / f).read_bytes() != files[f])
+        for f in bad:
+            print(f"  html/{f}: stale (run w-docs-site)")
+        return 1 if bad else 0
+    out = Path(args[3]).resolve() if web else OUT
+    write(files, out)
+    print(f"w-docs-site: {sum(f.endswith('.html') for f in files)} pages → {out}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

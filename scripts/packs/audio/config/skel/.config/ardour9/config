@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Ardour>
+  <Config>
+    <Option name="discover-plugins-on-start" value="1"/>
+  </Config>
+  <Extra>
+    <AudioMIDISetup>
+      <EngineStates>
+        <State backend="JACK/Pipewire" driver="" device="" input-device="" output-device="" sample-rate="48000" buffer-size="256" n-periods="2" input-latency="0" output-latency="0" lm-input="" lm-output="" active="1" use-buffered-io="0" midi-option="" lru="0"/>
+      </EngineStates>
+    </AudioMIDISetup>
+  </Extra>
+</Ardour>

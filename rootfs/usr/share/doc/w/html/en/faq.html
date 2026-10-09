@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FAQ · W Linux</title>
+<meta name="description" content="Short answers to common questions.">
+<link rel="icon" href="../assets/logo.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../en/search-index.js" defer></script>
+<script src="../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Menu" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../en/index.html"><img src="../assets/logo.svg" alt="W Linux"><span>Documentation</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Search the docs" aria-label="Search" autocomplete="off" spellcheck="false" data-empty="Nothing found">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><b>en</b><a href="../ru/faq.html" hreflang="ru">ru</a></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Getting started</h2><ul><li><a href="index.html">W Linux documentation</a></li><li><a href="hotkeys.html">Keyboard shortcuts</a></li><li><a href="faq.html" aria-current="page">FAQ</a></li></ul><h2>Desktop</h2><ul><li><a href="guide/theming.html">Themes and wallpapers</a></li><li><a href="guide/desktop.html">The desktop</a></li><li><a href="guide/displays.html">Displays and night light</a></li><li><a href="guide/input.html">Keyboard, mouse and touchpad</a></li></ul><h2>System</h2><ul><li><a href="guide/updates.html">Keeping W up to date</a></li><li><a href="guide/security.html">Security</a></li><li><a href="guide/network.html">Network, DNS and the firewall</a></li><li><a href="guide/power.html">Power and battery</a></li><li><a href="recovery.html">Recovery — when W will not boot, or boots wrong</a></li></ul><h2>Software</h2><ul><li><a href="guide/packs.html">Packs — optional software bundles</a></li></ul><h2>AI</h2><ul><li><a href="guide/ai.html">The AI assistant</a></li></ul><h2>Reference</h2><ul><li><a href="reference/index.html">Commands</a></li></ul></nav>
+  <main>
+    <article>
+      <h1>FAQ</h1>
+      <p>I keep this curated by re-reviewing it at each W release. Where a question
+needs detail, the answer links to a guide or a recovery page instead of
+duplicating it.</p>
+<h2 id="general">General <a class="anchor" href="#general" aria-hidden="true">#</a></h2>
+<p><strong>What is W?</strong>
+An Arch Linux distribution with a ready Hyprland/Quickshell desktop, W's own
+<code>w-*</code> tools for the parts a desktop needs (updates, themes, network, security,
+recovery), and automatic snapshots. See <code>w-info</code> for the tool list.</p>
+<p><strong>Where are the configuration files?</strong>
+W-managed ones live in <code>/usr/share/w/defaults</code> (vendor), <code>/etc/w</code> (machine),
+<code>~/.config/w</code> (user). Overriding to taste is normal — resetting to the W
+defaults is one command per area: see <code>w-reset</code>.</p>
+<p><strong>How do I find what a <code>w-*</code> command does?</strong>
+<code>w-info</code> lists them; <code>w-&lt;tool&gt; help</code> prints each tool's help; the command
+reference of this documentation has a page per tool.</p>
+<h2 id="updates-and-recovery">Updates and recovery <a class="anchor" href="#updates-and-recovery" aria-hidden="true">#</a></h2>
+<p><strong>An update broke my system. How do I roll back?</strong>
+Reboot, pick the pre-upgrade snapshot in the boot menu, and follow
+<a href="recovery.html">Recovery</a> (a copy is on disk). Snapper keeps the last few
+transactions.</p>
+<p><strong>Why does an update say &quot;reboot pending&quot;?</strong>
+The running kernel differs from the installed one. The reboot offered by
+<code>w-update</code> closes windows gracefully first — cancel a save dialog and the
+reboot is called off.</p>
+<p><strong>What is <code>w-sync</code> / the &quot;edge&quot; channel?</strong>
+W updates its <em>packages</em> with <code>w-update</code> and its own configuration with the
+edge channel (<code>w-sync</code>). The stable channel is planned but not live yet.</p>
+<h2 id="desktop">Desktop <a class="anchor" href="#desktop" aria-hidden="true">#</a></h2>
+<p><strong>My screen is black / a monitor died after I changed display settings.</strong>
+W guards against losing the last enabled output, and if something slips
+through, <code>w-monitor reset --all</code> from a text console (Ctrl+Alt+F2) puts sane
+defaults back. Details in
+<a href="guide/displays.html#a-black-screen-after-a-display-change">the displays guide</a>
+and <a href="recovery.html">Recovery</a>.</p>
+<p><strong>The fingerprint reader stopped unlocking.</strong>
+Re-enroll the finger with <code>w-fingerprint</code> (or <strong>Hub → Input → Fingerprint</strong>);
+the traditional password always works as the fallback.</p>
+<p><strong>A window I closed keeps coming back after I log in.</strong>
+That is session restore, on by default. Turn it off or exclude the app in
+<strong>Hub → System → Session</strong>; see <a href="guide/desktop.html">the desktop guide</a>.</p>
+<p><strong>Why does my laptop suspend later than the time I set?</strong>
+The three idle timers are a chain, not three stopwatches: the screen goes off so
+long <em>after the lock</em>, and suspend so long <em>after the screen goes off</em>. Each row
+in <strong>Hub → Power</strong> shows the resulting absolute time underneath it — see
+<a href="guide/power.html#idle-lock-then-screen-off-then-suspend">the power guide</a>.</p>
+<h2 id="software">Software <a class="anchor" href="#software" aria-hidden="true">#</a></h2>
+<p><strong>How do I install something not in my list?</strong>
+<code>yay</code> covers the repositories and the AUR; sandboxed third-party apps come from
+Flatpak/Bazaar, which is the optional <code>flatpak</code> bundle (<code>sudo w-pack install flatpak</code>). Anything installed this way snapshots like an update does.</p>
+<p><strong>A pack says it is on the machine but not set up for me.</strong>
+A pack has a machine half (packages, installed once, needs an administrator) and
+a per-account half that is deliberately not done for everybody automatically.
+Press <strong>Set up</strong> in <strong>Hub → Packs</strong>, or run <code>w-pack setup &lt;name&gt;</code> — no password
+needed. See <a href="guide/packs.html#installing-and-setting-up-for-your-account">the packs guide</a>.</p>
+<p><strong>Is the AI assistant required, and does it need a paid account?</strong>
+Neither. Nothing in W depends on it, and it does nothing until you give it a
+model in <strong>Hub → AI</strong>. That can be a subscription you already have, an API key,
+or a model running locally on your own machine — see
+<a href="guide/ai.html">the AI guide</a>.</p>
+<p><strong>Where did <code>~/go</code> go? Why are <code>~/.cache/uv</code> and <code>~/.cache/go</code> not plain folders?</strong>
+W keeps toolchain caches in XDG places and out of home snapshots. Go's module
+and build caches live in <code>~/.cache/go</code>, <code>GOPATH</code> is <code>~/.local/share/go</code>, and
+<code>go install</code> puts binaries in <code>~/.local/bin</code> (on PATH). Such cache folders are
+nested btrfs subvolumes, so a rollback of your home never drags gigabytes of
+recoverable downloads along. A <code>~/go</code> left from before is stale — delete it if
+you like. The values come from <code>/etc/profile.d/w-go.sh</code> and apply at the next
+login; your own shell profile can override them.</p>
+<p><strong>Is AUR safe?</strong>
+It is third-party packaging, reviewed by you at the PKGBUILD prompt the same
+way any Arch user reviews it. W keeps boot-critical packages out of AUR where
+it matters.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="hotkeys.html"><small>Previous</small>Keyboard shortcuts</a><a class="next" href="guide/theming.html"><small>Next</small>Themes and wallpapers</a></nav>
+  </main>
+  <aside class="toc"><h2>On this page</h2><ul><li><a href="#general">General</a></li><li><a href="#updates-and-recovery">Updates and recovery</a></li><li><a href="#desktop">Desktop</a></li><li><a href="#software">Software</a></li></ul></aside>
+</div>
+</body>
+</html>

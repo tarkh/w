@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The desktop · W Linux</title>
+<meta name="description" content="Windows, workspaces, popups, notifications, screenshots and session restore.">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../en/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Menu" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../en/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Documentation</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Search the docs" aria-label="Search" autocomplete="off" spellcheck="false" data-empty="Nothing found">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><b>en</b><a href="../../ru/guide/desktop.html" hreflang="ru">ru</a></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Getting started</h2><ul><li><a href="../index.html">W Linux documentation</a></li><li><a href="../hotkeys.html">Keyboard shortcuts</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Desktop</h2><ul><li><a href="theming.html">Themes and wallpapers</a></li><li><a href="desktop.html" aria-current="page">The desktop</a></li><li><a href="displays.html">Displays and night light</a></li><li><a href="input.html">Keyboard, mouse and touchpad</a></li></ul><h2>System</h2><ul><li><a href="updates.html">Keeping W up to date</a></li><li><a href="security.html">Security</a></li><li><a href="network.html">Network, DNS and the firewall</a></li><li><a href="power.html">Power and battery</a></li><li><a href="../recovery.html">Recovery — when W will not boot, or boots wrong</a></li></ul><h2>Software</h2><ul><li><a href="packs.html">Packs — optional software bundles</a></li></ul><h2>AI</h2><ul><li><a href="ai.html">The AI assistant</a></li></ul><h2>Reference</h2><ul><li><a href="../reference/index.html">Commands</a></li></ul></nav>
+  <main>
+    <article>
+      <h1>The desktop</h1>
+      <p>W desktop = the Hyprland compositor with the Quickshell UI on top. Both are
+configured by W's theme; the tools you touch day to day are the ones below.</p>
+<h2 id="windows-and-workspaces">Windows and workspaces <a class="anchor" href="#windows-and-workspaces" aria-hidden="true">#</a></h2>
+<p>Hyprland is a tiling compositor: windows tile automatically, and dragging a
+window's titlebar into another turns them into a resizable split. The basics:</p>
+<ul>
+<li>Move focus with <kbd>Super+Arrow</kbd>, move windows with
+<kbd>Super+Shift+Arrow</kbd>, switch or move windows between the first ten
+workspaces with <kbd>Super+(Shift+)1..0</kbd>.</li>
+<li><strong>Window groups</strong>: <kbd>Super+G</kbd> groups two windows into a tabbed group
+(W styles the group's tab bar); <kbd>Super+Tab</kbd> cycles inside one.</li>
+<li><kbd>Super+F</kbd> / <kbd>Super+Shift+F</kbd> fullscreen (real and
+fake-fullscreen), <kbd>Super+M</kbd> maximize, <kbd>Super+Shift+Space</kbd>
+float/untile, <kbd>Super+Shift+C</kbd> center a floating window,
+<kbd>Super+P</kbd> pin it above everything.</li>
+<li><kbd>Super+R</kbd> resize mode, <kbd>Super+S</kbd> the scratchpad (a parked
+window you summon back on the current workspace).</li>
+<li><strong>Per-app window rules</strong> (always float this app, open it centred at a fixed
+size…) are drop-in files: W's own live in <code>/usr/share/w/hypr/rules.d/</code>, yours go
+in <code>~/.config/hypr/rules.d/&lt;app&gt;.lua</code> and win over W's for the same app —
+a file that calls <code>hl.window_rule({ match = { class = &quot;^(app)$&quot; }, float = true })</code>,
+then <code>hyprctl reload</code>.</li>
+<li><strong>Open / Save dialogs</strong> float and open at one size (1000x640). Resize one once
+and GTK apps keep that size everywhere. If every app's dialog suddenly opens
+full-height, reset the saved size: <code>gsettings reset org.gtk.Settings.FileChooser window-size</code>.</li>
+<li>The full, rebindable list lives in <strong>Hub → Hotkeys</strong>.</li>
+</ul>
+<h2 id="the-shell-surfaces">The shell surfaces <a class="anchor" href="#the-shell-surfaces" aria-hidden="true">#</a></h2>
+<ul>
+<li><strong>The bar</strong> at the top: workspaces, active window, tray, clock, and status
+blocks (updates, network, audio). Which blocks it shows — and on which
+monitor — is set in <strong>Hub → Appearance → Bar</strong>.</li>
+<li><strong>The launcher</strong> (<kbd>Super+D</kbd>) starts apps and carries W actions
+(lock, screenshot, screen recording, calendar).</li>
+<li><strong>The Hub</strong> (<kbd>Super+Space</kbd>) is the control center — see the other
+guides.</li>
+<li><strong>Clipboard history</strong> (<kbd>Super+V</kbd>) searches what you copied; entries
+persist across reboots.</li>
+<li><strong>Notifications</strong> appear in the top-right. A left click opens the source —
+it switches to the app's workspace, focuses its window (restoring it from the
+tray) and lets the app show the chat or tab; a right click dismisses one card,
+a middle click dismisses them all. <strong>Hub → Notifications</strong> (and the <code>w-notify</code>
+command) manage do-not-disturb and per-app muting.</li>
+<li><strong>Volume and brightness</strong> popups open from their keys; they show levels
+live like any desktop's OSD.</li>
+</ul>
+<h2 id="sessions-that-come-back">Sessions that come back <a class="anchor" href="#sessions-that-come-back" aria-hidden="true">#</a></h2>
+<p>When W's session memory is on (default for new installs), logging out — or
+locking for longer than the configured interval — parks your windows and
+brings back the same layout at the next login, including files open in the
+terminal. <strong>Hub → System → Session</strong> chooses: always restore, always start
+fresh, or off. <strong>Super+O</strong> saves or applies a named, reusable layout.</p>
+<p>Do-not-reopen apps (e.g. a password manager you want empty after every login)
+are excluded in the session settings; see <code>w-session</code> for the details.</p>
+<p>Window groups (tabbed windows) come back as groups, tabs in order. What is
+<em>inside</em> a window is each program's own memory: browser tabs return only if
+the browser restores them itself — in Firefox, <strong>Settings → Home and startup → &quot;Open
+previous windows and tabs&quot;</strong>; W does not switch that on for you.</p>
+<h2 id="screenshots">Screenshots <a class="anchor" href="#screenshots" aria-hidden="true">#</a></h2>
+<p>Three keys, all of which land you in the same place — a frozen copy of the
+screen you can draw on straight away, with the toolbar next to your selection.
+Nothing else opens: copy, save or pin the result from that toolbar and it is
+gone again.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Captures</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><kbd>Super+I</kbd></td>
+<td>the monitor you are on, already selected</td>
+</tr>
+<tr>
+<td><kbd>Super+Shift+I</kbd></td>
+<td>nothing yet — drag the area you want</td>
+</tr>
+<tr>
+<td><kbd>Super+Ctrl+I</kbd></td>
+<td>the focused window, already selected</td>
+</tr>
+</tbody>
+</table></div>
+<p>The editor's Save button asks where and under what name, opening on the
+<code>Screenshots</code> folder inside your pictures folder. Two more keys skip the editor
+entirely and write the file straight there, no questions asked:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Saves</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><kbd>Super+Alt+I</kbd></td>
+<td>the focused monitor</td>
+</tr>
+<tr>
+<td><kbd>Super+Ctrl+Alt+I</kbd></td>
+<td>the focused window</td>
+</tr>
+</tbody>
+</table></div>
+<p>Files are named <code>W-&lt;date&gt;_&lt;time&gt;.png</code>. The annotation colours and font follow
+your theme, and every key here is rebindable in <strong>Hub → Hotkeys</strong> — including
+unbinding the two you do not want.</p>
+<p>The editor is Flameshot. W also ships the older one, Satty, for the case where
+Flameshot misbehaves on your hardware — pick it under <strong>Hub → Displays → Screen
+capture → Editor</strong> (or <code>w-screenshot set ANNOTATOR satty</code>), and it opens from the
+next capture on. Satty shows the shot at its real size, and a selected region opens
+right over the spot you selected, with the toolbars around it. Whichever is set, <code>w-screenshot</code> carries the full set of modes for scripts and the CLI,
+including the ones with no editor at all (<code>--copy</code>, <code>--save</code>).</p>
+<p>A <strong>window</strong> shot taken without an editor (<code>--copy</code>, <code>--save</code>) or opened in Satty comes
+out with transparent rounded corners, and — <strong>Hub → Displays → Screen capture → Add
+window shadow</strong>, <em>Yes</em> by default — a soft shadow like on macOS
+(<code>w-screenshot set WINDOW_SHADOW no</code> turns the shadow off). Flameshot saves its own
+frame, so it gets neither; for the finished look use the instant window keybind or
+pick Satty. A translucent window still shows what is behind it: what is captured is
+the finished picture of the monitor, not the window's own surface.</p>
+<h2 id="screen-recording">Screen recording <a class="anchor" href="#screen-recording" aria-hidden="true">#</a></h2>
+<p>Three more keys, on <kbd>R</kbd> for record. Each one is a switch rather than a
+button: press it to start, press it again to finish.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Records</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><kbd>Super+Ctrl+R</kbd></td>
+<td>the monitor you are on</td>
+</tr>
+<tr>
+<td><kbd>Super+Alt+R</kbd></td>
+<td>an area you drag</td>
+</tr>
+<tr>
+<td><kbd>Super+Ctrl+Alt+R</kbd></td>
+<td>the focused window</td>
+</tr>
+</tbody>
+</table></div>
+<p>Files land in the <code>Screencasts</code> folder inside your videos folder, named
+<code>W-&lt;date&gt;_&lt;time&gt;.mp4</code>. A notification confirms the start, and the one at the end
+carries the finished path — click it to play the video. You can also stop a take from a terminal with
+<code>w-record stop</code>, and ask what is going on with <code>w-record status</code>.</p>
+<p>While a take is running, the bar shows a pulsing red dot and the time recorded so
+far, just left of the Do Not Disturb bell. Click it to stop; right-click it to
+open the recording settings. It disappears the moment the recording ends, so no
+dot means nothing is being recorded.</p>
+<p><strong>Sound is recorded by default</strong> — everything you can hear, the same mix that
+comes out of your speakers. Your microphone is <em>not</em> in it. One track holds one
+source, so the desktop and the microphone cannot both be on it.</p>
+<p>Everything about the next take is set in <strong>Hub → Displays → Screen capture</strong>:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Choices</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Encoding</td>
+<td>Auto (the graphics card when it can, else the processor), Processor, Graphics card</td>
+</tr>
+<tr>
+<td>Sound</td>
+<td>Desktop sound, Microphone, No sound</td>
+</tr>
+<tr>
+<td>Format</td>
+<td>MP4 (plays everywhere), MKV (survives a crash mid-take), WebM (for the web)</td>
+</tr>
+<tr>
+<td>Frame rate</td>
+<td>15, 24, 30, 60 or 120 frames per second</td>
+</tr>
+</tbody>
+</table></div>
+<p>WebM is always encoded on the processor, so it and <em>Graphics card</em> exclude each
+other — the Hub offers only the combinations that work. A change applies from the
+next recording; one already running keeps what it started with. The same settings
+from a terminal:</p>
+<pre><code><span class="w">w-record</span> get                  <span class="c"># every setting and its current value</span>
+<span class="w">w-record</span> set AUDIO mic        <span class="c"># narrate instead of the desktop&#x27;s sound</span>
+<span class="w">w-record</span> set FRAMERATE 60
+<span class="w">w-record</span> set WINDOW_MASK yes  <span class="c"># window recordings: black rounded corners, CPU encode</span></code></pre>
+<p>Two things worth knowing before a long take. Recording a <strong>window</strong> records the
+rectangle it occupies at the moment you start, so a window you then move or
+resize will not be followed — record the monitor if the layout is going to
+change. And there is no all-monitors mode: Wayland hands over one screen at a
+time, so a single file spanning every monitor is not something that can be made.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="theming.html"><small>Previous</small>Themes and wallpapers</a><a class="next" href="displays.html"><small>Next</small>Displays and night light</a></nav>
+  </main>
+  <aside class="toc"><h2>On this page</h2><ul><li><a href="#windows-and-workspaces">Windows and workspaces</a></li><li><a href="#the-shell-surfaces">The shell surfaces</a></li><li><a href="#sessions-that-come-back">Sessions that come back</a></li><li><a href="#screenshots">Screenshots</a></li><li><a href="#screen-recording">Screen recording</a></li></ul></aside>
+</div>
+</body>
+</html>

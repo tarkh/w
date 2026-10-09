@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Безопасность · W Linux</title>
+<meta name="description" content="Что W включает из коробки — защита ядра, sudo-rs, фаервол, шифрованный DNS, keyring, обновления прошивки, отпечаток пальца и Secure Boot.">
+<link rel="icon" href="../../assets/logo.svg">
+<link rel="stylesheet" href="../../assets/style.css">
+<script src="../../ru/search-index.js" defer></script>
+<script src="../../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Меню" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../../ru/index.html"><img src="../../assets/logo.svg" alt="W Linux"><span>Документация</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Поиск по документации" aria-label="Поиск" autocomplete="off" spellcheck="false" data-empty="Ничего не найдено">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><a href="../../en/guide/security.html" hreflang="en">en</a><b>ru</b></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Начало</h2><ul><li><a href="../index.html">Документация W Linux</a></li><li><a href="../hotkeys.html">Горячие клавиши</a></li><li><a href="../faq.html">FAQ</a></li></ul><h2>Рабочий стол</h2><ul><li><a href="theming.html">Темы и обои</a></li><li><a href="desktop.html">Рабочий стол</a></li><li><a href="displays.html">Мониторы и ночной свет</a></li><li><a href="input.html">Клавиатура, мышь и тачпад</a></li></ul><h2>Система</h2><ul><li><a href="updates.html">Поддержание W в актуальном состоянии</a></li><li><a href="security.html" aria-current="page">Безопасность</a></li><li><a href="network.html">Сеть, DNS и фаервол</a></li><li><a href="power.html">Питание и батарея</a></li><li><a href="../recovery.html">Восстановление — когда W не загружается или загружается неправильно</a></li></ul><h2>Программы</h2><ul><li><a href="packs.html">Наборы — опциональные пакеты софта</a></li></ul><h2>ИИ</h2><ul><li><a href="ai.html">Ассистент ИИ</a></li></ul><h2>Справочник</h2><ul><li><a href="../reference/index.html">Команды</a></li></ul></nav>
+  <main>
+    <article>
+      <h1>Безопасность</h1>
+      <p>W включает набор защит на каждой установке и даёт переключатели там, где
+это имеет смысл настраивать. Графические элементы управления собраны в
+<strong>Хаб → Система → Безопасность</strong>.</p>
+<span id="what-is-on-by-default"></span><h2 id="что-включено-по-умолчанию">Что включено по умолчанию <a class="anchor" href="#что-включено-по-умолчанию" aria-hidden="true">#</a></h2>
+<ul>
+<li><strong>Защита ядра</strong> — подобранная затяжка sysctl и параметров командной строки
+штатного ядра (<code>w-kernel harden status</code>). Это переключатель, не форк:
+повседневное ядро остаётся отзывчивым.</li>
+<li><strong>sudo-rs</strong> как инструмент повышения прав, привычный <code>sudo</code> работает так же
+— запросы на повышение выглядят как на любой системе Arch.</li>
+<li><strong>Шифрованный DNS</strong> — systemd-resolved резолвит через TLS у провайдера,
+уважающего приватность (по умолчанию Quad9). <code>w-dns</code> меняет провайдера или
+режим.</li>
+<li><strong>Фаервол</strong> — firewalld с backend'ом <code>nftables</code> и разрешительной зоной по
+умолчанию, подходящей для домашней сети. <code>w-firewall public|home</code>
+переключает машину между зонами; в <strong>Хаб → Сеть</strong> те же выпадающие списки.</li>
+<li><strong>Keyring</strong> — gnome-keyring хранит секреты пользователя (Wi-Fi, сохранённые
+пароли); сторона SSH-агента — нейтральный слот (<code>w-ssh</code>), который работает
+с любым backend'ом.</li>
+<li><strong>Обновления прошивки</strong> — <code>fwupd</code> и его таймер; <code>fwupdmgr refresh &amp;&amp; fwupdmgr update</code> применяет их.</li>
+</ul>
+<h2 id="песочница-для-приложений-опционально">Песочница для приложений (опционально) <a class="anchor" href="#песочница-для-приложений-опционально" aria-hidden="true">#</a></h2>
+<p>Сторонние графические приложения лучше запускать в песочнице, и W держит
+готовыми нужные для этого слоты — десктопные порталы и непривилегированные
+пользовательские namespace'ы ядра включены из коробки. Сам канал доставки —
+по запросу: <code>sudo w-pack install flatpak</code> добавляет Flatpak с репозиторием
+Flathub, магазин <strong>Bazaar</strong>, <strong>Flatseal</strong> для прав приложений и тему W внутри
+песочницы. Устанавливайте, если нужна эта экосистема; машине, которая берёт
+софт из репозиториев, это не требуется.</p>
+<span id="fingerprint-login"></span><h2 id="вход-по-отпечатку">Вход по отпечатку <a class="anchor" href="#вход-по-отпечатку" aria-hidden="true">#</a></h2>
+<p>Если у машины есть считыватель отпечатков, <code>w-fingerprint</code> записывает ваши
+пальцы, и экран входа, экран блокировки и запросы повышения прав примут их.
+<strong>Хаб → Ввод → Отпечаток</strong> делает то же самое графически.</p>
+<p>Та же панель решает, как сканер ведёт себя под экраном блокировки. По
+умолчанию он горит всю блокировку, и палец проверяет сам hyprlock. Некоторые
+ридеры от этого перегреваются и через несколько минут перестают отвечать; для
+них выберите <strong>Сканер → По активности</strong> (<code>w-fingerprint lock-sensor mode wake</code>): сканер загорается на короткое окно после блокировки, пробуждения или
+любой активности под блокировкой, затем гаснет. Окно настраивается (10–300 с);
+изменение действует со следующей блокировки.</p>
+<h2 id="secure-boot">Secure Boot <a class="anchor" href="#secure-boot" aria-hidden="true">#</a></h2>
+<p>На зашифрованных установках W поставляет двухфазную настройку Secure Boot:
+занести ключи, один раз перезагрузиться, включить Secure Boot в прошивке.
+<strong>Хаб → Система → Безопасность</strong> ведёт через это (<code>w-secureboot</code> из
+терминала). Инсталлятор намеренно не включает его сам — прошивка требует
+шагов за пределами ОС.</p>
+<h2 id="управление-ядром">Управление ядром <a class="anchor" href="#управление-ядром" aria-hidden="true">#</a></h2>
+<p><code>w-kernel</code> меняет активное ядро (default, LTS, vanilla) и переключает
+профиль защиты. Оба живут в Хабе; смена ядра предлагает аккуратную
+перезагрузку, когда работающее ядро изменилось.</p>
+<h2 id="что-пока-не-защищено">Что пока не защищено <a class="anchor" href="#что-пока-не-защищено" aria-hidden="true">#</a></h2>
+<p>USB-карантин (USBGuard) спроектирован, но опционален и пока не поставляется
+— подключённое чужое USB-устройство сейчас доверенное, как любой другой
+накопитель. Снапшоты — ответ на неудачное обновление, а не резервная копия:
+если диск потерян или вышел из строя, откатываться будет не к чему.
+Резервируйте всё, что не сможете воссоздать сами.</p>
+
+    </article>
+    <nav class="pager"><a class="prev" href="updates.html"><small>Назад</small>Поддержание W в актуальном состоянии</a><a class="next" href="network.html"><small>Далее</small>Сеть, DNS и фаервол</a></nav>
+  </main>
+  <aside class="toc"><h2>На этой странице</h2><ul><li><a href="#что-включено-по-умолчанию">Что включено по умолчанию</a></li><li><a href="#песочница-для-приложений-опционально">Песочница для приложений (опционально)</a></li><li><a href="#вход-по-отпечатку">Вход по отпечатку</a></li><li><a href="#secure-boot">Secure Boot</a></li><li><a href="#управление-ядром">Управление ядром</a></li><li><a href="#что-пока-не-защищено">Что пока не защищено</a></li></ul></aside>
+</div>
+</body>
+</html>

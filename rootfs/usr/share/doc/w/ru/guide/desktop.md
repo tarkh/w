@@ -1,11 +1,12 @@
 ---
 title: Рабочий стол
 section: guide
+category: desktop
 order: 4
 summary: Окна, рабочие столы, попапы, уведомления, скриншоты и восстановление сессии.
 sources:
   - path: .claude/library/package-hyprland.md
-    sha256: 85f6ab9f832fcc8a6f98530bcab0370dd2a4d226371915b22864c8526292d176
+    sha256: 5dfed699e45460460d3b1f3e5408dadd0a1bb9f4db3fccab3cc51a37dae9d61d
   - path: .claude/library/quickshell.md
     sha256: da1b14d9d934188dd9b49ece41af8b58ab8d5abe06c6172e198e1c5ade171759
   - path: .claude/library/w-screenshot.md

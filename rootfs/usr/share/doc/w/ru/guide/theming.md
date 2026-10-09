@@ -1,6 +1,7 @@
 ---
 title: Темы и обои
 section: guide
+category: desktop
 order: 2
 summary: Переключение тем, создание темы из обоев, наборы обоев и панель Оформление.
 sources:

@@ -1,11 +1,12 @@
 ---
 title: Ассистент ИИ
 section: guide
+category: ai
 order: 9
 summary: Открытие ассистента, профили под разные задачи, хосты и провайдеры, где хранятся ключи API, сколько он может делать сам, и опциональный продвинутый стек.
 sources:
   - path: .claude/library/w-ai.md
-    sha256: a90c80a7ee57541923d6becb4c4fcad0c30ce82383dd82ccc6af32f772d0dcd0
+    sha256: baef962c84506c147b607eb1b4670ece3b3326ac7d5cecc7ca33ecdfd1e639f4
   - path: .claude/library/ai-integration.md
     sha256: 171dd165f8bf454226de2d798cb878e0c53b5033332ed66060670941cd60d96d
   - path: .claude/library/pack-comfyui.md

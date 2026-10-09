@@ -26,6 +26,12 @@ bats                # suite `unit` — the bats-core runner. No bats-assert or
                     # bats-support: the suites load a local `helpers` file and
                     # nothing else, so the helper libraries would be unused weight.
 
+python-markdown-it-py   # suite `docs` — w-docs-site renders the docs tree into
+                        # the committed site and the suite diffs it (--check).
+                        # Present on a stock W only as python-rich's transitive
+                        # dependency — declared by name so it cannot vanish
+                        # with a change in someone else's dep tree.
+
 # ── Release tooling ───────────────────────────────────────────────────────────
 github-cli          # `gh` — scripts/publish.sh uses it in 17 places (release
                     # creation, asset upload, canary status). Strictly maintainer

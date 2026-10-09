@@ -1,0 +1,14 @@
+/* W Linux — the Help window's chrome (w-help). Copied over the profile on every
+ * launch. The site has its own navigation and search, so the browser chrome is out
+ * of the way: no tab strip, and the toolbar is folded flat against the top edge
+ * (rotateX, not display:none — a collapsed toolbox would take the hover target
+ * with it) and unfolds while the pointer is on it or focus is inside it
+ * (Ctrl+L, Alt). position:fixed lays it over the page instead of pushing it. */
+#TabsToolbar { visibility: collapse !important; }
+
+#navigator-toolbox {
+  position: fixed !important; width: 100%; z-index: 10;
+  transform-origin: top; transform: rotateX(86deg); opacity: 0;
+  transition: transform 90ms linear, opacity 90ms linear !important;
+}
+#navigator-toolbox:is(:hover, :focus-within) { transform: none; opacity: 1; }

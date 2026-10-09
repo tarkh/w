@@ -1,11 +1,12 @@
 ---
 title: The AI assistant
 section: guide
+category: ai
 order: 9
 summary: Opening the assistant, profiles for different setups, hosts and providers, where API keys are kept, how much it may do on its own, and the optional advanced stack.
 sources:
   - path: .claude/library/w-ai.md
-    sha256: a90c80a7ee57541923d6becb4c4fcad0c30ce82383dd82ccc6af32f772d0dcd0
+    sha256: baef962c84506c147b607eb1b4670ece3b3326ac7d5cecc7ca33ecdfd1e639f4
   - path: .claude/library/ai-integration.md
     sha256: 171dd165f8bf454226de2d798cb878e0c53b5033332ed66060670941cd60d96d
   - path: .claude/library/pack-comfyui.md

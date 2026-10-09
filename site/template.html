@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="$lang"$html_attr>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>$title · $site_name</title>
+<meta name="description" content="$summary">
+<link rel="icon" href="$root/assets/logo.svg">
+<link rel="stylesheet" href="$root/assets/style.css">$head
+<script src="$root/$lang/search-index.js" defer></script>
+<script src="$root/assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="$ui_menu" aria-controls="nav"><span></span></button>
+  <a class="brand" href="$root/$lang/index.html"><img src="$root/assets/logo.svg" alt="$site_name"><span>$site_docs</span></a>$topnav
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="$ui_search_hint" aria-label="$ui_search" autocomplete="off" spellcheck="false" data-empty="$ui_no_results">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs">$langs</nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side">$nav</nav>
+  <main>
+    <article>
+      $notice<h1>$title</h1>
+      $body$edit
+    </article>
+    <nav class="pager">$pager</nav>
+  </main>
+  <aside class="toc">$toc</aside>
+</div>$foot
+</body>
+</html>

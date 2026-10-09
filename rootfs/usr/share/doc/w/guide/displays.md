@@ -1,6 +1,7 @@
 ---
 title: Displays and night light
 section: guide
+category: desktop
 order: 5
 summary: Monitor layout, scaling and placement, the separate login-screen layout, the blue-light filter, and what to do about a black screen.
 sources:

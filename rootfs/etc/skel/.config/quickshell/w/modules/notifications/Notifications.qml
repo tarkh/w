@@ -87,8 +87,12 @@ Scope {
 
     // When a notification leaves the server (expired / dismissed / closed by the
     // app), start its exit animation instead of yanking the row out.
+    // ObjectModel is a QAbstractListModel, but Qt >= 6.12 module qmltypes stub it
+    // as an opaque value type, so qmllint rejects it as a Connections target.
     Connections {
+        // qmllint disable incompatible-type
         target: server.trackedNotifications
+        // qmllint enable incompatible-type
         function onValuesChanged() { root.prune(); }
     }
 

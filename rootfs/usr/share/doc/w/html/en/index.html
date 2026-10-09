@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>W Linux documentation · W Linux</title>
+<meta name="description" content="Where to find what — guides, FAQ, command reference and recovery.">
+<link rel="icon" href="../assets/logo.svg">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../en/search-index.js" defer></script>
+<script src="../assets/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <button class="menu" type="button" aria-label="Menu" aria-controls="nav"><span></span></button>
+  <a class="brand" href="../en/index.html"><img src="../assets/logo.svg" alt="W Linux"><span>Documentation</span></a>
+  <div class="search" role="search">
+    <input id="q" type="search" placeholder="Search the docs" aria-label="Search" autocomplete="off" spellcheck="false" data-empty="Nothing found">
+    <kbd>/</kbd>
+    <ol id="hits" hidden></ol>
+  </div>
+  <nav class="langs"><b>en</b><a href="../ru/index.html" hreflang="ru">ru</a></nav>
+</header>
+<div class="frame">
+  <nav id="nav" class="side"><h2>Getting started</h2><ul><li><a href="index.html" aria-current="page">W Linux documentation</a></li><li><a href="hotkeys.html">Keyboard shortcuts</a></li><li><a href="faq.html">FAQ</a></li></ul><h2>Desktop</h2><ul><li><a href="guide/theming.html">Themes and wallpapers</a></li><li><a href="guide/desktop.html">The desktop</a></li><li><a href="guide/displays.html">Displays and night light</a></li><li><a href="guide/input.html">Keyboard, mouse and touchpad</a></li></ul><h2>System</h2><ul><li><a href="guide/updates.html">Keeping W up to date</a></li><li><a href="guide/security.html">Security</a></li><li><a href="guide/network.html">Network, DNS and the firewall</a></li><li><a href="guide/power.html">Power and battery</a></li><li><a href="recovery.html">Recovery — when W will not boot, or boots wrong</a></li></ul><h2>Software</h2><ul><li><a href="guide/packs.html">Packs — optional software bundles</a></li></ul><h2>AI</h2><ul><li><a href="guide/ai.html">The AI assistant</a></li></ul><h2>Reference</h2><ul><li><a href="reference/index.html">Commands</a></li></ul></nav>
+  <main>
+    <article>
+      <h1>W Linux documentation</h1>
+      <p><strong>W Linux</strong> is an Arch Linux–based distribution: a Hyprland/Quickshell desktop,
+a first set of <code>w-*</code> tools that drive the system, and automatic snapshots that
+make everyday operations reversible. This documentation is viewed in the
+desktop itself (the <strong>?</strong> button in Hub panels, or <kbd>Super+F1</kbd>) and
+published with the repository.</p>
+<h2 id="getting-around">Getting around <a class="anchor" href="#getting-around" aria-hidden="true">#</a></h2>
+<ul>
+<li><strong>The Hub</strong> (<kbd>Super+Space</kbd>) is the graphical control center: it is
+where settings live and where the Hotkeys panel lists every key binding.</li>
+<li><strong><kbd>Super+F1</kbd></strong> opens this documentation at any time.</li>
+<li><code>w-info</code> lists every <code>w-*</code> command with a one-line description in a terminal.</li>
+<li><a href="recovery.html">Recovery</a> is the page for &quot;the system does not boot&quot; — it
+ships as a separate, standalone copy at the same location on every W machine.</li>
+</ul>
+<h2 id="guides">Guides <a class="anchor" href="#guides" aria-hidden="true">#</a></h2>
+<ul>
+<li><a href="guide/updates.html">Keeping W up to date</a> — updates, the badge in the bar, and
+what to do when an upgrade goes wrong.</li>
+<li><a href="guide/theming.html">Themes and wallpapers</a> — switching and creating themes,
+wallpapers, and the Appearance panel.</li>
+<li><a href="guide/security.html">Security</a> — what W enables out of the box and which
+controls you get in the Hub.</li>
+<li><a href="guide/desktop.html">The desktop</a> — windows, workspaces, popups, notifications
+and session restore.</li>
+<li><a href="guide/displays.html">Displays and night light</a> — monitor layout, scaling, the
+login screen's own layout, and the blue-light filter.</li>
+<li><a href="guide/input.html">Keyboard, mouse and touchpad</a> — layouts and the switch key,
+pointer behaviour, gestures, the fingerprint reader.</li>
+<li><a href="guide/network.html">Network, DNS and the firewall</a> — connecting, encrypted DNS,
+and the zone to use on an untrusted network.</li>
+<li><a href="guide/power.html">Power and battery</a> — profiles, the idle chain of lock,
+screen-off and suspend, lid actions, charge limit.</li>
+<li><a href="guide/ai.html">The AI assistant</a> — profiles, models and keys, how much it may
+do on its own.</li>
+<li><a href="guide/packs.html">Packs</a> — the optional software bundles and how to add one.</li>
+<li><a href="faq.html">FAQ</a> — short answers to common questions.</li>
+</ul>
+<h2 id="command-reference">Command reference <a class="anchor" href="#command-reference" aria-hidden="true">#</a></h2>
+<p>Every user-facing <code>w-*</code> command has a page under <a href="reference/index.html">reference/</a>,
+generated from the command's own help text. The same list is available on any
+W machine with <code>w-info</code>.</p>
+<!-- W-DOCS:reference-toc START (generated — do not edit here) -->
+<ul>
+<li><a href="reference/w-ai.html"><code>w-ai</code></a> — Launch and manage the W AI assistant — hosts, keys, memory, ask.</li>
+<li><a href="reference/w-appearance.html"><code>w-appearance</code></a> — Per-user overrides that beat the active theme (W Hub -&gt; Appearance -&gt; Settings).</li>
+<li><a href="reference/w-bar.html"><code>w-bar</code></a> — Choose which status-bar blocks show on which monitor (W Hub -&gt; Appearance -&gt; Bar).</li>
+<li><a href="reference/w-conf.html"><code>w-conf</code></a> — Read and write W's layered configuration (vendor → admin → user).</li>
+<li><a href="reference/w-crypt.html"><code>w-crypt</code></a> — Manage disk-encryption factors — TPM2 auto-unlock and recovery keys.</li>
+<li><a href="reference/w-dns.html"><code>w-dns</code></a> — Switch DNS provider and DNS-over-TLS mode (systemd-resolved).</li>
+<li><a href="reference/w-fingerprint.html"><code>w-fingerprint</code></a> — Enrol, list and delete the fingerprints of the current user.</li>
+<li><a href="reference/w-firewall.html"><code>w-firewall</code></a> — Toggle the firewall zone between home and public (firewalld).</li>
+<li><a href="reference/w-help.html"><code>w-help</code></a> — Open the W documentation in the Help window.</li>
+<li><a href="reference/w-hotkeys.html"><code>w-hotkeys</code></a> — Manage Hyprland keybindings — profiles, catalog, custom binds.</li>
+<li><a href="reference/w-info.html"><code>w-info</code></a> — List all W tools with a one-line description of each.</li>
+<li><a href="reference/w-kbdlight.html"><code>w-kbdlight</code></a> — Keyboard backlight — level, media keys, and light at the LUKS prompt.</li>
+<li><a href="reference/w-kernel.html"><code>w-kernel</code></a> — Select the active kernel and toggle the hardening profile.</li>
+<li><a href="reference/w-keyboard.html"><code>w-keyboard</code></a> — Manage the keyboard-layout ring of the Wayland session (XKB).</li>
+<li><a href="reference/w-langpack.html"><code>w-langpack</code></a> — Show and deliver what a locale needs beyond LANG (translations, dictionary, font).</li>
+<li><a href="reference/w-locale.html"><code>w-locale</code></a> — Show and switch the system UI language (LANG).</li>
+<li><a href="reference/w-logs.html"><code>w-logs</code></a> — Set how long W keeps logs (journal + /var/log + W's own logs), one policy.</li>
+<li><a href="reference/w-mirrors.html"><code>w-mirrors</code></a> — Keep the pacman mirrorlist fresh — rank mirrors on a schedule or on demand.</li>
+<li><a href="reference/w-monitor.html"><code>w-monitor</code></a> — Configure monitors (resolution, scale, rotation, layout).</li>
+<li><a href="reference/w-nightlight.html"><code>w-nightlight</code></a> — Night light — warm the screen on a schedule to cut blue light in the evening.</li>
+<li><a href="reference/w-notify.html"><code>w-notify</code></a> — Control desktop notifications — Do Not Disturb, history, per-app mute.</li>
+<li><a href="reference/w-pack.html"><code>w-pack</code></a> — Install and inspect optional W software bundles (packs).</li>
+<li><a href="reference/w-pointer.html"><code>w-pointer</code></a> — Manage mouse, touchpad and swipe-gesture settings of the Wayland session.</li>
+<li><a href="reference/w-power.html"><code>w-power</code></a> — Power profiles, idle policy (lock/display/suspend), lid/power key, charge limit.</li>
+<li><a href="reference/w-record.html"><code>w-record</code></a> — Record the screen — region/window/monitor, one key to start and stop.</li>
+<li><a href="reference/w-reset.html"><code>w-reset</code></a> — Force-restore any W module's or bundle's config to its default.</li>
+<li><a href="reference/w-rollback.html"><code>w-rollback</code></a> — Roll the system back to a btrfs snapshot, on either boot path.</li>
+<li><a href="reference/w-screenshot.html"><code>w-screenshot</code></a> — Capture the screen — region/window/output, annotate/copy/save.</li>
+<li><a href="reference/w-secureboot.html"><code>w-secureboot</code></a> — Set up and manage Secure Boot (sbctl keys + Limine hash).</li>
+<li><a href="reference/w-session.html"><code>w-session</code></a> — Remember and restore the graphical session (windows, workspaces, split layout).</li>
+<li><a href="reference/w-ssh.html"><code>w-ssh</code></a> — Choose the session's SSH agent and generate per-host key selectors from it.</li>
+<li><a href="reference/w-style.html"><code>w-style</code></a> — Render the active theme across all themed subsystems.</li>
+<li><a href="reference/w-sync.html"><code>w-sync</code></a> — Track the W dev repo (edge channel) and apply updates, keeping user config intact.</li>
+<li><a href="reference/w-term.html"><code>w-term</code></a> — Launch or query the configured terminal (single entry point).</li>
+<li><a href="reference/w-theme.html"><code>w-theme</code></a> — Switch, add and manage W themes with seamless crossfade.</li>
+<li><a href="reference/w-time.html"><code>w-time</code></a> — Set the timezone, the system clock and NTP (systemd-timesyncd).</li>
+<li><a href="reference/w-update.html"><code>w-update</code></a> — Update all system and AUR packages (repo + AUR in one pass).</li>
+<li><a href="reference/w-userdirs.html"><code>w-userdirs</code></a> — Standard home folders (Documents, Pictures, ...) that follow the language.</li>
+<li><a href="reference/w-wallpaper.html"><code>w-wallpaper</code></a> — Select the wallpaper for the current resolution tier.</li>
+</ul>
+<!-- W-DOCS:reference-toc END -->
+
+    </article>
+    <nav class="pager"><a class="next" href="hotkeys.html"><small>Next</small>Keyboard shortcuts</a></nav>
+  </main>
+  <aside class="toc"><h2>On this page</h2><ul><li><a href="#getting-around">Getting around</a></li><li><a href="#guides">Guides</a></li><li><a href="#command-reference">Command reference</a></li></ul></aside>
+</div>
+</body>
+</html>

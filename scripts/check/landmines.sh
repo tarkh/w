@@ -202,5 +202,16 @@ chk_landmines() {
       echo "$hits" | sed 's/^/    /'; rc=1; }
   done < <(git grep -lI -e setsid -- rootfs scripts devtools 2>/dev/null || true)
 
+  # 7. A backslash in a .desktop value is a STRING escape first: only \s \n \t \r
+  #    \\ (and \; in lists) exist, and the Exec quoting rules apply only after that
+  #    pass. So a literal " inside a quoted Exec argument is \\" — the four
+  #    quickshell launchers shipped \" for months: Quickshell guesses right and
+  #    warns, GLib refuses the whole key, so gio/Nemo/portals could not launch them.
+  #    desktop-file-validate accepts both forms, hence this rule.
+  hits="$(git ls-files -z -- '*.desktop' | xargs -0 grep -nP '^[^#].*?(?<!\\)(\\\\)*\\[^sntr\\;]' 2>/dev/null || true)"
+  [[ -z "$hits" ]] || {
+    echo "  illegal escape in a .desktop value (GLib rejects the key; a literal \" is \\\\\"):"
+    echo "$hits" | sed 's/^/    /'; rc=1; }
+
   return $rc
 }
