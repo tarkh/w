@@ -18,10 +18,15 @@ Commands:
   status [--porcelain]        Show the mode and what is currently saved
   save                        Snapshot the session now
   restore [--dry-run]         Reopen the saved session (--dry-run just lists it)
-  close [--workspace <name>] [--timeout <sec>] [--dry-run]
+  close [--workspace <name>] [--timeout <sec>] [--keep-snapshot]
+        [--until-cancelled] [--dry-run]
                               Ask every window to close and wait for it, leaving
                               any "Save changes?" dialog reachable. Exit 1 if a
                               window stayed open (the user cancelled a dialog).
+                              --keep-snapshot: if so, keep the saved session
+                              until a new window opens (a cancelled exit).
+                              --until-cancelled: no time limit; a notification
+                              waits for the windows, a click on it cancels.
                               --dry-run only prints how many would be asked.
   forget                      Delete the saved session
   layout list [--porcelain]   Show the saved named layouts

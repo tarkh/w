@@ -6,9 +6,11 @@ order: 1
 summary: The single update path, the badge in the bar, Arch news, and what to do when an upgrade goes wrong.
 sources:
   - path: .claude/library/w-update.md
-    sha256: 11750135480a5f3abaaad941b1e98259aad6845151c31672087ae94bc7791237
+    sha256: 1e3f24eee99045a99f89424410154d7fa70594ff133172334fa4a4d6ba8e7521
   - path: .claude/library/w-mirrors.md
     sha256: 713856f43f54c44fc52642f8968824cdca2f0c967b7bcca2c6943e9a0f6f147c
+  - path: .claude/library/snapshots.md
+    sha256: 0df039c2078953d0797a6911bde6f1e346d719cabab0d116bb2c8ce5d47852c1
 ---
 
 W has one native update path built on `pacman` and `yay`. There are no
@@ -61,6 +63,29 @@ them out.
   snapshots, and [RECOVERY.md](../RECOVERY.md) walks the restore step by step. W
   also ships a copy of that page on disk, so it is readable even when the
   system does not boot.
+
+## Snapshots and disk space
+
+Snapshots cost almost nothing while data stays put: a snapshot only holds on to
+what was deleted or overwritten after it was taken. W bounds them so they never
+grow on their own.
+
+- **System (root)** — snap-pac snapshots every package transaction; the last 20
+  (about 10 upgrades) are kept, plus the permanent `W initial state`.
+- **Your home** — two streams. An hourly snapshot, of which the last 6 hours, 7
+  days and 2 weeks are kept. And one snapshot before every W update that
+  changes something (an update that only brings documentation takes none): the
+  last 10 are kept. When the disk has less than 20% free space, W keeps only
+  the last 2 of those, so infrequent updates on a full disk cannot hold on to
+  months of deleted files.
+- **Package cache** — `paccache` runs weekly and keeps the installed version of
+  each package plus one previous version; packages that are no longer installed
+  are removed from the cache.
+
+`snapper -c home list` shows your home snapshots; `snapper -c home undochange`
+restores files from one. The system journal of `snapper-cleanup` reports
+"quota not working (qgroup not set)" on every run — that is expected, W does
+not use btrfs quotas.
 
 ## The update channel of W itself
 

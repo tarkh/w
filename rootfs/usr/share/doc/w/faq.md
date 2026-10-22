@@ -32,8 +32,9 @@ reference of this documentation has a page per tool.
 
 **An update broke my system. How do I roll back?**
 Reboot, pick the pre-upgrade snapshot in the boot menu, and follow
-[RECOVERY.md](RECOVERY.md) (a copy is on disk). Snapper keeps the last few
-transactions.
+[RECOVERY.md](RECOVERY.md) (a copy is on disk). Snapper keeps the last 20
+system snapshots, about 10 upgrades — see
+[snapshots and disk space](guide/updates.md#snapshots-and-disk-space).
 
 **Why does an update say "reboot pending"?**
 The running kernel differs from the installed one. The reboot offered by

@@ -14,20 +14,20 @@ import QtQuick
 Singleton {
     id: root
 
-    property color backdrop: "#140020"
-    property color surface:  "#2e0045"
-    property color inputBg:  "#200030"
-    property color text:     "#a197a4"
-    property color muted:    "#8a7a8e"
-    property color accent:   "#643670"
+    property color backdrop: "#16001c"
+    property color surface:  "#32003c"
+    property color inputBg:  "#22002a"
+    property color text:     "#a296a5"
+    property color muted:    "#897b8d"
+    property color accent:   "#663372"
     property color accentFg: "#ffffff"
-    property color border:   "#91619b"
+    property color border:   "#935ea0"
 
-    property color iconTint: "#91619b"
+    property color iconTint: "#c746e3"
 
-    property color dangerBg:     "#3d0f1d"
-    property color dangerFg:     "#ffd6dd"
-    property color dangerBorder: "#e34666"
+    property color dangerBg:     "#3e100d"
+    property color dangerFg:     "#ffd8d2"
+    property color dangerBorder: "#e54a40"
 
     function apply(jsonText) {
         try {

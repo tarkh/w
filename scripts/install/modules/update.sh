@@ -3,7 +3,8 @@
 # never calls it). Depends on --rootfs (deploys /usr/bin/w-update and the
 # systemd user units) and --quickshell (deploys the bar's Updates.qml block +
 # bar.json entry). Module boundary (see essentials.md rule): the update manager is
-# its own concern — it owns the checker packages and the periodic-check timer.
+# its own concern — it owns the checker packages, the periodic-check timer and the
+# package-cache rotation (paccache.timer).
 #
 #   checkupdates (pacman-contrib) — non-root repo update count (private temp DB).
 #   curl                          — `w-update news` fetches the Arch news RSS feed.
@@ -24,4 +25,9 @@ mod_update() {
   else
     echo "  WARN: w-update-check.timer not found — run 'apply.sh --rootfs' first."
   fi
+
+  # Weekly package-cache rotation (pacman-contrib ships the timer, disabled). W's
+  # retention is the paccache.service drop-in that rides --rootfs. --now is safe:
+  # this module only runs live, and the timer has no config to wait for.
+  systemctl enable --now paccache.timer
 }

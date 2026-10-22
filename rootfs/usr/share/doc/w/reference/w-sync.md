@@ -15,8 +15,8 @@ Usage: w-sync [command]
 Info: Track the W dev repo (edge channel) and apply updates, keeping user config intact.
 
 Commands:
-  (none) | update   Fetch, show incoming commits, then pre-snapshot home →
-                    git pull --ff-only → selective apply.sh. Needs sudo for apply.
+  (none) | update   Fetch, show incoming commits, then git pull --ff-only →
+                    pre-snapshot home → selective apply.sh. Needs sudo for apply.
   check             Refresh the machine-wide behind-count (quiet). Maintained by
                     the checkout owner and root; a no-op for anyone else. Writes
                     $STATE_FILE; on any refusal it records behind:-1 + err

@@ -15,7 +15,7 @@ sources:
   - path: .claude/library/w-kbdlight.md
     sha256: d17c2a2a0ecf20c3a464a254d778e0873def9ebb8833b4362e08eb9869dec506
   - path: .claude/library/quickshell-powermenu.md
-    sha256: 3dd7afb2d74bf393210f2490578a53d78a8564ca1be40d162a8529593148b526
+    sha256: 5ca46fec4e666da87d1804205fe8381e75b34f65d76a826d55c8a52a03cc40ee
   - path: .claude/library/quickshell-bar.md
     sha256: a3f19c6d40c72a88088a144b1d2a179f809e1a8bc8027c52536053bf8d8b406e
   - path: .claude/library/package-hyprlock.md
@@ -258,8 +258,10 @@ is re-applied after resume (firmware resets it).
 
 **`w-session-exit`** is a graceful exit: it closes each window (editors show their save
 dialogs), waits for them to close, then does `uwsm stop` / `systemctl reboot|poweroff`.
-If a window stays open (a cancelled save), it **aborts** rather than force-killing — so
-logout/reboot/shutdown never lose unsaved work. For a shutdown or reboot, prefer telling
+It has **no time limit**: while a window waits on its dialog, a notification card
+("Waiting for windows to close") lists it, and the exit continues by itself once the last
+window closes. Clicking or dismissing that card **aborts** the exit — nothing is ever
+force-killed, so logout/reboot/shutdown never lose unsaved work. For a shutdown or reboot, prefer telling
 the user to use the power menu so this graceful path runs.
 
 ## Tools (via `w-mcp`)

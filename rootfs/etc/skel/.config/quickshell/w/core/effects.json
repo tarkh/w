@@ -3,5 +3,8 @@
   "surfaceOpacity": 0.75,
   "scrimOpacity": 0.45,
   "barOpacity": 0.75,
-  "barBorderOpacity": 1.0
+  "barBorderOpacity": 1.0,
+  "blurEnabled": true,
+  "blurSize": 4,
+  "blurPasses": 3
 }

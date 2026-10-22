@@ -23,6 +23,8 @@
 # wallpaper: 95 costs ~1.2 MB per tier, while 100 — the value at which
 # ImageMagick switches libwebp to LOSSLESS — costs ~6.9 MB and 6x the encode
 # time for a difference no eye resolves on a desktop background.
+# Measured TOGETHER with sns-strength=0 in wallpaper_render_tier — re-measure
+# both before changing either (see there).
 WTHEME_WALLPAPER_QUALITY=95
 # Renders that never ship at full size: the intermediate frame the palette is
 # extracted from, and the small Hub preview tile.
@@ -61,10 +63,25 @@ wallpaper_validate() { # <file>  → prints "<w> <h>", or a reason on stderr
 # drops EXIF (orientation is already applied by then, and metadata has no place
 # in a shipped theme); the sRGB conversion keeps wide-gamut sources from
 # rendering differently in hyprpaper and Qt.
+#
+# sns-strength=0 turns off libwebp's spatial noise shaping (default 50). With it
+# on, -quality 95 dithers every flat fill of a clipart/vector wallpaper into a
+# visible ±1–2-level dot grid (~6.5% of flat pixels on clean synthetic fills);
+# off, that drops to 0.5–2% and files get 2–8% smaller, while photos lose
+# nothing (SSIM equal or better, PSNR −0.1–0.3 dB). The grain is a property of
+# the quantizer step the encoder lands on, not of SNS as such, and it is not
+# monotonic: q97 with SNS on is as clean as q95 with it off, q97 with it off is
+# as grainy as q95 with it on. So the pair (95, sns 0) is what was measured —
+# changing the quality means measuring again. Lossless was rejected: 0% grain,
+# but 1.3–1.6x larger on resampled tiers and ~4x on an already-lossy source,
+# whose own grain it would only preserve. No setting cleans a source that came
+# in grainy. The palette's extraction frame goes through here too, so it reads
+# what ships: against SNS on, seeds move by ΔE ≤ 1.5 (OKLab ×100, below a
+# noticeable difference), scheme and the `w` calibration stay as they were.
 wallpaper_render_tier() { # <src> <WxH> <dest> [quality]
   magick "$1[0]" -quiet -auto-orient -colorspace sRGB -strip \
     -filter Lanczos -resize "$2^" -gravity center -extent "$2" \
-    -quality "${4:-$WTHEME_WALLPAPER_QUALITY}" "$3"
+    -define webp:sns-strength=0 -quality "${4:-$WTHEME_WALLPAPER_QUALITY}" "$3"
 }
 
 # Build the full wallpaper/ directory of a theme plus its Hub preview.

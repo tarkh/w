@@ -846,11 +846,100 @@ exit_run() {
   # exact snapshot with the half-closed session in the meantime.
   exit_run 0 reboot
   [ "$status" -eq 0 ]
-  [ "$calls" = "systemctl --user stop w-session-save.service;w-session save;w-session close;systemctl reboot;" ]
+  [ "$calls" = "systemctl --user stop w-session-save.service;w-session save;w-session close --keep-snapshot --until-cancelled;systemctl reboot;" ]
 }
 
 @test "a cancelled exit puts the daemon back, because the session goes on" {
   exit_run 1 shutdown
   [ "$status" -eq 1 ]
-  [ "$calls" = "systemctl --user stop w-session-save.service;w-session save;w-session close;systemctl --user start w-session-save.service;" ]
+  [ "$calls" = "systemctl --user stop w-session-save.service;w-session save;w-session close --keep-snapshot --until-cancelled;systemctl --user start w-session-save.service;" ]
+}
+
+# ── The exit hold: a cancelled exit keeps its exact snapshot ──────────────────
+
+@test "a cancelled exit holds the snapshot while only its survivors are open" {
+  run ws "
+hold = {'instance': 'i1', 'survivors': ['0xa', '0xb']}
+print(ws.exit_hold_active(hold, [{'address': '0xa'}, {'address': '0xb'}], 'i1'))
+print(ws.exit_hold_active(hold, [{'address': '0xa'}], 'i1'))
+print(ws.exit_hold_active(hold, [], 'i1'))"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf 'True\nTrue\nTrue')" ]
+}
+
+@test "the first new window releases the hold — the user went back to work" {
+  run ws "
+hold = {'instance': 'i1', 'survivors': ['0xa']}
+print(ws.exit_hold_active(hold, [{'address': '0xa'}, {'address': '0xc'}], 'i1'))"
+  [ "$output" = "False" ]
+}
+
+@test "a hold from another compositor instance, or an unreadable one, holds nothing" {
+  run ws "
+print(ws.exit_hold_active({'instance': 'old', 'survivors': ['0xa']}, [{'address': '0xa'}], 'i1'))
+print(ws.exit_hold_active(None, [], 'i1'))"
+  [ "$output" = "$(printf 'False\nFalse')" ]
+}
+
+@test "save leaves the exact snapshot alone while held, and the expired hold is dropped" {
+  export XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/run" HYPRLAND_INSTANCE_SIGNATURE=i1
+  mkdir -p "$XDG_RUNTIME_DIR"
+  printf 'MODE=save\n' > "$XDG_CONFIG_HOME/w/session.conf"
+  run ws "
+import os
+live = [{'address': '0xa'}]
+ws.hypr_alive = lambda: True
+ws.hypr_json = lambda *a: live
+ws.take_snapshot = lambda values: {'version': 2, 'windows': [len(live)]}
+ws.write_snapshot({'version': 2, 'windows': ['whole']})
+ws.exit_hold_write(['0xa'])
+ws.main(['save'])
+print(ws.read_snapshot()['windows'])
+live.append({'address': '0xc'})
+ws.main(['save'])
+print(ws.read_snapshot()['windows'], os.path.exists(ws.EXIT_HOLD))"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "['whole']" ]
+  [ "${lines[1]}" = "[2] False" ]
+}
+
+# ── An exit waits for the user, not for a clock ───────────────────────────────
+
+# notify-send stub: $1 is what it does — "click" prints an id then the action,
+# "hold" prints an id and waits to be killed, "none" is a server that never answered.
+wait_run() {
+  local bin="$BATS_TEST_TMPDIR/waitbin"; mkdir -p "$bin"
+  cat > "$bin/notify-send" <<SH
+#!/usr/bin/env bash
+case "$1" in
+  click) echo 7; sleep 0.3; echo default ;;
+  hold)  echo 7; exec sleep 30 ;;
+  none)  exit 1 ;;
+esac
+SH
+  printf '#!/usr/bin/env bash\necho "$*" > %s/gdbus.log\n' "$BATS_TEST_TMPDIR" > "$bin/gdbus"
+  chmod 755 "$bin"/*
+  PATH="$bin:$PATH" run ws "
+import time
+ws.hypr_json = lambda *a: [{'address': '0xa', 'initialClass': 'gimp'}]
+until = time.time() + $2
+ws.open_windows = lambda w=None: ['0xa'] if time.time() < until else []
+print(ws.wait_for_user(None))"
+}
+
+@test "the exit goes on by itself once the last window closes, and takes its card down" {
+  wait_run hold 1
+  [ "$status" -eq 0 ]
+  [ "$output" = "True" ]
+  [[ "$(cat "$BATS_TEST_TMPDIR/gdbus.log")" == *CloseNotification\ 7* ]]
+}
+
+@test "a click on the card cancels the exit, however long the dialog stays" {
+  wait_run click 30
+  [ "$output" = "False" ]
+}
+
+@test "with no notification server there is no cancel to offer: the bounded wait applies" {
+  wait_run none 30
+  [ "$output" = "None" ]
 }

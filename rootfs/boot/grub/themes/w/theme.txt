@@ -16,7 +16,7 @@ desktop-color: "#000000"
   width = 50%
   height = 28%
   item_font = "Unifont Regular 16"
-  item_color = "#a197a4"
+  item_color = "#a296a5"
   selected_item_color = "#ffffff"
   selected_item_pixmap_style = "select/*.png"
   item_height = 28

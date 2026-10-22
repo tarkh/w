@@ -8,7 +8,7 @@ description: >-
   named layout — not for the systemd/uwsm session itself, which is w-desktop.
 sources:
   - path: .claude/library/w-session.md
-    sha256: b66291d1c59dc291df62fb58a403bbc78f31780871536b29aaf9cc1a35854e35
+    sha256: cd55875724039e085711caf861e4f3cc1b43a65061e37116b0951c22d5d7d9b4
   - path: .claude/library/quickshell-layouts.md
     sha256: e8c118db10147181f14e6e86a18ceff5e0ee77b268aae391825aadedb1cbbb4e
 tools:
@@ -57,7 +57,10 @@ Two things save a snapshot, and the difference matters when you explain stalenes
 1. **A graceful logout/reboot/shutdown is exact.** `w-session-exit` (the Power Menu path)
    stops the daemon, then saves *before* it starts closing windows, which is the last
    instant the window list is whole — so a save dialog held open during the exit cannot
-   overwrite the snapshot with a half-closed session. A cancelled exit restarts the daemon.
+   overwrite the snapshot with a half-closed session. A cancelled exit restarts the daemon
+   but HOLDS that snapshot: while only the windows the exit left are open, nothing is
+   recorded, so pressing Reboot again after dealing with the dialog still restores the
+   whole session. The first newly opened window releases the hold.
 2. **The background daemon covers the rest.** `w-session-save.service` watches Hyprland's
    event socket and writes at most once per `AUTOSAVE_SEC` (default 60, `0` = graceful
    exit only). That number is how much an unclean shutdown may cost — nothing else.

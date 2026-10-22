@@ -53,35 +53,27 @@ w_capture_notify_saved() { # <app> <summary> <file>
 
 # ── Geometry ──────────────────────────────────────────────────────────────────
 
-# A window-geometry token of the ACTIVE theme: `W_GEO_WINDOW_ROUNDING` or
-# `W_GEO_WINDOW_BORDER`. The theme is resolved the way every user-scope w-style
-# consumer does it — the user's own pin (~/.config/w/theme/active) when there is one,
-# the system theme otherwise — and its geometry.conf inherits from the `w` baseline
-# for a theme that omits it or predates a token (`resolve_theme_file` +
-# `load_geometry`). So a theme with square windows (rounding 0) or no border is read
-# as such, whether it is a system theme or the user's own. Read on every call, like
-# the slurp colours: a theme switch needs no render.
+# The focused window as Hyprland DRAWS it: `activewindow` JSON plus `.border` and
+# `.rounding`, in logical pixels, empty when nothing is focused. Both are the
+# window's own props (`getprop`), so a window rule (`border_size = 0`,
+# `rounding = 0`) is seen exactly as the screen shows it, and so is the theme: the
+# compositor takes a theme switch within the crossfade, and until then the screen
+# still shows the old frame. A capture records the screen, so the screen's values
+# are the right ones — there is no theme file to agree with.
 #
-# The subshell is for `load_geometry`, which exits on a missing file. When the theme
-# cannot be read at all (no w-style on this machine), the answer is the compositor's
-# live value for the same option — what is drawn is at least self-consistent.
-w_capture_theme_geo() { # <W_GEO_WINDOW_ROUNDING|W_GEO_WINDOW_BORDER>
-  local key="$1" opt v
-  case "$key" in
-    W_GEO_WINDOW_ROUNDING) opt=decoration:rounding ;;
-    W_GEO_WINDOW_BORDER)   opt=general:border_size ;;
-    *) return 1 ;;
-  esac
-  v=$( set +eu
-       # shellcheck source=../w-style/lib/core.sh
-       source "${W_STYLE_LIB:-/usr/lib/w/w-style/lib}/core.sh" 2>/dev/null || exit 1
-       dir="$(w_userscope_theme_dir)"
-       load_geometry "$(resolve_theme_file "$dir" geometry.conf)" >/dev/null 2>&1 || exit 1
-       echo "${!key}" ) 2>/dev/null || v=""
-  if [[ ! "$v" =~ ^[0-9]+$ ]]; then
-    v=$(hyprctl -j getoption "$opt" 2>/dev/null | jq -r '.int // 0' 2>/dev/null) || true
+# getprop does not know about fullscreen: it keeps answering the window's border and
+# rounding while the compositor draws neither. So fullscreen (bit 2 of the mode) is
+# zeroed here. Maximised (1) is not — a maximised window keeps both, measured.
+w_capture_active_window() {
+  local win addr b=0 r=0
+  win=$(hyprctl -j activewindow 2>/dev/null) || return 0
+  addr=$(jq -r '.address // empty' <<<"$win" 2>/dev/null); [[ -n "$addr" ]] || return 0
+  if [[ "$(jq -r '(.fullscreen // 0) >= 2' <<<"$win")" == false ]]; then
+    b=$(hyprctl -j getprop "address:$addr" border_size 2>/dev/null | jq -r '.border_size // 0' 2>/dev/null)
+    r=$(hyprctl -j getprop "address:$addr" rounding 2>/dev/null | jq -r '.rounding // 0' 2>/dev/null)
   fi
-  [[ "$v" =~ ^[0-9]+$ ]] && echo "$v" || echo 0
+  [[ "$b" =~ ^[0-9]+$ ]] || b=0; [[ "$r" =~ ^[0-9]+$ ]] || r=0
+  jq -c --argjson b "$b" --argjson r "$r" '. + {border: $b, rounding: $r}' <<<"$win"
 }
 
 # Name of the focused output, empty if Hyprland cannot be reached.
@@ -96,10 +88,9 @@ w_capture_output_name() {
 # The rectangle INCLUDES the window border. Hyprland's `at`/`size` describe the
 # surface, and the border is drawn OUTSIDE it, so the bare numbers cut the frame
 # off along every straight edge while the rounded corners (which curve back inside
-# the box) still show it. The theme's border width is added on each side,
-# so a theme switch needs no render; a fullscreen window has no border and keeps
-# its own rectangle. The border width is the active theme's W_GEO_WINDOW_BORDER
-# (w_capture_theme_geo), not what the compositor happens to be drawing right now.
+# the box) still show it. The window's own border width is added on each side
+# (w_capture_active_window): none for a window a rule left borderless, or a
+# fullscreen one, which then keep their bare rectangle.
 #
 # With --clamp, the rectangle is intersected with the focused MONITOR's own
 # rectangle. wf-recorder requires its region to sit inside ONE output, and what it
@@ -115,12 +106,10 @@ w_capture_output_name() {
 # preselection must lie inside the monitor widget.
 w_capture_window_geom() { # [--clamp]
   local clamp=0; [[ "${1:-}" == --clamp ]] && clamp=1
-  local win mons bs
-  win=$(hyprctl -j activewindow 2>/dev/null) || return 0
-  [[ -n $(jq -r '.address // empty' <<<"$win") ]] || return 0
-  bs=$(w_capture_theme_geo W_GEO_WINDOW_BORDER)
+  local win mons
+  win=$(w_capture_active_window); [[ -n "$win" ]] || return 0
   if [[ $clamp -eq 0 ]]; then
-    jq -r --argjson b "$bs" '(if (.fullscreen // 0) == 0 then $b else 0 end) as $b
+    jq -r '.border as $b
       | "\(.at[0] - $b),\(.at[1] - $b) \(.size[0] + 2 * $b)x\(.size[1] + 2 * $b)"' <<<"$win"
     return 0
   fi
@@ -128,8 +117,8 @@ w_capture_window_geom() { # [--clamp]
   # Intersection of the window rect with the focused monitor rect, as edges
   # rather than origin+size: clamping a width without moving its origin would
   # trim the wrong side when the window hangs off the LEFT edge.
-  jq -r --argjson w "$win" --argjson b "$bs" '
-    (if ($w.fullscreen // 0) == 0 then $b else 0 end) as $b
+  jq -r --argjson w "$win" '
+    $w.border as $b
     | first(.[] | select(.focused)) as $m
     | ([$w.at[0] - $b, $m.x] | max)                                  as $x1
     | ([$w.at[1] - $b, $m.y] | max)                                  as $y1
@@ -142,19 +131,16 @@ w_capture_window_geom() { # [--clamp]
 
 # ── Window outline (mask + shadow) ────────────────────────────────────────────
 
-# Outer corner radius of the focused window's frame, in LOGICAL pixels: the active
-# theme's W_GEO_WINDOW_ROUNDING plus its W_GEO_WINDOW_BORDER, which is drawn outside
-# the surface and curves with it. A theme with square windows (rounding 0) has square
-# corners whatever its border, so the radius is 0 and nothing is rounded. Empty for a
-# fullscreen window (no rounding, no border, nothing to dress) or when the compositor
-# cannot be asked.
+# Outer corner radius of the focused window's frame, in LOGICAL pixels: the window's
+# rounding plus its border, which is drawn outside the surface and curves with it.
+# A square-cornered window (rounding 0, by theme or by rule) has square corners
+# whatever its border, so the radius is 0 and nothing is rounded. Empty for a
+# fullscreen window (no outline, nothing to dress) or when the compositor cannot be
+# asked.
 w_capture_window_radius() {
-  local win
-  win=$(hyprctl -j activewindow 2>/dev/null) || return 0
-  [[ -n $(jq -r '.address // empty' <<<"$win") ]] || return 0
-  [[ "$(jq -r '.fullscreen // 0' <<<"$win")" == 0 ]] || return 0
-  local r; r=$(w_capture_theme_geo W_GEO_WINDOW_ROUNDING)
-  if (( r > 0 )); then echo $(( r + $(w_capture_theme_geo W_GEO_WINDOW_BORDER) )); else echo 0; fi
+  local win; win=$(w_capture_active_window); [[ -n "$win" ]] || return 0
+  jq -r 'if (.fullscreen // 0) >= 2 then empty
+         elif .rounding > 0 then .rounding + .border else 0 end' <<<"$win"
 }
 
 # A capture of a window, dressed: stdin PNG -> stdout PNG.
@@ -163,10 +149,11 @@ w_capture_window_radius() {
 #              is read off the image itself (grim emits logical x output scale),
 #              so HiDPI and fractional scales need no monitor lookup
 #   <shadow>   yes | no
-# Corners outside the rounded outline turn transparent; with shadow, a soft
-# translucent one is cast slightly downward on a transparent margin, the way macOS
-# does. Never fatal: without ImageMagick (or on any failure) the frame goes
-# through untouched — an undressed capture beats a lost one.
+# Corners outside the rounded outline turn transparent (a radius of 0 cuts nothing:
+# ImageMagick's roundrectangle with a zero radius draws NOTHING, which would erase
+# the whole frame); with shadow, a soft translucent one is cast slightly downward on
+# a transparent margin, the way macOS does. Never fatal: without ImageMagick (or on
+# any failure) the frame goes through untouched — an undressed capture beats a lost one.
 w_capture_window_dress() { # <radius> <logical-w> <yes|no>
   local r="$1" lw="$2" shadow="$3" tmp w h s
   tmp=$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/w-dress.XXXXXX") || { cat; return 0; }
@@ -174,15 +161,15 @@ w_capture_window_dress() { # <radius> <logical-w> <yes|no>
   if command -v magick >/dev/null 2>&1 &&
      read -r w h < <(magick identify -format '%w %h\n' "$tmp" 2>/dev/null) && [[ "$w" =~ ^[0-9]+$ && "$lw" -gt 0 ]]; then
     s=$(awk -v w="$w" -v l="$lw" 'BEGIN { printf "%.4f", w / l }')
-    local -a shade=()
+    local -a cut=() shade=()
+    (( r > 0 )) && cut=( \( -size "${w}x${h}" xc:none -fill white
+      -draw "roundrectangle 0,0 $((w - 1)),$((h - 1)) $(awk -v r="$r" -v s="$s" 'BEGIN { printf "%.2f,%.2f", r * s, r * s }')" \)
+      -compose DstIn -composite )
     # opacity 55 %, blur sigma 14 and a 12 px drop, all logical
     [[ "$shadow" == yes ]] && shade=( \( +clone -background black
       -shadow "$(awk -v s="$s" 'BEGIN { printf "55x%.1f+0+%d", 14 * s, 12 * s + 0.5 }')" \)
       +swap -background none -compose Over -layers merge +repage )
-    if magick "$tmp" -alpha set \
-         \( -size "${w}x${h}" xc:none -fill white \
-            -draw "roundrectangle 0,0 $((w - 1)),$((h - 1)) $(awk -v r="$r" -v s="$s" 'BEGIN { printf "%.2f,%.2f", r * s, r * s }')" \) \
-         -compose DstIn -composite "${shade[@]}" -depth 8 png:- 2>/dev/null; then
+    if magick "$tmp" -alpha set "${cut[@]}" "${shade[@]}" -depth 8 png:- 2>/dev/null; then
       rm -f "$tmp"; return 0
     fi
   fi
@@ -195,8 +182,10 @@ w_capture_window_dress() { # <radius> <logical-w> <yes|no>
 # clear). Sized to the CLAMPED rectangle wf-recorder records, in physical pixels;
 # the outline itself is drawn from the UNCLAMPED window, so a side the monitor
 # edge trimmed off is not given a corner it never had. Returns 1, writing nothing,
-# when there is nothing to mask (fullscreen, no window, square-cornered theme, no
-# ImageMagick).
+# when there is nothing to mask (fullscreen, no window, square-cornered window, no
+# ImageMagick). At a fractional scale the frame and this size may differ by a pixel
+# (each rounds 1012.5 its own way); measured on the VM, the arc lands in the same
+# place either way — the odd row or column just falls outside the frame.
 w_capture_window_mask() { # <png>
   local png="$1" r gu gc mons sc
   command -v magick >/dev/null 2>&1 || return 1

@@ -174,7 +174,7 @@ _sign_tag() { # <name> <key-basename>
 @test "w-sync: verify_tip runs before the pre-snapshot and before the pull" {
   local v s p
   v="$(grep -n '^  verify_tip$' "$WSYNC" | cut -d: -f1)"
-  s="$(grep -n '^  pre_snapshot$' "$WSYNC" | cut -d: -f1)"
+  s="$(grep -n '^ *if pre_snapshot; then' "$WSYNC" | cut -d: -f1)"
   p="$(grep -n 'pull --ff-only origin' "$WSYNC" | cut -d: -f1)"
   [ -n "$v" ] && [ -n "$s" ] && [ -n "$p" ]
   [ "$v" -lt "$s" ]

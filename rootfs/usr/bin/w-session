@@ -148,6 +148,9 @@ LAYOUTS_DIR = os.path.join(
 RESTORE_LOCK = os.path.join(STATE_DIR, "session.restoring")
 CURTAIN_READY = os.path.join(STATE_DIR, "session.curtain-ready")
 FREEZE_DIR = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "w-session-freeze.d")
+# Runtime, not state: it is worth exactly one compositor instance and must not
+# survive into the next login (see exit_hold_active).
+EXIT_HOLD = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "w-session.exit-hold")
 
 VENDOR_APPS = "/usr/share/w/defaults/session-apps.tsv"
 VENDOR_TERMINAL = "/usr/share/w/defaults/session-terminal.list"
@@ -1496,6 +1499,62 @@ def restore_lock_held():
     return True
 
 
+# ── The exit hold: a cancelled exit keeps the snapshot it took ───────────────
+#
+# A graceful exit saves the WHOLE session and then closes it. When a window stays
+# open past the wait (a save dialog answered late, a browser asking about its
+# tabs), the exit is abandoned — but everything without a dialog has already
+# closed, and it was closed by the exit, not by the user. What is left on screen
+# is the remnant of a session, and the next snapshot of it — the daemon's, back
+# on duty, or the `save` of the user's second press of Reboot — would overwrite
+# the exact one with that remnant. Measured on the workstation: workspace 1 shut
+# cleanly, Firefox on workspace 2 held its dialog past the minute, the second
+# Reboot saved Firefox alone, and the next login reopened one workspace of two.
+#
+# So a cancelled exit leaves a hold: the survivors' addresses and the compositor
+# instance. While nothing is open but survivors, the user is still finishing that
+# exit — resolving the dialog, closing what is left — and no snapshot is taken.
+# The first window that is not a survivor means they went back to work: the hold
+# is dropped and recording resumes. It lives in XDG_RUNTIME_DIR and names its
+# instance, so it cannot outlive the session it describes.
+
+def exit_hold_active(hold, clients, instance):
+    """True while the session is still only what a cancelled exit left of it."""
+    if not hold or hold.get("instance") != instance:
+        return False
+    keep = set(hold.get("survivors") or [])
+    return all(c["address"] in keep for c in clients if c.get("address"))
+
+
+def exit_hold_write(survivors):
+    with open(os.open(EXIT_HOLD, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w",
+              encoding="utf-8") as fh:
+        json.dump({"instance": os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", ""),
+                   "survivors": survivors}, fh)
+
+
+def snapshot_held():
+    """Whether a snapshot must not be taken now; drops a hold that has expired."""
+    try:
+        with open(EXIT_HOLD, encoding="utf-8") as fh:
+            hold = json.load(fh)
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError):
+        hold = None
+    try:
+        clients = hypr_json("clients")
+    except (RuntimeError, OSError, ValueError):
+        return True                        # cannot tell: keep the exact snapshot
+    if exit_hold_active(hold, clients, os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")):
+        return True
+    try:
+        os.unlink(EXIT_HOLD)
+    except OSError:
+        pass
+    return False
+
+
 # ── Closing windows: the one graceful close ──────────────────────────────────
 #
 # Every part of W that has to clear windows out of the way comes through here:
@@ -1519,6 +1578,55 @@ def restore_lock_held():
 # one would buy is losing somebody's work.
 
 CLOSE_TIMEOUT = 60.0     # a cancelled save dialog is answered at human speed
+CLOSE_GRACE = 2.0        # until_cancelled: a window with no dialog is gone by then
+
+# An exit (logout/reboot/shutdown) does not give up on a clock. A minute is long
+# for a dialog nobody is looking at and short for one somebody is reading, and
+# running out of it abandoned the reboot without a word beyond a notification
+# that arrived long after the user had stopped watching — so the second press of
+# Reboot became part of the procedure. Instead, after the grace, one card says
+# what the exit is waiting for and stays (critical: no expiry, through DND); the
+# exit goes on by itself the moment the last window closes, however late, and a
+# click on the card — or dismissing it — is the cancel. With no card to show
+# (no notification server answering), the bounded wait is what is left.
+
+def wait_for_user(workspace):
+    """Wait for the open windows with a cancel card up. True: they all closed.
+    False: the user cancelled. None: no card could be shown."""
+    try:
+        names = sorted({c.get("initialClass") or c.get("class") or "?"
+                        for c in hypr_json("clients") if c.get("address")
+                        and (workspace is None
+                             or (c.get("workspace") or {}).get("name") == workspace)})
+    except (RuntimeError, OSError, ValueError):
+        names = []
+    body = ", ".join(names) + "\n" + _t(
+        "session.waiting_body", "Answer the dialog to go on — click here to cancel")
+    try:
+        card = subprocess.Popen(
+            ["notify-send", "-a", _t("session.app", "Session"), "-u", "critical", "-p",
+             f"--action=default={_t('session.cancel', 'Cancel')}", "--wait",
+             _t("session.waiting", "Waiting for windows to close"), body],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    except OSError:
+        return None
+    card_id = card.stdout.readline().strip()
+    if not card_id.isdigit():
+        card.wait()
+        return None
+    while open_windows(workspace):
+        if card.poll() is not None:        # clicked or dismissed: either way, stop
+            return False
+        time.sleep(0.5)
+    subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
+                    "--object-path", "/org/freedesktop/Notifications", "--method",
+                    "org.freedesktop.Notifications.CloseNotification", card_id],
+                   capture_output=True, check=False)
+    try:
+        card.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        card.kill()
+    return True
 
 
 def open_windows(workspace=None):
@@ -1681,12 +1789,15 @@ def finish_own_session(pid, profile, since):
         warn(f"{os.path.basename(profile)}: session file left untouched ({e})")
 
 
-def close_windows(workspace=None, timeout=CLOSE_TIMEOUT):
+def close_windows(workspace=None, timeout=CLOSE_TIMEOUT, keep_snapshot=False,
+                  until_cancelled=False):
     """Ask every window to close and wait until it has. True if they all did.
 
     False means at least one window is still open — a cancelled save dialog, all
     but always — and every caller treats that as "the user chose to keep working"
-    and abandons whatever it was about to do.
+    and abandons whatever it was about to do. With keep_snapshot, a False also
+    leaves the exit hold behind (see exit_hold_active). With until_cancelled,
+    the timeout applies only when no cancel card can be shown (wait_for_user).
     """
     addrs = open_windows(workspace)
     if not addrs:
@@ -1699,15 +1810,35 @@ def close_windows(workspace=None, timeout=CLOSE_TIMEOUT):
     for addr in addrs:
         dispatch("hl.dsp.window.close", {"window": f"address:{addr}"})
 
-    deadline = time.time() + timeout
-    while open_windows(workspace) and time.time() < deadline:
-        time.sleep(0.5)
+    def wait(seconds):
+        deadline = time.time() + seconds
+        while open_windows(workspace) and time.time() < deadline:
+            time.sleep(0.5)
+
+    cancelled = False
+    if until_cancelled:
+        wait(CLOSE_GRACE)
+        if open_windows(workspace):
+            done = wait_for_user(workspace)
+            if done is None:
+                wait(timeout)
+            cancelled = done is False
+    else:
+        wait(timeout)
 
     if not open_windows(workspace):
         for pid, profile in quits.items():
             finish_own_session(pid, profile, since)
 
-    if open_windows(workspace):
+    survivors = open_windows(workspace)
+    if survivors:
+        if keep_snapshot:
+            try:
+                exit_hold_write(survivors)
+            except OSError as e:
+                warn(f"could not hold the snapshot: {e}")
+        if cancelled:
+            return False                   # the user's own click needs no reply
         # The notification lives here rather than in the callers because what the
         # user needs to know is the same in both: the thing they asked for did
         # not happen, and their windows are untouched.
@@ -2410,9 +2541,9 @@ def do_daemon():
         # a busy session from writing continuously.
         if now - dirty_since < DEBOUNCE_SEC or now - last_write < interval:
             continue
-        if restore_lock_held():
-            dirty_since = None             # a restore in flight is not the session
-            continue
+        if restore_lock_held() or snapshot_held():
+            dirty_since = None             # a restore in flight, or what a cancelled
+            continue                       # exit left, is not the session
         try:
             write_snapshot(take_snapshot(values))
             last_write = now
@@ -2467,10 +2598,15 @@ Commands:
   status [--porcelain]        Show the mode and what is currently saved
   save                        Snapshot the session now
   restore [--dry-run]         Reopen the saved session (--dry-run just lists it)
-  close [--workspace <name>] [--timeout <sec>] [--dry-run]
+  close [--workspace <name>] [--timeout <sec>] [--keep-snapshot]
+        [--until-cancelled] [--dry-run]
                               Ask every window to close and wait for it, leaving
                               any "Save changes?" dialog reachable. Exit 1 if a
                               window stayed open (the user cancelled a dialog).
+                              --keep-snapshot: if so, keep the saved session
+                              until a new window opens (a cancelled exit).
+                              --until-cancelled: no time limit; a notification
+                              waits for the windows, a click on it cancels.
                               --dry-run only prints how many would be asked.
   forget                      Delete the saved session
   layout list [--porcelain]   Show the saved named layouts
@@ -2592,6 +2728,8 @@ def main(argv):
             return 0                       # off means off, silently
         if not hypr_alive():
             die("no Hyprland session to save")
+        if snapshot_held():
+            return 0                       # the exact snapshot of a cancelled exit stands
         try:
             write_snapshot(take_snapshot(values))
         except (RuntimeError, OSError, ValueError) as e:
@@ -2619,7 +2757,7 @@ def main(argv):
         rest = list(args)
         while rest:
             a = rest.pop(0)
-            if a == "--dry-run":
+            if a in ("--dry-run", "--keep-snapshot", "--until-cancelled"):
                 continue
             if a == "--workspace" and rest:
                 ws = rest.pop(0)
@@ -2635,10 +2773,11 @@ def main(argv):
         if "--dry-run" in args:
             print(len(open_windows(ws)))
             return 0
-        return 0 if close_windows(ws, timeout) else 1
+        return 0 if close_windows(ws, timeout, "--keep-snapshot" in args,
+                                  "--until-cancelled" in args) else 1
 
     if cmd == "forget":
-        for path in (SNAPSHOT, RESTORE_LOCK):
+        for path in (SNAPSHOT, RESTORE_LOCK, EXIT_HOLD):
             try:
                 os.unlink(path)
             except FileNotFoundError:

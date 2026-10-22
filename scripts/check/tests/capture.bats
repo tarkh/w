@@ -19,18 +19,17 @@ setup() {
   export HOME="$BATS_TEST_TMPDIR/home"
   mkdir -p "$HOME"
   hyprctl_offline          # no live compositor unless a test stubs one
-  export W_STYLE_LIB="$BATS_TEST_TMPDIR/no-w-style"   # no theme unless a test installs one
   source "$REPO/rootfs/usr/lib/w/w-capture-lib.sh"
 }
 
-# hyprctl answering `monitors`, `activewindow` and `getoption general:border_size`
-# with frozen JSON. The border defaults to 0 so the clamp cases stay bare rectangles;
-# `decoration:rounding` likewise (the outline cases set it).
+# hyprctl answering `monitors`, `activewindow` and the window's own `getprop …
+# border_size` / `rounding` with frozen JSON. The border defaults to 0 so the clamp
+# cases stay bare rectangles; the rounding likewise (the outline cases set it).
 hypr_geom_stub() { # <monitors-json> <activewindow-json> [border-size] [rounding]
   local bin="$BATS_TEST_TMPDIR/bin"
   mkdir -p "$bin"
-  printf '#!/usr/bin/env bash\nfor a in "$@"; do case "$a" in\n  monitors) echo %s; exit 0 ;;\n  activewindow) echo %s; exit 0 ;;\n  general:border_size) echo %s; exit 0 ;;\n  decoration:rounding) echo %s; exit 0 ;;\nesac; done\nexit 1\n' \
-    "'$1'" "'$2'" "'{\"int\":${3:-0}}'" "'{\"int\":${4:-0}}'" > "$bin/hyprctl"
+  printf '#!/usr/bin/env bash\nfor a in "$@"; do case "$a" in\n  monitors) echo %s; exit 0 ;;\n  activewindow) echo %s; exit 0 ;;\n  border_size) echo %s; exit 0 ;;\n  rounding) echo %s; exit 0 ;;\nesac; done\nexit 1\n' \
+    "'$1'" "'$2'" "'{\"border_size\":${3:-0}}'" "'{\"rounding\":${4:-0}}'" > "$bin/hyprctl"
   chmod 755 "$bin/hyprctl"
   PATH="$bin:$PATH"
 }
@@ -130,6 +129,20 @@ xdg_stub() { # <answer>  (empty = the tool exists but prints nothing)
   hypr_geom_stub "$MON" '{"address":"0x1","at":[0,0],"size":[1904,1021],"fullscreen":2}' 2
   run w_capture_window_geom
   [ "$output" = "0,0 1904x1021" ]
+}
+
+@test "window geom: a maximised window keeps its border — only fullscreen drops it" {
+  # Measured: Hyprland draws border and rounding around a maximised window (mode 1).
+  hypr_geom_stub "$MON" '{"address":"0x1","at":[10,48],"size":[1884,963],"fullscreen":1}' 2 14
+  [ "$(w_capture_window_geom)" = "8,46 1888x967" ]
+  [ "$(w_capture_window_radius)" = 16 ]
+}
+
+@test "window geom: a window a rule left borderless is its bare surface" {
+  # The kiosk recording window (`border_size = 0` by rule) under a theme with a
+  # border: the rectangle is the window's, not the theme's.
+  hypr_geom_stub "$MON" "$(win 632 330 640 400)" 0 0
+  [ "$(w_capture_window_geom --clamp)" = "632,330 640x400" ]
 }
 
 @test "window geom: --clamp adds the border first, then trims to the monitor" {
@@ -253,36 +266,14 @@ teardown() {
 need_magick() { command -v magick >/dev/null 2>&1 || skip "ImageMagick is not installed"; }
 px() { magick "$1" -format "%[pixel:p{$2,$3}]" info:; }   # <png> <x> <y>
 
-# A stand-in for w-style's SDK: the same three functions capture-lib calls, pointing
-# at a theme dir the test owns. The real resolution (pin vs system) is w-style's own.
-theme_stub() { # <rounding> <border>   (a geometry.conf that sets nothing when both empty)
-  local lib="$BATS_TEST_TMPDIR/w-style" t="$BATS_TEST_TMPDIR/theme"
-  mkdir -p "$lib" "$t"
-  printf 'w_userscope_theme_dir() { echo %q; }\nresolve_theme_file() { echo "$1/$2"; }\nload_geometry() { source "$1"; }\n' "$t" > "$lib/core.sh"
-  : > "$t/geometry.conf"
-  [[ -z "$1" ]] || echo "W_GEO_WINDOW_ROUNDING=$1" >> "$t/geometry.conf"
-  [[ -z "$2" ]] || echo "W_GEO_WINDOW_BORDER=$2"   >> "$t/geometry.conf"
-  export W_STYLE_LIB="$lib"
-}
-
-@test "theme geometry: the active theme's geometry.conf wins over what the compositor draws" {
-  theme_stub 0 3
-  hypr_geom_stub "$MON" "$(win 10 48 1884 963)" 2 14
-  [ "$(w_capture_theme_geo W_GEO_WINDOW_ROUNDING)" = 0 ]
-  [ "$(w_capture_theme_geo W_GEO_WINDOW_BORDER)" = 3 ]
-  [ "$(w_capture_window_radius)" = 0 ]                       # square windows: nothing to round, border or not
-  [ "$(w_capture_window_geom)" = "7,45 1890x969" ]           # the theme's 3 px border, not the live 2
-}
-
-@test "theme geometry: an unreadable theme falls back to the compositor's own values" {
-  hypr_geom_stub "$MON" "$(win 10 48 1884 963)" 2 14
-  [ "$(w_capture_theme_geo W_GEO_WINDOW_BORDER)" = 2 ]
-  [ "$(w_capture_theme_geo W_GEO_WINDOW_ROUNDING)" = 14 ]
-}
-
 @test "window radius: rounding plus the border, in logical pixels" {
   hypr_geom_stub "$MON" "$(win 10 48 1884 963)" 2 14
   [ "$(w_capture_window_radius)" = 16 ]
+}
+
+@test "window radius: a square-cornered window has radius 0, border or not" {
+  hypr_geom_stub "$MON" "$(win 10 48 1884 963)" 3 0
+  [ "$(w_capture_window_radius)" = 0 ]
 }
 
 @test "window radius: a fullscreen window has no outline, so no radius" {
@@ -297,6 +288,17 @@ theme_stub() { # <rounding> <border>   (a geometry.conf that sets nothing when b
   [ "$(magick identify -format '%wx%h' "$BATS_TEST_TMPDIR/out.png")" = 200x100 ]
   [[ "$(px "$BATS_TEST_TMPDIR/out.png" 0 0)" == *",0)" ]]
   [[ "$(px "$BATS_TEST_TMPDIR/out.png" 100 50)" == "srgba(48,96,192,1)" ]]
+}
+
+@test "window dress: radius 0 cuts nothing — the frame stays opaque to the corner" {
+  # roundrectangle with a zero radius draws nothing; fed to DstIn, that erased the
+  # whole frame. A square window is dressed with its shadow only.
+  need_magick
+  magick -size 200x100 xc:'#3060c0' "$BATS_TEST_TMPDIR/in.png"
+  w_capture_window_dress 0 200 no < "$BATS_TEST_TMPDIR/in.png" > "$BATS_TEST_TMPDIR/out.png"
+  [ "$(magick "$BATS_TEST_TMPDIR/out.png" -format '%[opaque]' info:)" = True ]
+  w_capture_window_dress 0 200 yes < "$BATS_TEST_TMPDIR/in.png" > "$BATS_TEST_TMPDIR/out.png"
+  [ "$(magick "$BATS_TEST_TMPDIR/out.png" -format '%[fx:maxima.a]' info:)" = 1 ]
 }
 
 @test "window dress: the shadow grows the canvas, the window is still on top" {
@@ -343,10 +345,9 @@ theme_stub() { # <rounding> <border>   (a geometry.conf that sets nothing when b
   [[ "$(px "$BATS_TEST_TMPDIR/m.png" 0 200)" == *",0)" ]]            # left edge cut: no corner arc there
 }
 
-@test "window mask: a square-cornered theme has nothing to mask" {
+@test "window mask: a square-cornered window has nothing to mask" {
   need_magick
-  theme_stub 0 2
-  hypr_geom_stub "$MON" "$(win 10 48 1884 963)" 2 14
+  hypr_geom_stub "$MON" "$(win 10 48 1884 963)" 2 0
   ! w_capture_window_mask "$BATS_TEST_TMPDIR/m.png"
 }
 
@@ -381,6 +382,15 @@ theme_stub() { # <rounding> <border>   (a geometry.conf that sets nothing when b
   touch "$BATS_TEST_TMPDIR/renderD128"
   WIN="$(win 10 48 1884 963)" BORDER=2 ROUNDING=14 record_start auto mp4 window
   [ "$status" -eq 0 ]
+  grep -q -- '-c h264_vaapi ' "$BATS_TEST_TMPDIR/argv"
+  ! grep -q -- 'movie=' "$BATS_TEST_TMPDIR/argv"
+}
+
+@test "record mask: a square window records bare, mask on or not, GPU kept" {
+  touch "$BATS_TEST_TMPDIR/renderD128"
+  WIN="$(win 632 330 640 400)" record_start auto mp4 window WINDOW_MASK=yes
+  [ "$status" -eq 0 ]
+  grep -q -- '-g 632,330 640x400 ' "$BATS_TEST_TMPDIR/argv"
   grep -q -- '-c h264_vaapi ' "$BATS_TEST_TMPDIR/argv"
   ! grep -q -- 'movie=' "$BATS_TEST_TMPDIR/argv"
 }

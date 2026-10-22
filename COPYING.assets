@@ -64,15 +64,17 @@ Authored for W by tarkh, licensed **CC BY-SA 4.0**
 - `rootfs/etc/w/themes/w/logo/W-logo.svg`, `W-logo-256x256.png` — the W mark
 - `rootfs/etc/w/themes/w/wallpaper/*.webp`, `preview.webp` — the default
   wallpaper of theme `w`, in the four shipped resolutions plus its thumbnail
+- `rootfs/etc/w/themes/nebula/wallpaper/*.webp`, `preview.webp` — the wallpaper
+  of theme `nebula`, likewise
 - `rootfs/usr/share/plymouth/themes/w/*.png` — boot splash bar, bullet, lock
 - `rootfs/boot/grub/themes/w/select/*.png` — GRUB selection frame (9-slice)
 
 Verified as original: none of these match any asset shipped by Plymouth, GRUB or
 Kvantum on a stock Arch system.
 
-The wallpaper was drawn for W from scratch, to the palette already in
-`themes/w/theme.conf` rather than the other way round — so it carries no upstream
-image and `theme.conf` is unchanged by it. It replaces an earlier wallpaper that
+Both wallpapers were drawn for W from scratch and carry no upstream image; each
+theme's `theme.conf` is extracted from its own wallpaper by `w-theme new`, so the
+palettes are derived from W's artwork too. The `w` wallpaper replaces an earlier one that
 was derived from a downloaded photograph whose licence was never established.
 That one shipped in the pre-release snapshots v0.1.1–v0.1.5 of the throwaway test
 repository and nowhere else; it is gone from this tree, and the production

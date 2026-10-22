@@ -36,11 +36,16 @@ Info: Запоминание и восстановление сессии (ок�
   status [<span class="f">--porcelain</span>]        Режим и что сейчас сохранено
   save                        Снять снимок сессии сейчас
   restore [<span class="f">--dry-run</span>]         Открыть сохранённую сессию (<span class="f">--dry-run</span> перечислит)
-  close [<span class="f">--workspace</span> &lt;имя&gt;] [<span class="f">--timeout</span> &lt;сек&gt;] [<span class="f">--dry-run</span>]
+  close [<span class="f">--workspace</span> &lt;имя&gt;] [<span class="f">--timeout</span> &lt;сек&gt;] [<span class="f">--keep-snapshot</span>]
+        [<span class="f">--until-cancelled</span>] [<span class="f">--dry-run</span>]
                               Попросить все окна закрыться и дождаться их,
                               оставив диалог «Сохранить изменения?» доступным.
                               Код 1, если окно осталось открыто — юзер отменил
-                              диалог. <span class="f">--dry-run</span> печатает, скольких попросили бы.
+                              диалог. <span class="f">--keep-snapshot</span>: тогда сохранённая сессия
+                              держится, пока не откроется новое окно (отменённый
+                              выход). <span class="f">--until-cancelled</span>: без лимита времени;
+                              уведомление ждёт окна, нажатие на него отменяет.
+                              <span class="f">--dry-run</span> печатает, скольких попросили бы.
   forget                      Удалить сохранённую сессию
   layout list [<span class="f">--porcelain</span>]   Показать сохранённые именованные раскладки
   layout save &lt;имя&gt; [<span class="f">--workspace</span>]

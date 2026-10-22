@@ -75,6 +75,27 @@ snapshots, and <a href="../recovery.html">Recovery</a> walks the restore step by
 also ships a copy of that page on disk, so it is readable even when the
 system does not boot.</li>
 </ul>
+<h2 id="snapshots-and-disk-space">Snapshots and disk space <a class="anchor" href="#snapshots-and-disk-space" aria-hidden="true">#</a></h2>
+<p>Snapshots cost almost nothing while data stays put: a snapshot only holds on to
+what was deleted or overwritten after it was taken. W bounds them so they never
+grow on their own.</p>
+<ul>
+<li><strong>System (root)</strong> — snap-pac snapshots every package transaction; the last 20
+(about 10 upgrades) are kept, plus the permanent <code>W initial state</code>.</li>
+<li><strong>Your home</strong> — two streams. An hourly snapshot, of which the last 6 hours, 7
+days and 2 weeks are kept. And one snapshot before every W update that
+changes something (an update that only brings documentation takes none): the
+last 10 are kept. When the disk has less than 20% free space, W keeps only
+the last 2 of those, so infrequent updates on a full disk cannot hold on to
+months of deleted files.</li>
+<li><strong>Package cache</strong> — <code>paccache</code> runs weekly and keeps the installed version of
+each package plus one previous version; packages that are no longer installed
+are removed from the cache.</li>
+</ul>
+<p><code>snapper -c home list</code> shows your home snapshots; <code>snapper -c home undochange</code>
+restores files from one. The system journal of <code>snapper-cleanup</code> reports
+&quot;quota not working (qgroup not set)&quot; on every run — that is expected, W does
+not use btrfs quotas.</p>
 <h2 id="the-update-channel-of-w-itself">The update channel of W itself <a class="anchor" href="#the-update-channel-of-w-itself" aria-hidden="true">#</a></h2>
 <p><code>w-update</code> upgrades <em>packages</em>; the distribution's own configuration travels
 the <code>w-sync</code> channel (edge) — see <code>w-sync check</code> and the update chapter of the
@@ -83,7 +104,7 @@ FAQ.</p>
     </article>
     <nav class="pager"><a class="prev" href="input.html"><small>Previous</small>Keyboard, mouse and touchpad</a><a class="next" href="security.html"><small>Next</small>Security</a></nav>
   </main>
-  <aside class="toc"><h2>On this page</h2><ul><li><a href="#the-wupdate-command">The w-update command</a></li><li><a href="#where-you-see-updates">Where you see updates</a></li><li><a href="#if-an-update-goes-wrong">If an update goes wrong</a></li><li><a href="#the-update-channel-of-w-itself">The update channel of W itself</a></li></ul></aside>
+  <aside class="toc"><h2>On this page</h2><ul><li><a href="#the-wupdate-command">The w-update command</a></li><li><a href="#where-you-see-updates">Where you see updates</a></li><li><a href="#if-an-update-goes-wrong">If an update goes wrong</a></li><li><a href="#snapshots-and-disk-space">Snapshots and disk space</a></li><li><a href="#the-update-channel-of-w-itself">The update channel of W itself</a></li></ul></aside>
 </div>
 </body>
 </html>

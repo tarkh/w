@@ -11,9 +11,9 @@ description: >-
   RGB devices for just one user.
 sources:
   - path: .claude/library/w-theme.md
-    sha256: b2a973c39eac5eebda173cfc43b710a91ab4cb68ae63a599c3ccf45e6e6eaa04
+    sha256: af639f1f32d207f1c340875e6a62780b6c7a0439d700ccc48b8caea95e023844
   - path: .claude/library/w-style.md
-    sha256: 47db1212768d548f3c1df1d2bde549d97c105cf7c24703e8a93625657102ffd6
+    sha256: 9cc1c525e21d8b113ba995b0d12ebecab3c39fdd8bc1fb8d27f2c019b6715ec0
   - path: .claude/library/w-wallpaper.md
     sha256: 2499a3c31263d765ac650f83ea6e84264c64424627e28df47631e425f9740f41
   - path: .claude/library/w-appearance.md
@@ -101,7 +101,9 @@ at a container (or at a raw accent) where it should point at `W_ON_SURFACE_ACCEN
 - The image is cover-cropped to 16:9 and rendered into every resolution tier
   (5120/3840/2560/1920), so a 1080p pick still works on a 4K screen — upscaled, hence
   softer. Any common format is accepted (png/jpeg/webp/avif/heic/tiff/bmp/jxl) and is
-  always re-encoded to webp inside the theme, so the source format never matters.
+  always re-encoded to webp inside the theme, so the source format never matters —
+  but its quality does: a source already compressed lossily (jpeg, webp) keeps its
+  own grain on flat fills, so for clipart/vector art suggest a png export.
 - The palette is extracted with matugen (Material HCT) from the **cropped** master and
   mapped into W's pigments in OKLCH, then every foreground is pushed until it clears its
   WCAG contrast target. A washed-out image gets its chroma synthesised so the theme still

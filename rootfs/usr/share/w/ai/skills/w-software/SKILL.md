@@ -11,7 +11,7 @@ sources:
   - path: .claude/library/package-python.md
     sha256: 0dfe554db6f96ca5b1d267e67c877b14cb3cfdc86988a265d234a378d2c8d790
   - path: .claude/library/home-hygiene.md
-    sha256: f71b45a02e308c86fbe243901137b960901f4f59f76dfbf4b3db991dc87d1cfd
+    sha256: 8f17f221b9f753afb7beb324707fbea8f81f27b5fcb25d30a94c9ad172836908
 tools:
   - w_pacman_install
   - w_pacman_remove

@@ -14,7 +14,7 @@ sources:
   - path: .claude/library/w-reset.md
     sha256: dc6b89319dae0e5bc8a9ef4f13f842c7aa7aa17fd7a945477ef4c928769c8868
   - path: .claude/library/update-system.md
-    sha256: aecf9b60cc91beadd027df5e05f20360422c646461c65e3349670cfa1a89d058
+    sha256: 3f261c56d090db7957ce693dc795f2b7966be0d2299ed51300a3dae702d6ac9b
   - path: .claude/library/w-rollback.md
     sha256: 1099b89dead5e78070ffcd430de9775eb954a46b6bc7575d934966e991e31948
 tools:
@@ -187,7 +187,7 @@ is a no-op (stable updates arrive as the signed `w-system` package via `w-update
 w-sync check     # fetch + behind-count + incoming commits → /var/lib/w/state/sync.json
 w-sync log       # the pending commits
 w-sync status    # channel + current state (incl. whether signatures are required)
-w-sync update    # fetch → VERIFY SIGNATURE → pre-snapshot home → pull --ff-only → selective apply
+w-sync update    # fetch → VERIFY SIGNATURE → pull --ff-only → pre-snapshot home → selective apply
 ```
 
 **An update is verified before anything on the machine changes.** Every W release is
@@ -245,8 +245,9 @@ records a real count only when it actually reached the remote; any refusal write
 as a warning, so a stale-but-honest state is never presented as "up to date". If you
 need certainty, `w-sync log` fetches and fails loudly — when run by the owner or root.
 
-`update` takes a **home snapshot first** (`snapper -c home`), fast-forwards, then
-runs `apply.sh` only for the modules whose files changed (mapped via
+`update` fast-forwards, takes **one home snapshot** (`snapper -c home`, only when
+something will actually apply — a docs-only update takes none), then runs
+`apply.sh` only for the modules whose files changed (mapped via
 `/usr/share/w/update/sync-map`; unmatched changes fall back to a full apply). A
 background `w-sync-check` timer (6h) refreshes the shared state — it is enabled for
 every user's session, but only the owner's run actually rewrites it. If `release.conf`
@@ -362,7 +363,7 @@ rolled back at the filesystem level. Pre-transaction snapshots are taken around
 `pacman` (snap-pac) and around `w-sync update`. To boot an older system state, pick
 a snapshot from the boot menu — **grub-btrfs** submenu on GRUB installs, the
 `//Snapshots` entries on Limine (encrypted) installs. For the snapshot policy and
-retention, see the **w-updates** / **w-diagnostics** skills.
+retention, see the **w-diagnostics** skill (disk-space housekeeping).
 
 **Rolling back is the user's own command, not yours.** `w-rollback` is W's single
 verb for it and it routes per boot path: on Limine it hands over to

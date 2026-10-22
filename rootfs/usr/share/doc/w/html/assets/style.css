@@ -6,22 +6,22 @@
  * follows the desktop without this file knowing any theme. Keep every visual
  * decision behind a variable for exactly that reason. */
 :root {
-  --w-bg: #09000e;
-  --w-surface-dim: #140020;
-  --w-surface: #200030;
-  --w-surface-variant: #2e0045;
-  --w-text: #a197a4;
-  --w-text-dim: #8a7a8e;
-  --w-text-bright: #e8e2ea;
-  --w-text-faint: #5a4a63;
-  --w-accent-ink: #a170ab;
-  --w-primary: #91619b;
-  --w-primary-container: #643670;
+  --w-bg: #09000c;
+  --w-surface-dim: #16001c;
+  --w-surface: #22002a;
+  --w-surface-variant: #32003c;
+  --w-text: #a296a5;
+  --w-text-dim: #897b8d;
+  --w-text-bright: #e6e3e7;
+  --w-text-faint: #5c4961;
+  --w-accent-ink: #a36eb1;
+  --w-primary: #935ea0;
+  --w-primary-container: #663372;
   --w-on-primary: #ffffff;
-  --w-vivid: #a526bf;
-  --w-green: #7e9b6b;
-  --w-yellow: #c9a26b;
-  --w-cyan: #6fa3a8;
+  --w-vivid: #a71dc3;
+  --w-green: #82964b;
+  --w-yellow: #b77e43;
+  --w-cyan: #279cb3;
   --w-radius: 14px;
   --w-radius-sm: 8px;
   --w-font-ui: "Inter", system-ui, sans-serif;

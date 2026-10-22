@@ -101,7 +101,7 @@ ink_pixel()  { magick "$1" -format '%[hex:p{128,128}]' info:; } # centre of the 
   plymouth_logo_install "$theme" "$out/plain.png" 1920x1080 >/dev/null
   W_PLYMOUTH_LOGO="#2e7d32" plymouth_logo_install "$theme" "$out/tint.png" 1920x1080 >/dev/null
   [[ "$(ink_pixel "$out/tint.png")" == "2E7D32FF" ]]
-  [[ "$(ink_pixel "$out/plain.png")" == "643670FF" ]]
+  [[ "$(ink_pixel "$out/plain.png")" == "663372FF" ]]
   # tinting only touches RGB: the anti-aliased edge (alpha) is the same raster
   local ae; ae="$(magick compare -metric AE \( "$out/plain.png" -alpha extract \) \
                                          \( "$out/tint.png" -alpha extract \) null: 2>&1)"
@@ -112,7 +112,7 @@ ink_pixel()  { magick "$1" -format '%[hex:p{128,128}]' info:; } # centre of the 
   command -v magick &>/dev/null || skip "imagemagick not installed"
   local theme="$BATS_TEST_TMPDIR/theme" out="$BATS_TEST_TMPDIR/own.png"
   mkdir -p "$theme/logo"
-  sed 's/fill:#643670/fill:#0000ff/' "$W_PLYMOUTH_BASE_THEME/$W_PLYMOUTH_LOGO_SVG_REL" \
+  sed 's/fill:#663372/fill:#0000ff/' "$W_PLYMOUTH_BASE_THEME/$W_PLYMOUTH_LOGO_SVG_REL" \
     > "$theme/$W_PLYMOUTH_LOGO_SVG_REL"
   W_PLYMOUTH_LOGO="#2e7d32" plymouth_logo_install "$theme" "$out" 1920x1080 >/dev/null
   [[ "$(ink_pixel "$out")" == "0000FFFF" ]]

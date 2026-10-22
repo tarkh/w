@@ -20,8 +20,10 @@
 # "ask, wait, abort if anything stayed" is a policy — two copies of it would drift
 # the first time one was tuned. See w-session.md.
 #
-# A window still open after the wait means a save dialog was cancelled: the user
-# chose to keep working, so nothing is forced and the exit is abandoned.
+# There is no time limit: a window with a save dialog is waited for however long
+# the answer takes, and the exit goes on by itself once the last window closes.
+# A card says what is being waited for; clicking it (or a save dialog's Cancel
+# followed by that click) abandons the exit, and nothing is ever forced.
 #
 # Usage: w-session-exit <logout|reboot|shutdown>
 set -uo pipefail
@@ -60,8 +62,11 @@ systemctl --user stop w-session-save.service >/dev/null 2>&1 || true
 w-session save >/dev/null 2>&1 || true
 
 # Aborts (and notifies) on its own if anything stayed open — the user keeps
-# working, so the session goes back to being recorded.
-if ! w-session close; then
+# working, so the daemon comes back. But what is open now is only what the exit
+# left of the session, so `--keep-snapshot` holds the exact snapshot above until
+# a new window opens: the second press of Reboot, after the dialog is dealt with,
+# must not save the remnant over it (see exit_hold_active in w-session).
+if ! w-session close --keep-snapshot --until-cancelled; then
   systemctl --user start w-session-save.service >/dev/null 2>&1 || true
   exit 1
 fi

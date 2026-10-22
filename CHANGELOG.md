@@ -8,6 +8,45 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.24.0
+
+- **New look for the `w` theme, and a second system theme.** The default `w`
+  theme has a new wallpaper and a palette retuned to it; the W mark follows the
+  new accent. If you are on `w`, the update repaints the desktop, the login
+  screen and the boot screens by itself. `nebula` is new: `w-theme set nebula`.
+- **Snapshots no longer eat the disk.** Your home snapshots taken before each
+  update were never pruned past snapper's default of 50 — on a real machine they
+  held over 100 GB of long-deleted files. W now keeps the last 10, and only 2
+  when the disk has less than 20% free; the excess goes within the hour after
+  the update. An update now leaves one home snapshot instead of two, and none
+  when it changes nothing on the system.
+- **Duplicate `W initial state` snapshots.** On a machine with a long snapshot
+  list, every full update added another permanent `W initial state` that is
+  never cleaned up. Fixed; the copies already made stay until you remove them.
+  List them, keep the oldest (lowest number), delete the rest:
+
+      sudo snapper -c root list | grep 'W initial state'
+      sudo snapper -c root delete <number> [<number> ...]
+
+- **Package cache rotation.** `/var/cache/pacman/pkg` grew without limit. A
+  weekly `paccache` run now keeps the last 2 versions of each installed package
+  and nothing of removed ones.
+- **Reboot and log out no longer lose your session.** If an app's "save
+  changes?" dialog was left open past 60 seconds, the exit gave up after the
+  other windows had already closed, and the next press saved only what was left
+  — the next login reopened a single workspace. Now an exit waits for you: a
+  card lists what it is waiting for, the exit continues once the last window
+  closes, and a click on the card cancels it with your saved session intact.
+- **Blur behind Ghostty and other GTK 4 windows** is back. GTK 4.24 told
+  Hyprland to draw no blur behind translucent windows; W now leaves blur to the
+  compositor. Takes effect from your next login.
+- **Window screenshots and recordings** take the border and corner radius from
+  the window itself, not from the theme: a window with no border is captured
+  without a strip of wallpaper, a square window no longer gets rounded corners
+  (or comes out blank), and a maximised window keeps its frame.
+- **`w-theme new`** no longer leaves a fine dot-grid grain on the flat colour
+  areas of illustration-style wallpapers; files are slightly smaller too.
+
 ## v0.23.0
 
 - **Audio pack.** `w-pack install audio` sets up music production on W's

@@ -2,13 +2,13 @@
 -- require()d by hyprland.lua; values go into general.col.* + misc.background_color
 -- and the group{}/groupbar{} block (tab pills).
 return {
-  border_active = "rgba(91619bff)",
-  border_inactive = "rgba(200030ff)",
+  border_active = "rgba(935ea0ff)",
+  border_inactive = "rgba(22002aff)",
   bg = "rgba(000000ff)",
-  group_border_active = "rgba(91619bff)",
-  group_border_inactive = "rgba(200030ff)",
-  tab_active_bg = "rgba(643670ff)",
-  tab_inactive_bg = "rgba(2e0045ff)",
+  group_border_active = "rgba(935ea0ff)",
+  group_border_inactive = "rgba(22002aff)",
+  tab_active_bg = "rgba(663372ff)",
+  tab_inactive_bg = "rgba(32003cff)",
   tab_active_fg = "rgba(ffffffff)",
-  tab_inactive_fg = "rgba(a197a4ff)",
+  tab_inactive_fg = "rgba(a296a5ff)",
 }

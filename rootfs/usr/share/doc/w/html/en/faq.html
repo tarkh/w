@@ -44,8 +44,9 @@ reference of this documentation has a page per tool.</p>
 <h2 id="updates-and-recovery">Updates and recovery <a class="anchor" href="#updates-and-recovery" aria-hidden="true">#</a></h2>
 <p><strong>An update broke my system. How do I roll back?</strong>
 Reboot, pick the pre-upgrade snapshot in the boot menu, and follow
-<a href="recovery.html">Recovery</a> (a copy is on disk). Snapper keeps the last few
-transactions.</p>
+<a href="recovery.html">Recovery</a> (a copy is on disk). Snapper keeps the last 20
+system snapshots, about 10 upgrades — see
+<a href="guide/updates.html#snapshots-and-disk-space">snapshots and disk space</a>.</p>
 <p><strong>Why does an update say &quot;reboot pending&quot;?</strong>
 The running kernel differs from the installed one. The reboot offered by
 <code>w-update</code> closes windows gracefully first — cancel a save dialog and the

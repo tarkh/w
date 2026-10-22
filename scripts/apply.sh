@@ -211,31 +211,41 @@ fix_snapper() {
   systemctl --global enable w-snapshot-notify.service 2>/dev/null || true
 }
 
-# Separate `home` snapper config (update-system Phase 4): soft, timeline-only
-# retention protecting user config edits. Relies on the @home_snapshots subvolume +
-# its fstab entry from disk.sh; on a pre-Phase-4 install it isn't there, so we skip
-# rather than let snapper create a nested (inconsistent) .snapshots subvolume. Not
-# pacman-coupled (snap-pac only hooks the root config by default), no grub-btrfs.
+# Separate `home` snapper config (update-system Phase 4): soft retention protecting
+# user config edits. Relies on the @home_snapshots subvolume + its fstab entry from
+# disk.sh; on a pre-Phase-4 install it isn't there, so we skip rather than let snapper
+# create a nested (inconsistent) .snapshots subvolume. Not pacman-coupled (snap-pac
+# only hooks the root config by default), no grub-btrfs.
 configure_home_snapper() {
   if snapper -c home list &>/dev/null; then
-    info "Home snapper config already exists, skipping."
     remount_flatten_snapshots_dir /home/.snapshots
-    return 0
-  fi
-  if ! mountpoint -q /home/.snapshots; then
+  elif ! mountpoint -q /home/.snapshots; then
     info "@home_snapshots subvolume absent — skipping home snapper (reinstall to enable)."
     return 0
+  else
+    info "Creating home snapper config..."
+    umount /home/.snapshots
+    rmdir  /home/.snapshots 2>/dev/null || true
+    snapper -c home create-config /home
+    flatten_snapshots_dir /home/.snapshots
+    mount /home/.snapshots   # re-mount top-level @home_snapshots (fstab entry present)
   fi
-  info "Configuring home snapper..."
-  umount /home/.snapshots
-  rmdir  /home/.snapshots 2>/dev/null || true
-  snapper -c home create-config /home
-  flatten_snapshots_dir /home/.snapshots
-  mount /home/.snapshots   # re-mount top-level @home_snapshots (fstab entry present)
+
+  # Home retention (enforced every run, idempotent — an existing config must not keep
+  # snapper's template NUMBER_LIMIT=50). Two streams: the hourly timeline (~2 weeks
+  # deep), and one `number` anchor per W update (w-sync pre-sync / apply pre-apply).
+  # Those anchors hold deleted home data for as long as they live, and their window
+  # is set by how often the user updates, not by time — so the limit is a range:
+  # the last 10 while the filesystem has FREE_LIMIT (20%) free, cut down to 2 when
+  # it does not. Ranges need no btrfs quota for the free-space check (snapper only
+  # logs "quota not working" on each cleanup — expected, harmless).
+  info "Setting home snapper retention..."
   snapper -c home set-config \
     TIMELINE_CREATE=yes TIMELINE_CLEANUP=yes \
     TIMELINE_LIMIT_HOURLY=6 TIMELINE_LIMIT_DAILY=7 \
-    TIMELINE_LIMIT_WEEKLY=2 TIMELINE_LIMIT_MONTHLY=0 TIMELINE_LIMIT_YEARLY=0
+    TIMELINE_LIMIT_WEEKLY=2 TIMELINE_LIMIT_MONTHLY=0 TIMELINE_LIMIT_YEARLY=0 \
+    NUMBER_CLEANUP=yes NUMBER_LIMIT=2-10 NUMBER_LIMIT_IMPORTANT=5 NUMBER_MIN_AGE=1800 \
+    FREE_LIMIT=0.2
 }
 
 # ── Rootfs overlay ────────────────────────────────────────────────────────────
@@ -564,12 +574,18 @@ run_all() {
 # ── Pre-apply home snapshot ───────────────────────────────────────────────────
 # Capture user home config before a full apply seeds/overwrites managed files, so a
 # bad apply can be undone with `snapper -c home undochange`. Cleanup-algorithm
-# number → auto-pruned by the soft home retention (not kept forever). Runs before
-# any module; on the first install the home config doesn't exist yet (home is empty
-# anyway) so it skips gracefully. The fuller w-sync/w-system pre-snapshot hook lands
-# in update-system Phase 5; this is the standalone minimum.
+# number → auto-pruned by the home retention (not kept forever). Runs before any
+# module; on the first install the home config doesn't exist yet (home is empty
+# anyway) so it skips gracefully. w-sync takes its own pre-sync anchor right before
+# calling apply and says so with W_HOME_SNAPSHOT_TAKEN=1 — a second snapshot a second
+# later would only halve the number window. A standalone `apply.sh --all` (and a
+# w-sync whose pre-sync failed) still anchors here.
 pre_apply_home_snapshot() {
   command -v snapper &>/dev/null || return 0
+  if [[ "${W_HOME_SNAPSHOT_TAKEN:-}" == 1 ]]; then
+    info "Home already snapshotted by w-sync, skipping pre-apply snapshot."
+    return 0
+  fi
   if ! snapper -c home list &>/dev/null; then
     info "Home snapper config absent, skipping pre-apply snapshot."
     return 0
@@ -586,8 +602,13 @@ pre_apply_home_snapshot() {
 # Idempotent: created once (runs at the tail of --all/--dev, after snapper is set up).
 initial_snapshot() {
   command -v snapper &>/dev/null || return 0
-  snapper -c root list &>/dev/null || { info "Snapper not configured, skipping initial snapshot."; return 0; }
-  if snapper -c root list | grep -q 'W initial state'; then
+  # Captured, not piped into `grep -q`: grep exits on the first match, snapper takes
+  # SIGPIPE writing the rest, and under pipefail the pipeline reports 141 — "no
+  # anchor" — on any machine whose list outgrew a single write. Every full apply then
+  # added another permanent, never-pruned `W initial state`.
+  local list
+  list="$(snapper -c root list 2>/dev/null)" || { info "Snapper not configured, skipping initial snapshot."; return 0; }
+  if [[ "$list" == *'W initial state'* ]]; then
     info "Initial snapshot already exists, skipping."
     return 0
   fi

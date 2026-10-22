@@ -682,14 +682,14 @@ ROLE_OVERRIDES = {
     "W_ON_PRIMARY": "$W_PALETTE_ON_ACCENT",
     "W_ON_PRIMARY_CONTAINER": "$W_PALETTE_ON_ACCENT_CONTAINER",
     "W_ON_ERROR": "$W_PALETTE_ON_VIVID",
-    # The baseline points its root background at the absolute black, which is
-    # correct for a dark theme and wrong for a light one — CANVAS carries that
-    # decision instead. W_SHADOW deliberately keeps the template's black.
+    # The root background follows appearance: absolute black is correct for a
+    # dark theme and wrong for a light one, so CANVAS carries that decision
+    # whatever the template says. W_SHADOW deliberately keeps the template's black.
     "W_BG": "$W_PALETTE_CANVAS",
 }
 
 # Boot marks — the brand glyph alone on the splash / menu canvas. The dark
-# container is the mark's own look (theme `w` paints it #643670 on black); the
+# container is the mark's own look (theme `w` paints it #663372 on black); the
 # light container is a pale plaque, ~1.6:1 against the canvas, in which a lone
 # glyph all but vanishes — so a light theme draws the mark in the accent itself.
 LIGHT_OVERRIDES = {

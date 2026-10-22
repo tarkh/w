@@ -7,9 +7,13 @@ description: >-
   won't start, or when a theme applied only partially.
 sources:
   - path: .claude/library/dev-workflow.md
-    sha256: 6641ebff1902a4b8431665d6e8a3dcb2e85d5d72125c3f100e9e22d88a3347a2
+    sha256: 8f24215af0cf216b589977c09cbfe06336f297f1f4641427b1d74a7560de4afb
   - path: .claude/library/w-logs.md
     sha256: 3926baf2793541840068b18a5eac8720448aab05772cfa358876d66e9b7a52b7
+  - path: .claude/library/snapshots.md
+    sha256: 0df039c2078953d0797a6911bde6f1e346d719cabab0d116bb2c8ce5d47852c1
+  - path: .claude/library/w-update.md
+    sha256: 1e3f24eee99045a99f89424410154d7fa70594ff133172334fa4a4d6ba8e7521
   - path: .claude/library/package-sensors.md
     sha256: 21e19e51d9a45e12b2be01affe62d6f852e39599953dbd6eb3b52b88b38be9cb
 tools:
@@ -95,6 +99,25 @@ current disk usage across the journal, `/var/log` flat files (logrotate), and
 `/var/log` flat files are rotated by `logrotate.timer` (systemd, not cron); a
 failsafe catch-all bounds any daemon's orphan `*.log` to the same policy. See
 w-logs.md.
+
+Beyond logs, the two big consumers on a btrfs W disk bound themselves — explain
+them before suggesting any manual deletion:
+
+- **Home snapshots** (`snapper -c home list`, read-only: `w_snapshot_list('home')`).
+  An hourly timeline (last 6 hours / 7 days / 2 weeks) plus one `number` anchor
+  per W update that changed something (`pre-sync`, or `pre-apply` from a standalone
+  `apply.sh --all`). Anchors: `NUMBER_LIMIT=2-10` with `FREE_LIMIT=0.2` — the last
+  10 while the filesystem has 20% free, cut to 2 below that. Each snapshot holds
+  only data deleted or overwritten after it, so the oldest ones cost the most.
+  `snapper-cleanup.timer` prunes hourly; the "quota not working (qgroup not set)"
+  line in its journal is expected (W uses no btrfs quota). Root keeps 20 snap-pac
+  snapshots + the permanent `W initial state`. Never delete snapshots on your own —
+  name the cost and let the user decide.
+- **Pacman package cache** (`/var/cache/pacman/pkg`, its own `@var_cache`
+  subvolume, outside snapshots). `paccache.timer` runs weekly with W's drop-in:
+  `paccache -rk2` (installed version + one previous) and `paccache -ruk0`
+  (uninstalled packages dropped). Rollback does not need the cache — root
+  snapshots carry it.
 
 ## Where W writes its own logs
 

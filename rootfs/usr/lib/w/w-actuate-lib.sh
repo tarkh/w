@@ -245,7 +245,7 @@ w_actuate_main() {
       CMD=("$apply" "--$mod")
       ;;
     sync-update)
-      # Edge-channel update: fetch → pre-snapshot home → git pull --ff-only →
+      # Edge-channel update: fetch → git pull --ff-only → pre-snapshot home →
       # selective apply.sh. w-sync itself no-ops with a clear message on a non-edge
       # (stable) system, and refuses (die) if it isn't.
       #

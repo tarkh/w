@@ -9,7 +9,7 @@ description: >-
   pacman mirrors.
 sources:
   - path: .claude/library/w-update.md
-    sha256: 11750135480a5f3abaaad941b1e98259aad6845151c31672087ae94bc7791237
+    sha256: 1e3f24eee99045a99f89424410154d7fa70594ff133172334fa4a4d6ba8e7521
   - path: .claude/library/w-mirrors.md
     sha256: 713856f43f54c44fc52642f8968824cdca2f0c967b7bcca2c6943e9a0f6f147c
 tools:
@@ -198,6 +198,9 @@ causes partial upgrades.
 
 - **Rollback:** handled automatically by snap-pac (snapshots each `yay -Syu`) + grub-btrfs
   (boot into a snapshot). No separate action is needed.
+- **Package cache:** `paccache.timer` trims `/var/cache/pacman/pkg` weekly (installed
+  version + one previous; uninstalled packages dropped) — never suggest a manual
+  `pacman -Scc`. Disk-space questions → the **w-diagnostics** skill.
 - **Firmware and Flatpak** update through their own channels (`fwupdmgr`; `flatpak
   update` or the Bazaar store, if the optional `flatpak` bundle is installed),
   deliberately outside `w-update`.

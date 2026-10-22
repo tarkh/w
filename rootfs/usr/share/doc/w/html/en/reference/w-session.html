@@ -36,10 +36,15 @@ Commands:
   status [<span class="f">--porcelain</span>]        Show the mode and what is currently saved
   save                        Snapshot the session now
   restore [<span class="f">--dry-run</span>]         Reopen the saved session (<span class="f">--dry-run</span> just lists it)
-  close [<span class="f">--workspace</span> &lt;name&gt;] [<span class="f">--timeout</span> &lt;sec&gt;] [<span class="f">--dry-run</span>]
+  close [<span class="f">--workspace</span> &lt;name&gt;] [<span class="f">--timeout</span> &lt;sec&gt;] [<span class="f">--keep-snapshot</span>]
+        [<span class="f">--until-cancelled</span>] [<span class="f">--dry-run</span>]
                               Ask every window to close and wait for it, leaving
                               any <span class="s">&quot;Save changes?&quot;</span> dialog reachable. Exit 1 if a
                               window stayed open (the user cancelled a dialog).
+                              <span class="f">--keep-snapshot</span>: if so, keep the saved session
+                              until a new window opens (a cancelled exit).
+                              <span class="f">--until-cancelled</span>: no time limit; a notification
+                              waits for the windows, a click on it cancels.
                               <span class="f">--dry-run</span> only prints how many would be asked.
   forget                      Delete the saved session
   layout list [<span class="f">--porcelain</span>]   Show the saved named layouts

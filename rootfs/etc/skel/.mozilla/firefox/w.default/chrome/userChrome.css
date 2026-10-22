@@ -10,14 +10,14 @@
 @namespace html url("http://www.w3.org/1999/xhtml");
 
 :root {
-  --w-fx-app-bg: 80%;   /* W_FX_APP_BG_OPACITY */
+  --w-fx-app-bg: 85%;   /* W_FX_APP_BG_OPACITY */
 }
 
 html|body {
   background-color: color-mix(in srgb, -moz-dialog var(--w-fx-app-bg), transparent) !important;
 }
 
-#navigator-toolbox { 
+#navigator-toolbox {
   border-bottom: none !important;
 }
 
@@ -26,7 +26,7 @@ html|body {
   border-top: none !important;
 }
 
-#browser { 
+#browser {
   background-color: transparent !important;
 }
 

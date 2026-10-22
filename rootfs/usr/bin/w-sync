@@ -5,8 +5,8 @@
 # /var/lib/w/src is a real git checkout (cloned at install time when the user picks
 # Edge in the TUI, see modules/firstboot.sh). w-sync compares the local checkout to
 # its upstream ref, shows what would arrive, and on apply does a signature check →
-# home pre-snapshot → `git pull --ff-only` → a SELECTIVE `apply.sh` driven by the
-# changed files.
+# `git pull --ff-only` → home pre-snapshot (only when something will apply) → a
+# SELECTIVE `apply.sh` driven by the changed files.
 #
 # The signature check comes first because everything after it runs as root: the tip
 # being pulled must carry a `v*` tag signed by a key in the deployed trust anchor
@@ -335,8 +335,8 @@ Usage: w-sync [command]
 Info: Track the W dev repo (edge channel) and apply updates, keeping user config intact.
 
 Commands:
-  (none) | update   Fetch, show incoming commits, then pre-snapshot home →
-                    git pull --ff-only → selective apply.sh. Needs sudo for apply.
+  (none) | update   Fetch, show incoming commits, then git pull --ff-only →
+                    pre-snapshot home → selective apply.sh. Needs sudo for apply.
   check             Refresh the machine-wide behind-count (quiet). Maintained by
                     the checkout owner and root; a no-op for anyone else. Writes
                     $STATE_FILE; on any refusal it records behind:-1 + err
@@ -618,11 +618,18 @@ compute_flags() {
   printf '%s' "${out[*]}"
 }
 
+# One home anchor per update that changes something, taken right before the first
+# step that does. After the pull, not before it: the pull touches only the checkout,
+# and only then is it known whether anything will run at all — a pull that routes to
+# nothing (docs, .claude) must not leave a snapshot behind, because every anchor
+# holds deleted home data until the number retention (snapshots.md) prunes it.
+# Returns 0 only when a snapshot was really taken: the caller then tells apply.sh,
+# so its own pre-apply anchor is not a duplicate one second later.
 pre_snapshot() {
-  run_priv snapper -c home list &>/dev/null || return 0
+  run_priv snapper -c home list &>/dev/null || return 1
   info "Creating pre-sync home snapshot..."
   run_priv snapper -c home create --description "pre-sync" --cleanup-algorithm number \
-    || warn "pre-sync snapshot failed (non-fatal)."
+    || { warn "pre-sync snapshot failed (non-fatal)."; return 1; }
 }
 
 # A pull that changed the bundle tree must also REPLAY the installed bundles'
@@ -681,16 +688,19 @@ sync_site() {
 }
 
 refresh_packs() { # <changed files>
-  local changed="$1"
+  packs_changed "$1" || return 0
+  command -v w-pack >/dev/null 2>&1 || return 0
+  info "Bundle tree changed — replaying installed bundles' setup (no package changes)..."
+  run_priv w-pack refresh || warn "w-pack refresh reported a problem (bundles may need attention)."
+}
+
+packs_changed() { # <changed files>
   # The bundle tree — or the machinery that deploys it. A fix in w-pack's own
   # deploy step (a managed file arriving 0644 whatever its mode, 2026-09-19) or in
   # the deploy SDK it stages changes what every installed bundle has on disk just
   # as much as a changed bundle does; without this, such a fix reached the host and
   # left the already-deployed bundles exactly as broken as before.
-  grep -qE '^(scripts/packs/|rootfs/usr/bin/w-pack$|scripts/install/lib/deploy\.sh$)' <<<"$changed" || return 0
-  command -v w-pack >/dev/null 2>&1 || return 0
-  info "Bundle tree changed — replaying installed bundles' setup (no package changes)..."
-  run_priv w-pack refresh || warn "w-pack refresh reported a problem (bundles may need attention)."
+  grep -qE '^(scripts/packs/|rootfs/usr/bin/w-pack$|scripts/install/lib/deploy\.sh$)' <<<"$1"
 }
 
 # ── update: fetch → confirm → pull → selective apply ─────────────────────────────
@@ -746,8 +756,6 @@ cmd_update() {
     [[ "${ans:-y}" == [nN]* ]] && { info "Aborted (nothing pulled)."; return 0; }
   fi
 
-  pre_snapshot
-
   info "git pull --ff-only..."
   git_c pull --ff-only origin "$REF" \
     || die "pull failed — the local checkout has diverged from $UPSTREAM. Resolve manually in $REPO."
@@ -759,12 +767,18 @@ cmd_update() {
   drift_check "$old" "$changed"
   flags="$(compute_flags "$changed" "$full_apply")"
 
+  local snap=()
+  if [[ -n "$flags" ]] || packs_changed "$changed"; then
+    if pre_snapshot; then snap=(env W_HOME_SNAPSHOT_TAKEN=1); fi
+  fi
+
   if [[ -z "$flags" ]]; then
     info "Pulled — no target modules affected (docs / dev-only changes)."
   else
     info "Applying: $flags"
+    # `env`, not `sudo VAR=…`: sudo-rs refuses command-line variables without SETENV.
     # shellcheck disable=SC2086
-    run_priv "$APPLY" $flags || die "apply.sh failed — inspect /var/log/w/apply.log."
+    run_priv "${snap[@]}" "$APPLY" $flags || die "apply.sh failed — inspect /var/log/w/apply.log."
   fi
 
   # …and the site overlay, unless the apply we just ran already covered it.

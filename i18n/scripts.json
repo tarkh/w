@@ -38,6 +38,9 @@
 
   "session.app":       { "en": "Session", "ru": "Сессия" },
   "session.cancelled": { "en": "Cancelled — windows still open", "ru": "Отменено — окна ещё открыты" },
+  "session.waiting":   { "en": "Waiting for windows to close", "ru": "Ожидание закрытия окон" },
+  "session.waiting_body": { "en": "Answer the dialog to go on — click here to cancel", "ru": "Ответьте в диалоге, чтобы продолжить, — нажмите сюда для отмены" },
+  "session.cancel":    { "en": "Cancel", "ru": "Отменить" },
 
   "snapshot.title":   { "en": "Running from snapshot #%s", "ru": "Запущено из снапшота #%s" },
   "snapshot.body":    { "en": "Recovery boot — the system is read-only and changes outside /home are lost.", "ru": "Загрузка для восстановления — система доступна только для чтения, изменения вне /home будут потеряны." },

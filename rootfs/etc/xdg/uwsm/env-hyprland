@@ -30,6 +30,14 @@ export ELECTRON_OZONE_PLATFORM_HINT=wayland
 # w-style axis a deterministic userChrome.css path. See package-firefox.md.
 export MOZ_LEGACY_PROFILES=1
 
+# Keep blur Hyprland's. GTK ≥4.24 binds ext-background-effect-v1 for every window
+# and fills the blur region only under CSS backdrop-filter — a translucent window
+# without one (Ghostty, W's translucent GTK4 apps) sends an EMPTY region, which
+# Hyprland honours as "no blur" over its global blur: sharp wallpaper behind it.
+# Hiding the protocol from GTK hands blur back to the compositor (W's model, see
+# config-effects.md). foot needs no help here — its own axis mirrors blur.
+export GDK_WAYLAND_DISABLE=ext_background_effect_manager_v1
+
 # GPU session env (NVIDIA only). mod_gpu renders /etc/w/gpu-env.sh with the Wayland
 # vars (LIBVA_DRIVER_NAME, __GLX_VENDOR_LIBRARY_NAME) when an NVIDIA card is present,
 # and removes it otherwise — so this guard is a no-op on Intel/AMD. See package-gpu.md.

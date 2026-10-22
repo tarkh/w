@@ -10,7 +10,7 @@ description: >-
   Monitors and the night light are w-displays; reopening windows at login is w-session.
 sources:
   - path: .claude/library/package-hyprland.md
-    sha256: 5dfed699e45460460d3b1f3e5408dadd0a1bb9f4db3fccab3cc51a37dae9d61d
+    sha256: 5b41eca06b7f8c238033f578d12114de97d29b1db03938e01cbfda8423a05930
   - path: .claude/library/package-files.md
     sha256: 85da1d2fccfd07be804443763a7fdde37727878e1b6c85d3288413f72c23b504
   - path: .claude/library/quickshell.md
@@ -24,9 +24,9 @@ sources:
   - path: .claude/library/quickshell-keyboard.md
     sha256: 0f132daff3b5514e1f520397d9489286c4fec4a03b654d94b6c7f564f0b1f0bc
   - path: .claude/library/w-screenshot.md
-    sha256: cab923bc52e33ecc3604a6f4786103d095312a01a25b1b2a5ee893a41c67c3ae
+    sha256: c30f0e3991a88666317d7ec5c5964630afb075ebb470e86f2fca60a95906e7de
   - path: .claude/library/w-record.md
-    sha256: c7ff443860ecebfc73ec01be9a90b845d1a1110e79f9bdabfde1c5dcd7b0f625
+    sha256: 2b5e32780c7c2cdb95d7b1f256bc93abbfbb433df6d184bd98b67b09ce51b3a7
 tools:
   - w_desktop_context
   - w_notify
@@ -295,7 +295,7 @@ capture at its on-screen size (up to 90% of the monitor; larger ones are fitted)
 `region` capture opens right over the selected spot, toolbars around it.
 
 **Window shot outline.** A `window` capture taken with `--copy`/`--save` or opened in
-Satty gets transparent rounded corners (radius = live window rounding + border) and,
+Satty gets transparent rounded corners (radius = the window's own rounding + border, as Hyprland draws it — a window rule counts) and,
 with `screenshot WINDOW_SHADOW=yes` (default; `w-screenshot set WINDOW_SHADOW no`, or
 Hub → Screen capture → Add window shadow), a soft macOS-style drop shadow on a
 transparent margin. **Flameshot never gets it** — it takes and saves its own frame, so
@@ -352,7 +352,7 @@ capture**, which a right-click on the bar's recording dot opens directly:
 | `ENCODER` | `auto` | GPU (VAAPI) when a render node exists, falling back to the CPU with a notification if the driver cannot actually encode. `vaapi` set explicitly is not second-guessed; `cpu` is the escape hatch. |
 | `FORMAT` | `mp4` | `mp4`/`mkv` are h264; `webm` is VP9 + Opus and always encodes on the CPU (`ENCODER=vaapi` with `webm` is refused). |
 | `FRAMERATE` | `30` | constant, not VFR — editors and browsers handle VFR mp4 unevenly. 1–240; the Hub offers 15/24/30/60/120. |
-| `WINDOW_MASK` | `no` | `yes` paints the rounded corners of a `window` recording black (a video has no alpha) instead of the wallpaper. Only matters when the theme rounds windows (`W_GEO_WINDOW_ROUNDING` > 0). Needs a CPU filter, so `window` then always encodes on the CPU, even past `ENCODER=vaapi`. |
+| `WINDOW_MASK` | `no` | `yes` paints the rounded corners of a `window` recording black (a video has no alpha) instead of the wallpaper. Only matters for a window with rounded corners — read live from the window itself (`hyprctl getprop`), so a window a rule made square and borderless (`rounding = 0`, `border_size = 0`) records as its bare rectangle at its exact size, mask or not. Needs a CPU filter, so `window` then always encodes on the CPU, even past `ENCODER=vaapi`. |
 | `RECORDER` | `wf` | see above. |
 
 If a user asks why their recording has no sound, `AUDIO` is the key; if they ask why

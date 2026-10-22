@@ -13,31 +13,31 @@ import QtQuick
 Singleton {
     id: root
 
-    property color backdrop: "#140020"  // full-screen tint hue behind launcher
-    property color surface:  "#2e0045"  // launcher card background
-    property color inputBg:  "#200030"  // search field background
-    property color text:     "#a197a4"  // primary text (app names)
-    property color muted:    "#8a7a8e"  // secondary text / placeholder
-    property color accent:   "#643670"  // FILL for a selected row / active tile
+    property color backdrop: "#16001c"  // full-screen tint hue behind launcher
+    property color surface:  "#32003c"  // launcher card background
+    property color inputBg:  "#22002a"  // search field background
+    property color text:     "#a296a5"  // primary text (app names)
+    property color muted:    "#897b8d"  // secondary text / placeholder
+    property color accent:   "#663372"  // FILL for a selected row / active tile
     property color accentFg: "#ffffff"  // text on that fill
     // The accent as INK — a button outline, a tab label, an icon. Held at 4.5:1
     // against the raised card by the theme engine. `accent` cannot do this job:
     // it is a container pigment, built to sit close to the surface it fills, and
     // on a light theme that measured 1.10:1 — an invisible button. Anything drawn
     // ON a surface uses this; anything that fills a shape uses `accent`.
-    property color accentInk: "#91619b"
-    property color border:   "#91619b"  // card border accent
+    property color accentInk: "#a36eb1"
+    property color border:   "#935ea0"  // card border accent
 
-    property color iconTint: "#c44bdf"      // brand color the shell's icons are drawn in
+    property color iconTint: "#c746e3"      // brand color the shell's icons are drawn in
     // Not a colour: the icon theme the active W theme names (Papirus-Dark/-Light).
     // The shell watches it to notice that themed icons must be re-requested — see
     // core/IconTheme.qml for why that is not automatic.
     property string iconTheme: "Papirus-Dark"
 
     // Danger (critical alerts — red-shifted, stands apart from the brand purple).
-    property color dangerBg:     "#3d0f1d"  // critical card background
-    property color dangerFg:     "#ffd6dd"  // text on critical card
-    property color dangerBorder: "#e34666"  // critical card border
+    property color dangerBg:     "#3e100d"  // critical card background
+    property color dangerFg:     "#ffd8d2"  // text on critical card
+    property color dangerBorder: "#e54a40"  // critical card border
 
     // Hover wash. Derived, not a theme token, so the relationship is guaranteed:
     // `accentInk` is the one colour the engine promises stands clear of the card,
