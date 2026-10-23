@@ -8,6 +8,14 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.24.1
+
+- **The nightly install image builds again.** The image build for v0.24.0 stopped
+  at its static checks: one new unit test only passed on a machine that already
+  runs W, and the build container does not. The test now stands on its own. Nothing
+  changes on an installed system — updating only moves the version number — and the
+  downloadable image catches up with the published tree once the build runs.
+
 ## v0.24.0
 
 - **New look for the `w` theme, and a second system theme.** The default `w`

@@ -884,10 +884,12 @@ print(ws.exit_hold_active(None, [], 'i1'))"
 @test "save leaves the exact snapshot alone while held, and the expired hold is dropped" {
   export XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/run" HYPRLAND_INSTANCE_SIGNATURE=i1
   mkdir -p "$XDG_RUNTIME_DIR"
-  printf 'MODE=save\n' > "$XDG_CONFIG_HOME/w/session.conf"
+  # conf_load shells out to the installed w-conf: a W host has one, the CI
+  # container does not, and its warning would land in $output. Stub the mode.
   run ws "
 import os
 live = [{'address': '0xa'}]
+ws.conf_load = lambda: {**ws.DEFAULTS, 'MODE': 'save'}
 ws.hypr_alive = lambda: True
 ws.hypr_json = lambda *a: live
 ws.take_snapshot = lambda values: {'version': 2, 'windows': [len(live)]}
