@@ -47,9 +47,9 @@ hl.config({
   },
 })
 
--- VM quirk shared with the user session (otherwise the greeter renders black under
--- virgl) — see the file itself. A no-op on real hardware.
-pcall(require, "/usr/share/w/hypr/rules.d/virtio-gpu.lua")
+-- dmabuf-format quirk shared with the user session (otherwise the greeter renders black
+-- under virgl and on old Intel) — see the file itself.
+pcall(require, "/usr/share/w/hypr/rules.d/dmabuf-formats.lua")
 
 -- Fallback rule first: catches any output with no saved w-monitor rule
 -- (unconfigured / freshly hotplugged). Explicit whitelist below — mirrors the

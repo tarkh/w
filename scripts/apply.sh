@@ -292,6 +292,7 @@ apply_rootfs() {
   # path is older than the oldest supported install.
   local retired=(
     /usr/share/w/ai/llms.txt   # 2026-09-14: the skill catalog is generated (w-mcp instructions)
+    /usr/share/w/hypr/rules.d/virtio-gpu.lua   # 2026-11-01: became dmabuf-formats.lua
   )
   rm -f "${retired[@]}"
   # A path the repo retired that a PACKAGE now owns: remove only while unowned, or

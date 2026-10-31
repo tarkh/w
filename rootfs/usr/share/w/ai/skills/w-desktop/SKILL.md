@@ -10,7 +10,7 @@ description: >-
   Monitors and the night light are w-displays; reopening windows at login is w-session.
 sources:
   - path: .claude/library/package-hyprland.md
-    sha256: ae20e1fbc2ce69e471865de43c1957dd9b56b8ca50d15df64ab9e45af6147ad3
+    sha256: 20f6744a1052653d9d25da12ff8b7c602a0fa6e3e749cfc4d7e5c4a9a274b6c8
   - path: .claude/library/package-files.md
     sha256: 85da1d2fccfd07be804443763a7fdde37727878e1b6c85d3288413f72c23b504
   - path: .claude/library/quickshell.md
@@ -91,6 +91,11 @@ Since Hyprland 0.55 the compositor config is **Lua**, not the old hyprlang `.con
 - ⚠️ The dispatch syntax changed: `hyprctl dispatch` now takes a Lua expression, e.g.
   `hyprctl dispatch 'hl.dsp.global("quickshell:launcher")'`. The old
   `dispatch global quickshell:launcher` form no longer works.
+- Black screen over the wallpaper — bar and windows gone, yet the launcher and Hub still
+  open — is Hyprland 0.57's `quirks.skip_non_kms_dmabuf_formats` on hardware with no ARGB
+  scanout plane (VM virtio-gpu, Intel up to Broadwell). W's
+  `/usr/share/w/hypr/rules.d/dmabuf-formats.lua` turns it off there; on other hardware
+  set `quirks = { skip_non_kms_dmabuf_formats = false }` in a user rules.d file, then log out/in.
 - Themed values (colors, geometry, effects, animations) are **not** hardcoded — they live
   in generated Lua fragments (`colors.lua`, `geometry.lua`, `effects.lua`,
   `animations.lua`) that `hyprland.lua` `require`s, rendered by `w-style` (see the

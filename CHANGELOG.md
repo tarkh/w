@@ -8,6 +8,17 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.25.1
+
+- **Black screen on older Intel graphics with Hyprland 0.57.** On Intel GPUs up to
+  Broadwell (Haswell MacBook Pros, for example), translucent panels, notifications
+  and the login screen rendered as solid black over the desktop after the Hyprland
+  0.57 update. W now restores alpha-capable buffer formats there, the same way
+  v0.25.0 did for virtual machines; other hardware keeps Hyprland's default. Log
+  out and back in (or reboot) after `w-sync update`.
+- **The update runs a full apply** instead of a few modules: it touches the shared
+  apply code.
+
 ## v0.25.0
 
 - **Update your packages too, not only W, and in this order.** Arch moved to

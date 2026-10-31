@@ -6,7 +6,7 @@ order: 4
 summary: Windows, workspaces, popups, notifications, screenshots and session restore.
 sources:
   - path: .claude/library/package-hyprland.md
-    sha256: ae20e1fbc2ce69e471865de43c1957dd9b56b8ca50d15df64ab9e45af6147ad3
+    sha256: 20f6744a1052653d9d25da12ff8b7c602a0fa6e3e749cfc4d7e5c4a9a274b6c8
   - path: .claude/library/quickshell.md
     sha256: da1b14d9d934188dd9b49ece41af8b58ab8d5abe06c6172e198e1c5ade171759
   - path: .claude/library/w-screenshot.md
