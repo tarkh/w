@@ -35,12 +35,32 @@ Info: Переключение, создание и управление тем�
                             --seed-index <n>          какой базовый цвет
                                                       изображения брать за основу
                                                       (0 = самый доминирующий)
+                            --tint neutral|subtle|full
+                                                      сколько цвета у поверхностей
+                                                      и текста; neutral — графит/
+                                                      бумага с примесью тона, по
+                                                      умолчанию full
+                            --surface <тон>           в какой цвет окрашены
+                                                      поверхности, акценты
+                                                      остаются своими: accent
+                                                      (по умолчанию), wallpaper
+                                                      (цвет, которым написана
+                                                      большая часть изображения),
+                                                      номер базового цвета или
+                                                      #rrggbb
+                            --saturation muted|balanced|vivid
+                                                      насколько красочны акценты,
+                                                      иконки и цвета терминала;
+                                                      фон сохраняет свою окраску;
+                                                      по умолчанию balanced
                             --scheme <тип matugen>    по умолчанию: adaptive
                             --activate                переключиться на неё сразу
                             --json                    напечатать только матрицу
                                                       палитр, ничего не создавая:
                                                       каждый базовый цвет
-                                                      изображения × dark/light ×
+                                                      изображения × тон фона ×
+                                                      окраска × насыщенность ×
+                                                      dark/light ×
                                                       каждый уровень контраста
                                                       (превью для GUI; остальные
                                                       параметры тогда не важны,
@@ -78,7 +98,10 @@ Info: Переключение, создание и управление тем�
   w-theme reset
   w-theme new sunset --wallpaper ~/Pictures/sunset.jpg --activate
   w-theme new garden --wallpaper ~/Pictures/park.jpg --seed-index 1 --contrast low
+  w-theme new dusk --wallpaper ~/Pictures/dusk.jpg --tint neutral
+  w-theme new night --wallpaper ~/Pictures/night.jpg --surface wallpaper --tint subtle
   sudo w-theme new corporate --wallpaper /srv/brand.png
+  w-theme new amber --wallpaper ~/Pictures/amber.jpg --saturation vivid
   w-theme edit sunset --contrast low
   w-theme rm sunset
 ```

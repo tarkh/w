@@ -2,40 +2,65 @@
 # w-secureboot — W Linux Secure Boot control (sbctl + Limine config-hash)
 #
 # W's Secure Boot model (no per-kernel signing): the firmware verifies the SIGNED
-# Limine EFI binary (sbctl own keys), and Limine verifies a BLAKE2B hash of every
-# file it loads (kernel/initramfs) plus its own config, whose hash is enrolled into
-# the signed binary. So the whole chain is tamper-evident via one signed loader.
-#   setup    — one-time: create+enroll sbctl keys (firmware must be in Setup Mode),
-#              then sign Limine and enroll the config hash.
-#   reenroll — refresh the enrolled config hash after limine.conf changed (called by
-#              the w-style 'limine' axis after a system-theme render, and by
-#              limine-snapper-sync around snapshot entry changes).
-#   enable/disable — the Hub-facing on/off toggle. The LUKS TPM2 auto-unlock (w-crypt)
-#              is sealed to PCR7, which measures the Secure Boot policy — so enrolling
-#              or resetting SB keys invalidates it. `disable` removes the TPM2 factor
-#              first (`w-crypt wipe-tpm`, deterministic — the passphrase prompt returns
-#              immediately, not via incidental PCR mismatch) and then resets the SB
-#              keys (`sbctl reset` → back to Setup Mode). `enable` is two-phase and
-#              CANNOT be one shot: PCR7 is measured by the firmware/bootloader chain at
-#              boot and does not change while the OS is running, so resealing TPM2 in
-#              the same session as enrolling the keys would seal against the PRE-change
-#              PCR7 — silently producing a token that fails on every future boot (found
-#              live: enrolled, rebooted, disk still asked for its passphrase). Phase 1
-#              enrolls the keys and stops, marking a reboot as required
-#              ($PENDING_MARKER, keyed on the boot ID so a re-run can tell whether that
-#              reboot actually happened); phase 2 (a later `enable` call, after reboot)
-#              re-seals TPM2 against the now-current PCR7 and clears the marker. Secure
-#              Boot only exists on the encrypted+Limine install path (package-limine.md),
-#              so calling into w-crypt here is safe by construction.
-# A hash-free fallback Limine (EFI/BOOT/BOOTX64.EFI, ENABLE_LIMINE_FALLBACK=yes) stays
-# signed so a stale-hash block is always recoverable. See package-limine.md / security.md.
+# Limine EFI binary, and Limine verifies a BLAKE2B hash of every file it loads
+# (kernel/initramfs) plus its own config, whose hash is enrolled into the signed
+# binary. So the whole chain is tamper-evident via one signed loader. The signing key
+# is always sbctl's db key; WHO trusts it is the mode (/var/lib/w/secureboot-mode):
+#   own  — sbctl's keys replace the firmware's (PK/KEK/db, Microsoft's kept in db).
+#          Needs the firmware in Setup Mode. Changing the firmware keys changes PCR7 of
+#          every OS on the machine, so a BitLocker Windows next to W asks for its
+#          recovery key once.
+#   shim — the firmware keeps its factory keys; Microsoft-signed shim (Fedora's, AUR
+#          shim-signed) boots Limine, and sbctl's db cert goes into shim's MokList
+#          (enrolled by the user in MokManager — physical presence). The firmware's
+#          PCR7 for Windows does not change. Needs "Microsoft 3rd-party UEFI CA" in db.
+#   `enable` picks the mode from the firmware: Setup Mode or our PK → own; factory
+#   keys with the 3rd-party CA → shim; neither (Secured-core default) → refuse and say
+#   which firmware switch helps. `--mode` overrides. The ESP layout per mode is
+#   w-secureboot-stage's job (run by Limine's post.d/95-w-secureboot).
+#
+#   enable is two-phase and CANNOT be one shot: PCR7 (what the LUKS TPM2 auto-unlock,
+#   w-crypt, is sealed to) is measured by the firmware/bootloader chain at boot and
+#   does not change while the OS is running, so resealing TPM2 in the same session as
+#   the key change would seal against the PRE-change PCR7 — silently producing a token
+#   that fails on every future boot (found live: enrolled, rebooted, disk still asked
+#   for its passphrase). Phase 1 changes the keys (own) or queues the MOK enrollment
+#   (shim) and stops, marking a reboot as required ($PENDING_MARKER, keyed on the boot
+#   ID so a re-run can tell whether that reboot happened); phase 2 (a later `enable`,
+#   after reboot) re-seals TPM2 against the now-current PCR7 and clears the marker.
+#   It re-seals only a seal that exists — adding automatic unlock is w-crypt's own
+#   step (enroll-tpm, which in turn refuses while Secure Boot is off), so turning
+#   Secure Boot on never silently puts a laptop on TPM-only unlock.
+#   shim adds one rule: seal only on a boot after the key IS in MokList. MokManager
+#   drops a request it was not answered within 10 s, and a boot that ran MokManager
+#   and then fell through to another loader carries extra authorities in PCR7 (found
+#   live) — such a boot never has the key enrolled, so phase 2 re-queues instead.
+#   disable removes the TPM2 factor first (`w-crypt wipe-tpm`, deterministic — the
+#   passphrase prompt returns immediately, not via incidental PCR mismatch), then
+#   resets the keys (own: `sbctl reset` → Setup Mode) or the shim chain (shim: only
+#   once Secure Boot is off in the firmware — while it enforces factory keys, W can
+#   boot through shim and nothing else).
+# Secure Boot only exists on the encrypted+Limine install path (package-limine.md), so
+# calling into w-crypt here is safe by construction. See package-limine.md/security.md.
+#
+# The installer runs shim phase 1 in its chroot when the firmware already enforces
+# Secure Boot (no limine-entry-tool there yet — regenerate's fallback covers it), and
+# w-firstboot runs phase 2. Two internal seams serve them: W_MOK_CODE_FILE — the
+# one-time MokManager code, chosen by the installer (it shows it on its last screen;
+# never printed, so never in a log); W_SB_NONINTERACTIVE=1 — nobody at the console:
+# never ask for a passphrase (an existing TPM2 seal is resealed, none is created) and
+# never queue a MokManager step whose code nobody would see.
 
 set -euo pipefail
 
 # Sentinel for the enable two-phase handoff (see header): contains the boot ID that
-# was current when SB keys were enrolled, so a later call can tell whether an actual
-# reboot happened since (PCR7 only updates then) rather than just trusting the user.
+# was current when phase 1 ran, so a later call can tell whether an actual reboot
+# happened since (PCR7 only updates then) rather than just trusting the user.
 PENDING_MARKER="/var/lib/w/secureboot-tpm-pending"
+MODE_FILE="/var/lib/w/secureboot-mode"
+STAGE="/usr/lib/w/w-secureboot-stage"
+SHIM_DIR="/usr/share/shim-signed"
+MOK_PUBLIC="/var/lib/w/secureboot-mok.cer"
 
 err()       { echo "w-secureboot: $*" >&2; }
 need_root() { [[ $EUID -eq 0 ]] || { err "this command requires root"; exit 1; }; }
@@ -57,18 +82,25 @@ usage() {
   cat <<EOF
 Usage: w-secureboot <command>
 
-Info: Set up and manage Secure Boot (sbctl keys + Limine hash).
+Info: Set up and manage Secure Boot (sbctl keys or shim + MOK, Limine hash).
 
 Commands:
-  status [--porcelain]   Show sbctl setup-mode/enroll state and signed files
-  enable                 Turn Secure Boot on: enroll keys + sign Limine. Two-phase — the
-                          first call enrolls and asks for a reboot; run it again after
-                          rebooting to re-seal the TPM2 disk auto-unlock (PCR7 only
-                          updates on that reboot, not live)
-  disable                Turn Secure Boot off: drop TPM2 disk unlock + reset keys (back to Setup Mode)
-  setup                  One-time enable: create+enroll keys (Setup Mode) + sign Limine + enroll hash
+  status [--porcelain]   Show the Secure Boot mode, firmware state and signed files
+  enable [--mode own|shim]
+                         Turn Secure Boot on. The mode follows the firmware: Setup Mode
+                          → own keys; factory keys → Microsoft-signed shim + this
+                          machine's key in MokList (BitLocker-safe). Two-phase — the
+                          first call changes the keys or queues the MokManager step and
+                          asks for a reboot; run it again after rebooting to finish and
+                          re-seal an existing TPM2 disk auto-unlock (PCR7 only updates
+                          on that reboot; 'w-crypt enroll-tpm' adds one)
+  disable                Turn Secure Boot off: drop TPM2 disk unlock + reset keys (own)
+                          or the shim chain (shim, after Secure Boot is off in firmware)
+  setup                  One-time own-keys enable: create+enroll keys (Setup Mode) + sign
   sign                   Re-sign all sbctl-tracked binaries (after a Limine update)
-  reenroll               Re-enroll the Limine config hash (after limine.conf changed)
+  reenroll [--if-stale]  Re-enroll the Limine config hash (after limine.conf changed);
+                          --if-stale: only when the boot loaders no longer match it
+                          (run automatically before shutdown and hibernation)
   help                   Show this help
 
 Exit codes:
@@ -103,18 +135,91 @@ except Exception:
 "
 }
 
+# own | shim | empty. A machine enabled before modes existed has no file, but its
+# config-hash enrollment is on — that was only ever done by own-keys setup (mod_limine
+# writes the file on its next run; until then this answers the same).
+current_mode() {
+  if [[ -f "$MODE_FILE" ]]; then cat "$MODE_FILE"
+  elif grep -q '^ENABLE_ENROLL_LIMINE_CONFIG=yes' /etc/default/limine 2>/dev/null; then echo own
+  fi
+  return 0
+}
+
+# sbctl's key store moved between releases; its db cert is the MOK in shim mode.
+sbctl_keydir() {
+  local d
+  for d in /var/lib/sbctl/keys /usr/share/secureboot/keys; do
+    [[ -f "$d/db/db.pem" ]] && { echo "$d"; return 0; }
+  done
+  return 1
+}
+sbctl_has_keys() { [[ "$(sbctl setup --print-state --json 2>/dev/null)" == *'"installed": true'* ]]; }
+
+# The firmware's PK is sbctl's own → keys were enrolled by `setup` (own mode).
+fw_pk_is_ours() {
+  local kd fw ours
+  kd="$(sbctl_keydir)" || return 1
+  fw="$(mokutil --pk 2>/dev/null | sed -n 's/.*SHA1 Fingerprint: *//p' | head -1)"
+  ours="$(openssl x509 -in "$kd/PK/PK.pem" -noout -fingerprint -sha1 2>/dev/null | sed 's/.*=//')"
+  [[ -n "$fw" && "${fw,,}" == "${ours,,}" ]]
+}
+
+# The CA that signs shim (Microsoft's "3rd-party" UEFI CA, 2011 or its 2023
+# successor) is in the firmware's db. Secured-core PCs ship without it trusted.
+fw_has_3rdparty_ca() {
+  local db; db="$(mokutil --db 2>/dev/null)" || true
+  grep -qE 'Subject:.*CN=(Microsoft Corporation UEFI CA 2011|Microsoft UEFI CA 2023)' <<<"$db"
+}
+
+# own | shim | none — what `enable` would do on this firmware right now.
+pick_mode() {
+  if [[ "$(sb_json_field setup_mode)" == "yes" ]] || fw_pk_is_ours; then
+    echo own
+  elif fw_has_3rdparty_ca; then
+    echo shim
+  else
+    echo none
+  fi
+}
+
+# The loaders the firmware can start in the current mode. Each carries the enrolled
+# limine.conf hash, and Limine halts on boot (CHECKSUM MISMATCH FOR CONFIG FILE —
+# Secure Boot on or off) once the file no longer matches it.
+mode_loaders() {
+  local esp; esp="$(esp_path)"
+  case "$(current_mode)" in
+    own)  echo "$esp/EFI/limine/limine_x64.efi" "$esp/EFI/BOOT/BOOTX64.EFI" ;;
+    shim) echo "$esp/EFI/W/grubx64.efi" "$esp/EFI/BOOT/grubx64.efi" ;;
+  esac
+}
+
+# ok | stale | unknown — the last one without a mode, or unprivileged (the ESP is
+# mounted root-only). The hash sits in the binary as 128 hex characters.
+config_hash_state() {
+  local conf h f loaders
+  conf="$(esp_path)/limine.conf"
+  read -ra loaders <<<"$(mode_loaders)"
+  [[ ${#loaders[@]} -gt 0 && -r "$conf" ]] || { echo unknown; return 0; }
+  h="$(b2sum "$conf" | cut -c1-128)"
+  for f in "${loaders[@]}"; do
+    grep -qaF "$h" "$f" 2>/dev/null || { echo stale; return 0; }
+  done
+  echo ok
+}
+
 cmd_status() {
   if [[ "${1:-}" == "--porcelain" ]]; then
     require_sbctl
-    local setup sb state pending="no"
+    local setup sb state pending="no" mode
     setup="$(sb_json_field setup_mode)"
     sb="$(sb_json_field secure_boot)"
+    mode="$(current_mode)"
     if [[ "$setup" == "err" ]]; then
       state="unsupported"
-    elif [[ "$setup" == "yes" ]]; then
-      state="off"
-    else
+    elif [[ -n "$mode" ]]; then
       state="on"
+    else
+      state="off"
     fi
     if [[ -f "$PENDING_MARKER" ]]; then
       if [[ "$(cat "$PENDING_MARKER" 2>/dev/null)" == "$(cat /proc/sys/kernel/random/boot_id)" ]]; then
@@ -123,26 +228,69 @@ cmd_status() {
         pending="ready"
       fi
     fi
-    printf 'state\tsecure_boot\tsetup_mode\ttpm_pending\n%s\t%s\t%s\t%s\n' "$state" "$sb" "$setup" "$pending"
+    # mok: is W's key in shim's MokList (yes/no; unknown on a machine set up before
+    # the public copy existed; na outside shim mode).
+    local mok=na
+    if [[ "$mode" == shim ]]; then
+      mok=unknown
+      [[ -r "$MOK_PUBLIC" ]] && { if mok_enrolled "$MOK_PUBLIC"; then mok=yes; else mok=no; fi; }
+    fi
+    printf 'state\tsecure_boot\tsetup_mode\ttpm_pending\tmode\tconfig_hash\tmok\n%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$state" "$sb" "$setup" "$pending" "${mode:-none}" "$(config_hash_state)" "$mok"
     return
   fi
   require_sbctl
+  local mode; mode="$(current_mode)"
+  echo "Mode:		${mode:-none (enable would use: $(pick_mode))}"
+  [[ -n "$mode" ]] && echo "Config hash:	$(config_hash_state)"
   sbctl status || true
+  if [[ "$mode" == shim ]] && have mokutil; then
+    echo; mokutil --sb-state 2>/dev/null || true
+  fi
   echo
   sbctl list-files 2>/dev/null | sed 's/^/  /' || true
 }
 
+# Set KEY=VALUE in /etc/default/limine (replace, or append). mod_limine writes the
+# same keys from the mode on every `apply.sh --limine`, so both stay in agreement.
+limine_default_set() {
+  local f=/etc/default/limine
+  [[ -f "$f" ]] || return 0
+  if grep -q "^$1=" "$f"; then sed -i "s/^$1=.*/$1=$2/" "$f"; else printf '%s=%s\n' "$1" "$2" >> "$f"; fi
+}
+limine_default_unset() { [[ -f /etc/default/limine ]] && sed -i "/^$1=/d" /etc/default/limine; return 0; }
+
 # Enroll the Limine config hash into the signed binary. Prefer the AUR helper
 # (limine-enroll-config, driven by /etc/default/limine ENABLE_ENROLL_LIMINE_CONFIG);
-# fall back to a direct sbctl sign when the helper isn't installed.
+# without it (the installer's chroot) do what it does: a clean binary from the
+# package, the hash, then the signature — never a signed Limine without the hash
+# (it would boot an edited limine.conf under the same authority). Then the mode's
+# own loaders (the signed fallback copy, or shim's grubx64.efi with its own enrolled
+# hash) follow — limine.conf edits outside limine-entry-tool (the w-style axis) do
+# not run its post.d hooks.
 enroll_config() {
   if have limine-enroll-config; then
     limine-reset-enroll 2>/dev/null || true
     limine-enroll-config
   else
-    local esp; esp="$(esp_path)"
-    sbctl sign -s "$esp/EFI/limine/limine_x64.efi" 2>/dev/null || true
-    err "limine-enroll-config not found — signed the binary but skipped hash enroll"
+    local esp efi; esp="$(esp_path)"; efi="$esp/EFI/limine/limine_x64.efi"
+    cp /usr/share/limine/BOOTX64.EFI "$efi.w-new"
+    limine enroll-config "$efi.w-new" "$(b2sum "$esp/limine.conf" | awk '{print $1}')" >/dev/null
+    mv -f "$efi.w-new" "$efi"
+    sbctl sign -s "$efi" >/dev/null
+  fi
+  [[ -x "$STAGE" ]] && "$STAGE"
+  return 0
+}
+
+# Regenerate + sign everything for the current mode (limine-update runs the hook
+# chain: 90-limine-enroll-config signs limine_x64.efi, 95-w-secureboot stages the rest).
+regenerate() {
+  if have limine-update; then
+    echo "Regenerating + signing Limine (limine-update)..."
+    limine-update
+  else
+    enroll_config
   fi
 }
 
@@ -163,23 +311,17 @@ cmd_setup() {
   # enable→disable cycle. A fresh install with none of these files yet is a no-op.
   chattr -i /sys/firmware/efi/efivars/{PK,KEK,db,dbx}-* 2>/dev/null || true
   echo "Creating sbctl keys..."
-  sbctl create-keys
+  sbctl_has_keys || sbctl create-keys
   echo "Enrolling keys (including Microsoft keys for firmware/option-ROM compatibility)..."
   sbctl enroll-keys --microsoft
 
-  # Turn on config-hash enrollment for the Limine tooling, then regenerate/sign.
-  if [[ -f /etc/default/limine ]]; then
-    sed -i 's/^ENABLE_ENROLL_LIMINE_CONFIG=.*/ENABLE_ENROLL_LIMINE_CONFIG=yes/' /etc/default/limine
-  fi
-  if have limine-update; then
-    echo "Regenerating + signing Limine (limine-update)..."
-    limine-update
-  else
-    local esp; esp="$(esp_path)"
-    sbctl sign -s "$esp/EFI/limine/limine_x64.efi"
-    sbctl sign -s "$esp/EFI/BOOT/BOOTX64.EFI"
-    enroll_config
-  fi
+  # Name the mode before regenerating: 95-w-secureboot stages the signed fallback
+  # only once the mode exists, and the entry-tool must stop writing its unsigned one.
+  mkdir -p "$(dirname "$MODE_FILE")"
+  echo own > "$MODE_FILE"
+  limine_default_set ENABLE_ENROLL_LIMINE_CONFIG yes
+  limine_default_set ENABLE_LIMINE_FALLBACK no
+  regenerate
   echo
   sbctl verify || true
   echo "w-secureboot: setup complete. Enable Secure Boot in the firmware and reboot."
@@ -189,61 +331,261 @@ cmd_sign() {
   need_root
   require_sbctl
   sbctl sign-all
+  [[ -x "$STAGE" ]] && "$STAGE"
   sbctl verify || true
 }
 
+# --if-stale is the guard against a halted boot: w-secureboot-guard.service runs it
+# before every poweroff/reboot, the system-sleep hook before hibernation, post.d
+# 95-w-secureboot after every limine-entry-tool write. It re-enrolls only when the
+# loaders no longer match limine.conf — an edit past the entry-tool, or an enroll
+# that failed. That gives root nothing it lacks (root signs with sbctl's key anyway),
+# and an offline edit of the ESP never meets it: no W runs before that boot.
 cmd_reenroll() {
   need_root
+  case "${1:-}" in
+    "") ;;
+    --if-stale)
+      [[ "$(config_hash_state)" == stale ]] || return 0
+      echo "w-secureboot: limine.conf no longer matches the hash in the boot loaders — re-enrolling." >&2
+      enroll_config || true
+      [[ "$(config_hash_state)" == ok ]] && return 0
+      err "re-enrolling failed: Limine will halt on the next boot (CHECKSUM MISMATCH FOR"
+      err "CONFIG FILE). Run 'w-secureboot reenroll' and fix what it reports before rebooting."
+      exit 1 ;;
+    *) usage; exit 2 ;;
+  esac
   enroll_config
   echo "w-secureboot: Limine config hash re-enrolled."
 }
 
-# True if the encrypted install's LUKS device already carries a TPM2 auto-unlock
-# token. Captures w-crypt's output before grepping it, instead of piping straight
-# into `grep -q`: grep exits the instant it matches, and the still-writing process
-# upstream then dies of SIGPIPE (exit 141) — which `pipefail` reports as the whole
-# pipeline failing even though the match was real. Found live: `w-secureboot disable`
-# silently skipped the TPM2 wipe on a real VM because of exactly this race.
-# The match itself has to be the "<slot> tpm2" row of the enrolled-tokens table, NOT
-# a bare `tpm2` substring — `w-crypt status` always prints a "TPM2 PCRs : 7" header
-# line regardless of enrollment, which a loose match found live on the same VM run.
-crypt_has_tpm2() {
-  cryptsetup status cryptroot &>/dev/null || return 1
-  local out; out="$(w-crypt status 2>/dev/null)" || true
-  grep -qiE '^[[:space:]]*[0-9]+[[:space:]]+tpm2[[:space:]]*$' <<<"$out"
+# The encrypted install's TPM2 seal: none | tpm | pin (w-crypt's porcelain, field 3).
+crypt_tpm2() {
+  cryptsetup status cryptroot &>/dev/null || { echo none; return 0; }
+  w-crypt status --porcelain 2>/dev/null | awk -F'\t' 'NR == 2 {print $3; f = 1} END {if (!f) print "none"}'
 }
 
-# Re-seal (or newly enroll) the LUKS TPM2 auto-unlock factor to the current boot
-# chain. A no-op off the encrypted+Limine path (nothing to reseal) — Secure Boot only
-# exists there anyway (package-limine.md), so this is safe to always call from enable.
+# Re-seal an existing LUKS TPM2 auto-unlock factor to the current boot chain. It never
+# creates one: automatic unlock is its own decision (w-crypt enroll-tpm, Hub → System →
+# Security) — a laptop turning Secure Boot on stays on its passphrase. A no-op off the
+# encrypted+Limine path (nothing to reseal) — Secure Boot only exists there anyway
+# (package-limine.md), so this is safe to always call from enable.
 reseal_tpm() {
   have w-crypt || return 0
   cryptsetup status cryptroot &>/dev/null || return 0
-  if crypt_has_tpm2; then
-    echo "Re-sealing TPM2 disk auto-unlock to the new Secure Boot state..."
-    w-crypt reenroll-tpm
-  else
-    echo "Enrolling TPM2 disk auto-unlock (enter the current LUKS passphrase once)..."
-    w-crypt enroll-tpm
+  [[ -e /dev/tpmrm0 ]] || return 0
+  case "$(crypt_tpm2)" in
+    tpm)
+      echo "Re-sealing TPM2 disk auto-unlock to the new Secure Boot state..."
+      w-crypt reenroll-tpm ;;
+    pin)
+      if [[ -n "${W_SB_NONINTERACTIVE:-}" ]]; then
+        echo "WARN: the TPM2 + PIN unlock needs a terminal to re-seal — Hub → System → Security."
+      else
+        echo "Re-sealing TPM2 + PIN disk unlock to the new Secure Boot state..."
+        w-crypt reenroll-tpm
+      fi ;;
+    *)
+      echo "Automatic disk unlock is off — 'sudo w-crypt enroll-tpm' (or Hub → System →"
+      echo "Security) adds it now that Secure Boot is on." ;;
+  esac
+}
+
+mark_reboot_pending() {
+  mkdir -p "$(dirname "$PENDING_MARKER")"
+  cat /proc/sys/kernel/random/boot_id > "$PENDING_MARKER"
+}
+
+# Refuse to go on in the same boot as phase 1 (see header).
+require_rebooted() {
+  [[ -f "$PENDING_MARKER" ]] || return 0
+  if [[ "$(cat "$PENDING_MARKER" 2>/dev/null)" == "$(cat /proc/sys/kernel/random/boot_id)" ]]; then
+    err "reboot required before the disk auto-unlock can be re-sealed (PCR7 only"
+    err "updates on the next boot). Reboot, then run 'w-secureboot enable' again."
+    exit 1
   fi
 }
 
-cmd_enable() {
-  need_root
-  require_sbctl
-  local setup_mode; setup_mode="$(sb_json_field setup_mode)"
-  if [[ "$setup_mode" == "err" ]]; then
-    err "firmware does not expose Secure Boot EFI variables (legacy boot, or unsupported by this machine)"
-    exit 1
+# ── shim mode ─────────────────────────────────────────────────────────────────
+# The ESP partition as "<disk> <partnum>" for efibootmgr.
+esp_location() {
+  local src name
+  src="$(findmnt -no SOURCE "$(esp_path)")" || return 1
+  name="$(basename "$(readlink -f "$src")")"
+  [[ -r "/sys/class/block/$name/partition" ]] || return 1
+  echo "/dev/$(lsblk -no PKNAME "/dev/$name" | head -1) $(cat "/sys/class/block/$name/partition")"
+}
+
+# Firmware entry "W" → \EFI\W\shimx64.efi, created first in BootOrder (efibootmgr's
+# default) unless it already exists. Limine's own entry stays behind it: under the
+# factory keys the firmware rejects that binary and moves on.
+shim_nvram_entry() {
+  local entries; entries="$(efibootmgr 2>/dev/null)" || true
+  grep -qi '\\EFI\\W\\shimx64.efi' <<<"$entries" && return 0
+  local disk part
+  read -r disk part < <(esp_location) || { err "cannot locate the ESP partition"; return 1; }
+  efibootmgr --create --disk "$disk" --part "$part" --loader '\EFI\W\shimx64.efi' --label 'W' >/dev/null
+}
+# "W" first in BootOrder and as BootNext. AMI firmware keeps its own priority list over
+# BootOrder: once phase 1 deletes the direct Limine entry the user had first there,
+# Windows Boot Manager moves up and the new entry lands behind it (found live, MSI) —
+# the reboot starts Windows and never reaches MokManager. BootNext is a one-shot the
+# firmware honours whatever its list says.
+shim_nvram_first() {
+  local n order
+  n="$(efibootmgr 2>/dev/null | awk 'tolower($0) ~ /\\efi\\w\\shimx64\.efi/ {print substr($1, 5, 4); exit}')" || true
+  [[ -n "$n" ]] || return 0
+  order="$(efibootmgr 2>/dev/null | sed -n 's/^BootOrder: //p')" || true
+  order="$(printf '%s\n' "$n" ${order//,/ } | awk '!seen[toupper($0)]++' | paste -sd,)"
+  efibootmgr -o "$order" >/dev/null || err "could not put the W entry first in the firmware's boot order"
+  efibootmgr -n "$n" >/dev/null || err "could not make the W entry the next boot"
+}
+# limine-install registers a missing direct Limine entry where UEFI_BOOT_ORDER says
+# (last, in this mode) but never moves an existing one — and the installer's own is
+# first. Under the factory keys the firmware rejects that binary (some firmware with
+# a blocking violation screen), so re-register it behind everything else.
+limine_nvram_last() {
+  local n
+  for n in $(efibootmgr 2>/dev/null | grep -i '\\EFI\\limine\\limine_x64.efi' | sed -n 's/^Boot\([0-9A-Fa-f]\{4\}\).*/\1/p'); do
+    efibootmgr -b "$n" -B >/dev/null
+  done
+  have limine-install || return 0
+  limine-install >/dev/null || err "limine-install failed — Limine's own NVRAM entry is gone (harmless: W boots through shim)"
+}
+shim_nvram_remove() {
+  local n
+  for n in $(efibootmgr 2>/dev/null | grep -i '\\EFI\\W\\shimx64.efi' | sed -n 's/^Boot\([0-9A-Fa-f]\{4\}\).*/\1/p'); do
+    efibootmgr -b "$n" -B >/dev/null
+  done
+}
+
+# sbctl's db cert as DER — what MokList holds. Also put on the ESP (public): the
+# file MokManager's "Enroll key from disk" can pick by hand.
+# A world-readable copy (it is a public certificate) lets an unprivileged status tell
+# whether the key reached MokList — the ESP itself is mounted root-only.
+mok_cert() {
+  local kd der; kd="$(sbctl_keydir)"
+  der="$(esp_path)/EFI/W/W-MOK.cer"
+  mkdir -p "$(dirname "$der")" "$(dirname "$MOK_PUBLIC")"
+  openssl x509 -in "$kd/db/db.pem" -outform DER -out "$der"
+  install -m 644 "$der" "$MOK_PUBLIC"
+  echo "$der"
+}
+mok_enrolled() { [[ "$(mokutil --test-key "$1" 2>/dev/null)" == *"already enrolled"* ]]; }
+
+# Queue the MOK enrollment for MokManager with a one-time code (mokutil hashes it;
+# the user types it back on the blue screen — physical presence is the whole point).
+mok_queue() {
+  local cer="$1" code hash shown
+  if [[ -n "${W_MOK_CODE_FILE:-}" ]]; then
+    code="$(cat "$W_MOK_CODE_FILE")"; shown="(on the installer's last screen)"
+  else
+    # Eight random digits; od reads exactly 8 bytes (a `tr | head` pipe would die of
+    # SIGPIPE under pipefail).
+    code="$(od -An -N8 -tu1 /dev/urandom | awk '{for (i = 1; i <= NF; i++) printf "%d", $i % 10}')"
+    shown="$code"
+  fi
+  hash="$(mktemp)"
+  mokutil --generate-hash="$code" > "$hash"
+  # MokManager reads (and deletes) the queued requests the moment it starts, so its
+  # 10-second "press any key" countdown expiring loses them. -1 opens the menu at
+  # once; the value is read once, by the next MokManager start.
+  mokutil --timeout -1 || err "could not drop MokManager's 10-second countdown"
+  mokutil --import "$cer" --hash-file "$hash"
+  rm -f "$hash"
+  cat <<EOF
+
+  Next boot opens the blue "Shim UEFI key management" menu by itself:
+
+    Enroll MOK → Continue → Yes → type the code: $shown → Reboot
+
+  The code is not echoed while you type. It is for this one enrollment only.
+  Finish within 5 minutes — the firmware then restarts the computer and the
+  request is lost. Never choose "Reset MOK": it erases all enrolled keys.
+EOF
+}
+
+enable_shim() {
+  have mokutil || { err "mokutil is not installed (run 'apply.sh --limine')"; exit 1; }
+  if [[ "$(current_mode)" != shim ]]; then
+    # Phase 1.
+    [[ -f "$SHIM_DIR/shimx64.efi" ]] \
+      || { err "shim-signed is not installed (run 'apply.sh --limine')"; exit 1; }
+    sbctl_has_keys || { echo "Creating sbctl keys (not enrolled into the firmware)..."; sbctl create-keys; }
+    mkdir -p "$(dirname "$MODE_FILE")"
+    echo shim > "$MODE_FILE"
+    limine_default_set ENABLE_ENROLL_LIMINE_CONFIG yes
+    limine_default_set ENABLE_LIMINE_FALLBACK no
+    limine_default_set UEFI_BOOT_ORDER last
+    # Before regenerate: limine-install also redeploys limine_x64.efi from the package.
+    limine_nvram_last
+    regenerate
+    "$STAGE"
+    shim_nvram_entry
+    shim_nvram_first
+    local cer; cer="$(mok_cert)"
+    if mok_enrolled "$cer"; then :
+    elif [[ -n "${W_SB_NONINTERACTIVE:-}" ]]; then
+      echo "MokManager on the next boot: Enroll key from disk → EFI/W/W-MOK.cer → Continue → Yes → Reboot."
+    else
+      mok_queue "$cer"
+    fi
+    mark_reboot_pending
+    echo
+    echo "w-secureboot: shim installed. Reboot now (enroll the key on the blue screen),"
+    echo "then run 'w-secureboot enable' again (or Hub → Security → Finish) to re-seal"
+    echo "the disk's TPM2 auto-unlock. Until then the disk asks for its passphrase."
+    echo "If Windows starts instead, pick W in the firmware's boot menu (F11/F12/Esc)"
+    echo "and make W first in the firmware's boot order."
+    return 0
   fi
 
-  if [[ "$setup_mode" == "yes" ]]; then
+  # Phase 2: after a reboot, with the key in MokList and Secure Boot enforcing.
+  require_rebooted
+  local cer; cer="$(mok_cert)"
+  if ! mok_enrolled "$cer"; then
+    if [[ -n "${W_SB_NONINTERACTIVE:-}" ]]; then
+      err "W's key is not in MokList (Secure Boot off in the firmware?). Finish with"
+      err "'w-secureboot enable' (or Hub → Security) once it boots through shim."
+      exit 1
+    fi
+    echo "The key was not enrolled — MokManager drops the request when no key is"
+    echo "pressed within 10 seconds. Queuing it again."
+    mok_queue "$cer"
+    mark_reboot_pending
+    return 0
+  fi
+  if [[ "$(sb_json_field secure_boot)" != "yes" ]]; then
+    err "Secure Boot is off in the firmware. Turn it on in the firmware setup (W boots"
+    err "through shim), then run 'w-secureboot enable' again."
+    exit 1
+  fi
+  reseal_tpm
+  rm -f "$PENDING_MARKER"
+  echo "w-secureboot: Secure Boot is on (shim)."
+  windows_reseal_note
+}
+
+# Windows next to W installs Microsoft's Secure Boot servicing (dbx revocations, the
+# 2023 certificates) only while Secure Boot is on — so its first boots after this one
+# rewrite variables PCR7 measures, and the fresh seal stops matching (found live: one
+# Windows boot appended 40 hashes to dbx). Say so while the user is still here.
+windows_reseal_note() {
+  [[ "$(crypt_tpm2)" != none && -n "$(/usr/lib/w/w-boot-otheros 2>/dev/null)" ]] || return 0
+  echo
+  echo "Windows is on this machine: its first boots with Secure Boot on may install"
+  echo "Microsoft's Secure Boot updates. Each changes what the TPM checks, so the disk"
+  echo "asks for its passphrase once on the next W boot — then re-seal: Hub → Security"
+  echo "→ Re-seal (or 'w-crypt reenroll-tpm')."
+}
+
+enable_own() {
+  if [[ "$(sb_json_field setup_mode)" == "yes" ]]; then
     # Phase 1: fresh enrollment. Do NOT touch the TPM2 seal here — PCR7 still reflects
     # the pre-enrollment boot chain and will only change on the next actual reboot;
     # resealing now would silently seal against the wrong value (see header).
     cmd_setup
-    mkdir -p "$(dirname "$PENDING_MARKER")"
-    cat /proc/sys/kernel/random/boot_id > "$PENDING_MARKER"
+    mark_reboot_pending
     echo
     echo "w-secureboot: keys enrolled. The disk's TPM2 auto-unlock can only be re-sealed"
     echo "AFTER a reboot (PCR7 doesn't update until then) — reboot now, then run"
@@ -255,39 +597,88 @@ cmd_enable() {
   # Keys already enrolled. If a reseal is pending, only proceed once a reboot has
   # actually happened since enrollment — otherwise PCR7 is still the pre-enrollment
   # value and resealing now would reproduce the exact bug phase 1 avoids.
-  if [[ -f "$PENDING_MARKER" ]]; then
-    if [[ "$(cat "$PENDING_MARKER" 2>/dev/null)" == "$(cat /proc/sys/kernel/random/boot_id)" ]]; then
-      err "reboot required before the disk auto-unlock can be re-sealed (PCR7 only"
-      err "updates on the next boot). Reboot, then run 'w-secureboot enable' again."
-      exit 1
-    fi
-  fi
-
+  require_rebooted
   echo "Secure Boot keys already enrolled — refreshing signature and config hash..."
-  cmd_sign
-  if [[ -f /etc/default/limine ]]; then
-    sed -i 's/^ENABLE_ENROLL_LIMINE_CONFIG=.*/ENABLE_ENROLL_LIMINE_CONFIG=yes/' /etc/default/limine
-  fi
+  mkdir -p "$(dirname "$MODE_FILE")"
+  echo own > "$MODE_FILE"
+  limine_default_set ENABLE_ENROLL_LIMINE_CONFIG yes
+  limine_default_set ENABLE_LIMINE_FALLBACK no
+  sbctl sign-all
   enroll_config
+  sbctl verify || true
   reseal_tpm
   rm -f "$PENDING_MARKER"
   echo "w-secureboot: Secure Boot is on."
+  windows_reseal_note
+}
+
+cmd_enable() {
+  need_root
+  require_sbctl
+  local want=""
+  case "${1:-}" in
+    "")       ;;
+    --mode)   want="${2:-}"; [[ "$want" == own || "$want" == shim ]] || { usage; exit 2; } ;;
+    --mode=*) want="${1#--mode=}"; [[ "$want" == own || "$want" == shim ]] || { usage; exit 2; } ;;
+    *)        usage; exit 2 ;;
+  esac
+  if [[ "$(sb_json_field setup_mode)" == "err" ]]; then
+    err "firmware does not expose Secure Boot EFI variables (legacy boot, or unsupported by this machine)"
+    exit 1
+  fi
+
+  local mode; mode="$(current_mode)"
+  if [[ -n "$mode" && -n "$want" && "$want" != "$mode" ]]; then
+    err "Secure Boot is already on in '$mode' mode — run 'w-secureboot disable' first."
+    exit 1
+  fi
+  [[ -n "$mode" ]] || mode="${want:-$(pick_mode)}"
+  case "$mode" in
+    own)  enable_own ;;
+    shim) enable_shim ;;
+    *)
+      err "this firmware trusts neither W's keys nor the Microsoft 3rd-party UEFI CA that"
+      err "signs shim (Secured-core PCs ship that way). Either enable \"Allow Microsoft"
+      err "3rd-party UEFI CA\" in the firmware's Secure Boot settings, or clear the"
+      err "Secure Boot keys (Setup Mode) to use W's own — the latter changes PCR7, so a"
+      err "BitLocker Windows on this machine will ask for its recovery key once."
+      exit 1 ;;
+  esac
 }
 
 cmd_disable() {
   need_root
   require_sbctl
+  local mode; mode="$(current_mode)"
+  if [[ "$mode" == shim && "$(sb_json_field secure_boot)" == "yes" ]]; then
+    err "the firmware enforces Secure Boot on its factory keys, and W boots through shim."
+    err "Turn Secure Boot off in the firmware setup first, then run 'w-secureboot disable'."
+    exit 1
+  fi
   # A pending reseal (see cmd_enable) is moot once the keys are being torn down.
   rm -f "$PENDING_MARKER"
-  if have w-crypt && crypt_has_tpm2; then
+  if have w-crypt && [[ "$(crypt_tpm2)" != none ]]; then
     echo "Removing TPM2 disk auto-unlock (the passphrase prompt returns at boot)..."
     w-crypt wipe-tpm
   fi
-  if [[ -f /etc/default/limine ]]; then
-    sed -i 's/^ENABLE_ENROLL_LIMINE_CONFIG=.*/ENABLE_ENROLL_LIMINE_CONFIG=no/' /etc/default/limine
-  fi
-  if [[ "$(sb_json_field setup_mode)" == "yes" ]]; then
+  rm -f "$MODE_FILE"
+  limine_default_set ENABLE_ENROLL_LIMINE_CONFIG no
+  limine_default_set ENABLE_LIMINE_FALLBACK yes
+  limine_default_unset UEFI_BOOT_ORDER
+  if [[ "$mode" == shim ]]; then
+    # Limine's own entry back in front, then the shim chain off the ESP. The key in
+    # MokList stays: it trusts nothing without shim, and dropping it takes another
+    # MokManager visit (mokutil --delete) for no gain.
+    local esp; esp="$(esp_path)"
+    shim_nvram_remove
+    have limine-install && limine-install || true
+    rm -rf "$esp/EFI/W"
+    rm -f "$MOK_PUBLIC"
+    rm -f "$esp/EFI/BOOT/grubx64.efi" "$esp/EFI/BOOT/mmx64.efi"
+    have limine-update && limine-update
+  elif [[ "$(sb_json_field setup_mode)" == "yes" ]]; then
     echo "w-secureboot: Secure Boot keys already cleared."
+    have limine-update && limine-update
   else
     echo "Resetting Secure Boot keys (firmware returns to Setup Mode)..."
     sbctl reset
@@ -298,11 +689,11 @@ cmd_disable() {
 
 case "${1:-}" in
   status)         shift; cmd_status "$@" ;;
-  enable)         cmd_enable    ;;
+  enable)         shift; cmd_enable "$@" ;;
   disable)        cmd_disable   ;;
   setup)          cmd_setup     ;;
   sign)           cmd_sign      ;;
-  reenroll)       cmd_reenroll  ;;
+  reenroll)       shift; cmd_reenroll "$@" ;;
   help|-h|--help) usage         ;;
   "")             usage; exit 2 ;;
   *)              err "unknown command: $1"; usage; exit 2 ;;

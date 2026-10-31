@@ -132,6 +132,14 @@
     "en": "off",
     "ru": "выкл"
   },
+  "hub.secureBoot.mode.own": {
+    "en": "own keys",
+    "ru": "свои ключи"
+  },
+  "hub.secureBoot.mode.shim": {
+    "en": "via shim",
+    "ru": "через shim"
+  },
   "hub.secureBootUnsupported": {
     "en": "not supported by firmware",
     "ru": "не поддерживается прошивкой"
@@ -141,24 +149,168 @@
     "ru": "Прошивка этой машины не поддерживает Secure Boot (нет нужных UEFI-переменных) — включать нечего."
   },
   "hub.secureBootHint": {
-    "en": "Turning this on enrolls Secure Boot keys and re-seals disk auto-unlock to the new boot state — the terminal will ask for the disk password once. Turning it off removes disk auto-unlock first, so the password prompt returns at boot right away.",
-    "ru": "Включение заносит ключи Secure Boot и переустанавливает авторазблокировку диска под новую цепочку загрузки — в терминале один раз спросит пароль диска. Выключение сначала снимает авторазблокировку, поэтому пароль при загрузке возвращается сразу."
+    "en": "Secure Boot lets the firmware check W's boot loader before it runs. It is switched on in two places: first W prepares its chain here, then you turn Secure Boot on in the firmware setup (BIOS). With the firmware's factory keys, W boots through Microsoft-signed shim and adds its own key with one confirmation on a blue screen — a BitLocker Windows next to W is not affected. Turning it off goes the other way round: the firmware first, then here. Turning it off also removes automatic disk unlock.",
+    "ru": "Secure Boot даёт прошивке проверить загрузчик W до его запуска. Включается в двух местах: сначала W готовит свою цепочку здесь, затем Secure Boot включается в настройках прошивки (BIOS). С заводскими ключами прошивки W загружается через подписанный Microsoft shim и добавляет свой ключ одним подтверждением на синем экране — BitLocker у Windows рядом это не затрагивает. Выключение — в обратном порядке: сначала прошивка, затем здесь. Выключение снимает и автоматическую разблокировку диска."
   },
-  "hub.secureBoot.finishTitle": {
+  "hub.secureBoot.prepared": {
+    "en": "W ready",
+    "ru": "W готова"
+  },
+  "hub.secureBoot.step.prepare": {
+    "en": "Next: prepare W, then turn Secure Boot on in the firmware setup.",
+    "ru": "Дальше: подготовьте W, затем включите Secure Boot в настройках прошивки."
+  },
+  "hub.secureBoot.step.prepareOwn": {
+    "en": "The firmware is in Setup Mode — W will enroll its own keys. Next: prepare W.",
+    "ru": "Прошивка в Setup Mode — W занесёт свои ключи. Дальше: подготовьте W."
+  },
+  "hub.secureBoot.step.reboot": {
+    "en": "Next: reboot so the new keys take effect.",
+    "ru": "Дальше: перезагрузитесь, чтобы новые ключи вступили в силу."
+  },
+  "hub.secureBoot.step.rebootMok": {
+    "en": "Next: reboot. On the blue screen choose Enroll MOK → Continue → Yes, type the code from the terminal, then Reboot — within 5 minutes. Never choose Reset MOK.",
+    "ru": "Дальше: перезагрузитесь. На синем экране выберите Enroll MOK → Continue → Yes, введите код из терминала и Reboot — в течение 5 минут. Не выбирайте Reset MOK."
+  },
+  "hub.secureBoot.step.mokLost": {
+    "en": "W's key did not reach the firmware's list — the request was lost (it expires if not answered in time). Request it again.",
+    "ru": "Ключ W не попал в список прошивки — запрос потерялся (он сгорает, если не ответить вовремя). Запросите его снова."
+  },
+  "hub.secureBoot.step.firmwareOn": {
+    "en": "W is ready. Next: turn Secure Boot on in the firmware setup, then come back here.",
+    "ru": "W готова. Дальше: включите Secure Boot в настройках прошивки и вернитесь сюда."
+  },
+  "hub.secureBoot.step.finish": {
+    "en": "The firmware checks W now. Next: finish enabling.",
+    "ru": "Прошивка уже проверяет W. Дальше: завершите включение."
+  },
+  "hub.secureBoot.step.offShim": {
+    "en": "To turn it off, first switch Secure Boot off in the firmware setup — with its factory keys W boots only through shim.",
+    "ru": "Чтобы выключить, сначала отключите Secure Boot в настройках прошивки — с заводскими ключами W загружается только через shim."
+  },
+  "hub.secureBoot.act.prepare": {
+    "en": "Prepare W",
+    "ru": "Подготовить W"
+  },
+  "hub.secureBoot.act.finish": {
     "en": "Finish enabling",
     "ru": "Завершить включение"
   },
-  "hub.secureBoot.pendingReboot": {
-    "en": "Reboot required before the disk auto-unlock can be re-sealed",
-    "ru": "Нужна перезагрузка, прежде чем можно переустановить авторазблокировку диска"
+  "hub.secureBoot.act.retry": {
+    "en": "Request the key again",
+    "ru": "Запросить ключ снова"
   },
-  "hub.secureBoot.pendingReady": {
-    "en": "Disk auto-unlock still needs to be re-sealed to the new boot state",
-    "ru": "Авторазблокировку диска ещё нужно переустановить под новую цепочку загрузки"
+  "hub.secureBoot.act.reboot": {
+    "en": "Reboot",
+    "ru": "Перезагрузить"
   },
-  "hub.secureBoot.finish": {
-    "en": "Finish",
-    "ru": "Завершить"
+  "hub.secureBoot.act.firmware": {
+    "en": "Reboot into firmware setup",
+    "ru": "Перезагрузить в настройки прошивки"
+  },
+  "hub.secureBoot.act.disable": {
+    "en": "Turn off in W",
+    "ru": "Отключить в W"
+  },
+  "hub.crypt": {
+    "en": "Disk unlock",
+    "ru": "Разблокировка диска"
+  },
+  "hub.crypt.noAccess": {
+    "en": "no access",
+    "ru": "нет доступа"
+  },
+  "hub.crypt.retry": {
+    "en": "Retry",
+    "ru": "Повторить"
+  },
+  "hub.tpm": {
+    "en": "Automatic unlock (TPM2)",
+    "ru": "Автоматическая разблокировка (TPM2)"
+  },
+  "hub.tpm.none": {
+    "en": "Off — passphrase only",
+    "ru": "Выкл — только пароль"
+  },
+  "hub.tpm.tpm": {
+    "en": "TPM",
+    "ru": "TPM"
+  },
+  "hub.tpm.pin": {
+    "en": "TPM + PIN",
+    "ru": "TPM + PIN"
+  },
+  "hub.tpm.pinRecommended": {
+    "en": "TPM + PIN (recommended)",
+    "ru": "TPM + PIN (рекомендуется)"
+  },
+  "hub.tpm.reseal": {
+    "en": "Re-seal",
+    "ru": "Перепечатать"
+  },
+  "hub.tpm.value.none": {
+    "en": "off",
+    "ru": "выкл"
+  },
+  "hub.tpm.value.tpm": {
+    "en": "on",
+    "ru": "вкл"
+  },
+  "hub.tpm.value.pin": {
+    "en": "on · PIN",
+    "ru": "вкл · PIN"
+  },
+  "hub.tpm.noDeviceShort": {
+    "en": "no TPM 2.0",
+    "ru": "нет TPM 2.0"
+  },
+  "hub.tpm.noDevice": {
+    "en": "This machine has no TPM 2.0 chip — the disk opens with its passphrase.",
+    "ru": "На этой машине нет чипа TPM 2.0 — диск открывается паролем."
+  },
+  "hub.tpm.needSecureBoot": {
+    "en": "Turn Secure Boot on first (above). Without it the TPM would hand the disk key to any USB stick someone boots.",
+    "ru": "Сначала включите Secure Boot (выше). Без него TPM отдаст ключ диска любой флешке, с которой загрузятся."
+  },
+  "hub.tpm.reseal.stale": {
+    "en": "The disk opened with the passphrase this time: a firmware, Windows, shim or Secure Boot update moved what the TPM checks. Re-seal automatic unlock.",
+    "ru": "В этот раз диск открылся паролем: обновление прошивки, Windows, shim или Secure Boot изменило то, что проверяет TPM. Перепечатайте автоматическую разблокировку."
+  },
+  "hub.tpm.reseal.pending": {
+    "en": "Automatic unlock waits for its first re-seal — it happens on the next boot.",
+    "ru": "Автоматическая разблокировка ждёт перепечатки — она произойдёт при следующей загрузке."
+  },
+  "hub.tpmHint": {
+    "en": "The TPM2 chip releases the disk key only to W's own boot chain, so the passphrase is not asked at boot. TPM + PIN asks for a short PIN instead; after three wrong PINs the passphrase or the recovery key opens the disk.",
+    "ru": "Чип TPM2 отдаёт ключ диска только цепочке загрузки W, поэтому пароль при загрузке не спрашивается. TPM + PIN вместо него спрашивает короткий PIN; после трёх неверных диск открывает пароль или ключ восстановления."
+  },
+  "hub.tpmHintLaptop": {
+    "en": "On a laptop, TPM alone boots a stolen laptop up to the login screen, and only the account password protects your files; TPM + PIN closes that gap.",
+    "ru": "На ноутбуке TPM без PIN загружает украденный ноутбук до экрана входа, и файлы защищает только пароль учётной записи; TPM + PIN закрывает эту брешь."
+  },
+  "hub.recovery": {
+    "en": "Recovery key",
+    "ru": "Ключ восстановления"
+  },
+  "hub.recoveryHint": {
+    "en": "A long spare key in case the passphrase is lost — shown once, store it outside this computer",
+    "ru": "Длинный запасной ключ на случай потери пароля — показывается один раз, храните его вне этого компьютера"
+  },
+  "hub.recovery.yes": {
+    "en": "set",
+    "ru": "есть"
+  },
+  "hub.recovery.no": {
+    "en": "none",
+    "ru": "нет"
+  },
+  "hub.recovery.add": {
+    "en": "Create",
+    "ru": "Создать"
+  },
+  "hub.recovery.replace": {
+    "en": "Replace",
+    "ru": "Заменить"
   },
   "hub.harden": {
     "en": "Kernel hardening",
@@ -475,6 +627,46 @@
   "appear.baseColor": {
     "en": "Base colour",
     "ru": "Базовый цвет"
+  },
+  "appear.saturation": {
+    "en": "Saturation",
+    "ru": "Насыщенность"
+  },
+  "appear.saturation.muted": {
+    "en": "Muted",
+    "ru": "Приглушённая"
+  },
+  "appear.saturation.balanced": {
+    "en": "Balanced",
+    "ru": "Обычная"
+  },
+  "appear.saturation.vivid": {
+    "en": "Vivid",
+    "ru": "Яркая"
+  },
+  "appear.tint": {
+    "en": "Surface tint",
+    "ru": "Окраска фона"
+  },
+  "appear.tint.neutral": {
+    "en": "Neutral",
+    "ru": "Нейтральная"
+  },
+  "appear.tint.subtle": {
+    "en": "Subtle",
+    "ru": "Лёгкая"
+  },
+  "appear.tint.full": {
+    "en": "Full",
+    "ru": "Полная"
+  },
+  "appear.surfaceTone": {
+    "en": "Surface tone",
+    "ru": "Тон фона"
+  },
+  "appear.surfaceToneHint": {
+    "en": "The first swatch follows the base colour; the others are colours of the wallpaper. Accents keep the base colour either way.",
+    "ru": "Первый образец — тон базового цвета, остальные — цвета обоев. Акценты в любом случае остаются в базовом цвете."
   },
   "appear.contrast": {
     "en": "Contrast",

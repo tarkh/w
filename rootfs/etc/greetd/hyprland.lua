@@ -30,7 +30,6 @@ hl.config({
 
   decoration = {
     rounding = 0,
-    rounding_power = 0,
     -- Enabled so the compositor can blur the wallpaper behind a translucent login
     -- card (greeter.json cardOpacity < 1). Same settings as the user session.
     blur = {
@@ -47,6 +46,10 @@ hl.config({
     no_donation_nag = true,
   },
 })
+
+-- VM quirk shared with the user session (otherwise the greeter renders black under
+-- virgl) — see the file itself. A no-op on real hardware.
+pcall(require, "/usr/share/w/hypr/rules.d/virtio-gpu.lua")
 
 -- Fallback rule first: catches any output with no saved w-monitor rule
 -- (unconfigured / freshly hotplugged). Explicit whitelist below — mirrors the

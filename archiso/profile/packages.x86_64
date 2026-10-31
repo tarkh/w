@@ -71,6 +71,7 @@ mkinitcpio-archiso
 mkinitcpio-nfs-utils
 mmc-utils
 modemmanager
+mokutil
 mtools
 nano
 nbd

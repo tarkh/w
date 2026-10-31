@@ -37,6 +37,11 @@ OVMF_VARS="$SCRIPT_DIR/OVMF_VARS.fd"
 # --secureboot: use the SMM/Secure-Boot OVMF build on a q35+smm machine with a
 #            dedicated NVRAM file (OVMF_VARS.secboot.fd, Setup Mode → guest enrolls
 #            its own keys via `w-secureboot setup`). Needed to test the Limine SB stack.
+# --secureboot=ms: the same SB machine, but its NVRAM (OVMF_VARS.secboot-ms.fd) is a
+#            factory-like User Mode one — Microsoft KEK/db (UEFI CA 2011 + 2023) enrolled
+#            by virt-fw-vars (host `virt-firmware`), Secure Boot enforcing. The shim+MOK
+#            path (`w-secureboot enable` without Setup Mode) is tested on it. Seeded once
+#            from the plain vars, so the installed system's boot entries come along.
 # --tpm:     attach an emulated TPM 2.0 via swtpm (host `swtpm` package). Needed to
 #            test LUKS TPM2 auto-unlock (systemd-cryptenroll --tpm2-device=auto).
 # --force-iso: with --install, force-boot the ISO even if w-base.qcow2 already holds
@@ -54,6 +59,8 @@ OVMF_VARS="$SCRIPT_DIR/OVMF_VARS.fd"
 #            Note: virtio-gpu's mode list is EDID-synthetic (one preferred mode + a few
 #            standard ones) — resolution/refresh switching still wants real hardware.
 # --display=sdl|gtk: force the display backend instead of letting --extra-mon pick it.
+# --monitor=PATH: the QEMU human monitor on a unix socket at PATH — vm/e2e.sh takes a
+#            screendump through it when a headless stage runs out of time.
 INSTALL_MODE=0
 BT_MODE=0
 FP_MODE=0
@@ -65,18 +72,21 @@ FORCE_ISO_MODE=0
 ISO_OVERRIDE=""
 EXTRA_MON=0
 DISPLAY_OVERRIDE=""
+MONITOR=""
 for arg in "$@"; do
   [[ "$arg" == "--install" ]] && INSTALL_MODE=1
   [[ "$arg" == "--force-iso" ]] && FORCE_ISO_MODE=1
   [[ "$arg" == "--bt" ]] && BT_MODE=1
   [[ "$arg" == "--fp" ]] && FP_MODE=1
   [[ "$arg" == "--secureboot" ]] && SECBOOT_MODE=1
+  [[ "$arg" == "--secureboot=ms" ]] && SECBOOT_MODE=2
   [[ "$arg" == "--tpm" ]] && TPM_MODE=1
   [[ "$arg" == "--headless" ]] && HEADLESS_MODE=1
   [[ "$arg" == "--no-reboot" ]] && NO_REBOOT=1
   [[ "$arg" == --extra-mon=* ]] && EXTRA_MON="${arg#--extra-mon=}"
   [[ "$arg" == --display=* ]] && DISPLAY_OVERRIDE="${arg#--display=}"
   [[ "$arg" == --iso=* ]] && ISO_OVERRIDE="${arg#--iso=}"
+  [[ "$arg" == --monitor=* ]] && MONITOR="${arg#--monitor=}"
 done
 
 # Capped at 3 extra heads (4 total): enough for any layout test, and a fat-fingered
@@ -88,7 +98,14 @@ done
 
 # Secure Boot uses a separate NVRAM so it never clobbers the plain-boot vars.
 OVMF_VARS_SECBOOT="$SCRIPT_DIR/OVMF_VARS.secboot.fd"
-if [[ $SECBOOT_MODE -eq 1 ]]; then
+(( SECBOOT_MODE == 2 )) && OVMF_VARS_SECBOOT="$SCRIPT_DIR/OVMF_VARS.secboot-ms.fd"
+if [[ $SECBOOT_MODE -eq 2 && ! -f "$OVMF_VARS_SECBOOT" ]]; then
+  command -v virt-fw-vars &>/dev/null \
+    || { echo "ERROR: --secureboot=ms needs virt-fw-vars (host package virt-firmware, w-dev pack)"; exit 1; }
+  virt-fw-vars --input "$OVMF_VARS" --output "$OVMF_VARS_SECBOOT" --enroll-redhat --secure-boot \
+    || { rm -f "$OVMF_VARS_SECBOOT"; echo "ERROR: virt-fw-vars failed"; exit 1; }
+fi
+if [[ $SECBOOT_MODE -ne 0 ]]; then
   # Seed the Secure-Boot NVRAM from the Setup-Mode template (the plain OVMF_VARS)
   # on first use, then switch code+vars to the SB pair.
   [[ -f "$OVMF_VARS_SECBOOT" ]] || cp "$OVMF_VARS" "$OVMF_VARS_SECBOOT"
@@ -183,7 +200,7 @@ fi
 # Machine topology. Secure Boot needs SMM (q35,smm=on) plus the pflash "secure"
 # property so the firmware can lock the varstore; plain boot stays on the default
 # i440fx machine (whose empty FDC needs isa-fdc silencing).
-if [[ $SECBOOT_MODE -eq 1 ]]; then
+if [[ $SECBOOT_MODE -ne 0 ]]; then
   MACHINE_ARGS=(
     -machine q35,smm=on
     -global driver=cfi.pflash01,property=secure,value=on
@@ -287,6 +304,7 @@ QEMU_ARGS=(
   -nic user,model=virtio-net-pci,hostfwd=tcp::2222-:22
 )
 [[ $NO_REBOOT -eq 1 ]] && QEMU_ARGS+=(-no-reboot)
+[[ -n "$MONITOR" ]] && QEMU_ARGS+=(-monitor unix:"$MONITOR",server,nowait)
 
 if [[ $INSTALL_MODE -eq 1 ]]; then
   QEMU_ARGS+=(-drive file="$ISO",media=cdrom,readonly=on,if=none,id=cd0

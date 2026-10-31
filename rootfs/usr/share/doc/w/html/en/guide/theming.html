@@ -44,13 +44,26 @@ of an image:</p>
 <li>W extracts the dominant colors from the image and builds an accessible
 palette around the base color you pick — contrast is checked automatically
 so text stays readable in both modes.</li>
-<li>Choose an intensity (low/medium/high) for the palette ramp and confirm.</li>
+<li>Choose a contrast (Soft/Medium/Crisp) for the palette ramp, and a
+<strong>Saturation</strong>: how colorful the accents, icons and terminal colors are.
+<strong>Balanced</strong> is the default. <strong>Muted</strong> gives a calmer desktop, and <strong>Vivid</strong>
+is the most colorful one, which helps when the accent looks washed out
+(khaki on amber wallpaper, for example). The background keeps its tint,
+and text stays readable at every step. The effect is gentler on amber,
+yellow and teal wallpapers than on purple or blue ones.</li>
+<li>Optionally give the background its own color, separate from the accents:
+<strong>Surface tint</strong> sets how much color the surfaces and text carry. <strong>Full</strong>
+is the default single-color theme. <strong>Neutral</strong> is graphite (or paper) with
+only a trace of color, and the accents keep the base color. <strong>Surface tone</strong>
+picks that color: the base color, or one the wallpaper is painted in (for
+example the slate of a dark night with one amber moon). It appears only when
+the image has such a color. Confirm.</li>
 </ol>
 <p>Light themes get special care: ink colors are recalculated against the light
 surfaces, so buttons and icons keep their contrast.</p>
 <p>The same screen, opened with the pencil badge on one of <strong>your</strong> generated
 themes, rebuilds that theme from its own wallpaper (new base color, new
-contrast) — the wallpaper itself does not change.</p>
+contrast, saturation, new background) — the wallpaper itself does not change.</p>
 <p>Wallpapers are per-resolution images in a small set of size tiers; a theme
 ships what it ships and the system falls back to the nearest size. See
 <code>w-wallpaper</code> if you maintain a theme's assets.</p>

@@ -1,46 +1,41 @@
 // W Linux — Hub Security section (the System panel's "Security" tab).
-// A thin front-end over `w-secureboot`: one control, Secure Boot on/off, plus the
-// firmware status it reads from. State comes from `w-secureboot status --porcelain`
-// (unprivileged — sbctl needs no root to read EFI variables), a one-shot Process on
-// open, no live watch (nothing else changes it while the panel is up).
+// Three disk/boot controls on an encrypted (Limine) install — Secure Boot, automatic
+// disk unlock (TPM2) and the recovery key — plus the kernel hardening profile, which
+// exists on every install.
 //
-// Enrolling/de-enrolling is NOT a `runPrivileged`/suspend action (that hides the Hub
-// and blocks with no progress) — it needs a live pty besides: `w-secureboot enable`
-// re-seals the LUKS TPM2 auto-unlock to the new boot chain (`w-crypt enroll-tpm`/
-// `reenroll-tpm`), which asks for the disk passphrase once; `disable` removes that
-// factor first so the passphrase prompt returns at boot. So this opens in a terminal
-// through the `secureboot` capability (pkexec + w-hub-actuate) and closes the Hub —
-// the same idiom SystemPanel uses for `sync-update interactive`.
+// ── Secure Boot is a walk-through, not a switch ──────────────────────────────────
+// "Secure Boot on" is two things in two places: W's chain (sbctl keys, W's key in
+// MokList or the firmware, a signed Limine carrying its config hash) and the
+// firmware's switch. The firmware switch alone does not make W boot — W must be ready
+// first; and turning it off goes the other way round (with factory keys W boots only
+// through shim, so the firmware goes first). Between them sit reboots and, for shim,
+// a MokManager visit. So the row shows where the machine is (from `w-secureboot status
+// --porcelain`, unprivileged) and a line naming the next step, and its menu offers only
+// the actions that make sense from there — prepare, reboot, reboot into the firmware
+// setup, finish, retry a lost key request, turn off in W. The state lives in the
+// system across the reboots; the row only reads it back.
 //
-// A firmware that doesn't expose Secure Boot EFI variables at all (legacy boot, or a
-// non-secboot VM firmware) reports `state=unsupported`: the row locks instead of
-// hiding, so the panel says why instead of just not being there — `SelectRow.locked`
-// is the same mechanism NetworkPanel uses for a site-policy-owned key.
+// ── Automatic unlock and the recovery key are their own rows ─────────────────────
+// TPM2 is sealed to PCR7, which only tells W's boot chain from a stranger's USB stick
+// while Secure Boot is enforced — so the TPM row stays locked until then, and Secure
+// Boot never enrolls TPM2 by itself (w-secureboot only re-seals an existing seal). A
+// laptop is told that TPM-only unlock boots a stolen laptop up to the login screen and
+// offered TPM2 + PIN instead. Turning Secure Boot off removes TPM2 (w-secureboot
+// disable), which the Secure Boot hint says out loud.
 //
-// A 4th "on" also carries a `tpm_pending` flag: PCR7 (what the LUKS TPM2 auto-unlock
-// is sealed to) is measured by the firmware/bootloader at boot and does not change
-// while the OS is running, so `w-secureboot enable` cannot enroll the SB keys AND
-// re-seal TPM2 in the same session — it enrolls, then asks for a reboot before it can
-// finish. `reboot_needed` vs `ready` (has the required reboot happened, keyed off the
-// boot ID) decides whether the extra row below is a plain note or a clickable action.
+// Both rows read `w-crypt status --porcelain`, which needs root (the LUKS header is
+// root-only). That read is privileged the way the Rollback tab's snapshot list is: one
+// `pkexec … crypt-status` per tab entry, as this section's own tracked Process, inside
+// the Overlays.suspended bracket. Cancelling the prompt leaves the Secure Boot and
+// hardening rows working; the two disk rows say so and retry on activation.
 //
-// The second control is the kernel hardening profile (w-kernel harden), and it is the
-// opposite kind of action: renaming three sysctl drop-ins, one `sysctl --system`, a
-// cmdline edit and a bootloader regen — seconds, no stdin, nothing to watch. So it goes
-// through the Hub's runPrivileged bracket (suspend for the polkit prompt, restore, then
-// re-read), the same idiom as the Date & Time section's NTP toggle. The two idioms
-// sitting side by side in one section is the rule working, not an inconsistency: the
-// choice is about how long the operation takes and whether it needs a pty, never about
-// which panel it lives on.
-//
-// This was a root-level Hub panel of its own until the menu reorganisation: one control
-// is too thin for a root tile, and Secure Boot is the System screen's business in every
-// reference settings app. The TAB used to be gated on /etc/default/limine — correct
-// while it held Secure Boot alone, wrong the moment hardening arrived: hardening is
-// bootloader-independent, and the gate would have hidden it from every plain GRUB
-// install. The flag is now handed down from SystemPanel and drops only the Secure Boot
-// rows (a structural absence of the backend, not a firmware limitation — that case the
-// row grays out with a hint instead).
+// ── Two execution idioms side by side ────────────────────────────────────────────
+// Everything that asks for the disk passphrase, a new PIN, or prints a MokManager code
+// or a recovery key runs in a terminal that stays open (Term.execHold — the output IS
+// the point) and closes the Hub. Removing the TPM2 seal asks nothing: it goes through
+// this section's privileged Process and updates the row from its exit code instead of
+// a second prompt for a re-read. Hardening is instant actuation through the Hub's
+// runPrivileged bracket, the same idiom as the Date & Time section's NTP toggle.
 //
 // Keyboard roving-focus is owned by SystemPanel, not this file — the same contract
 // NightLightSection has with DisplaysPanel: this renders whichever field it is told
@@ -65,7 +60,7 @@ Column {
     property var menuLayer: null
 
     // Whether this machine has the Limine/Secure Boot backend at all — pushed down by
-    // SystemPanel, which owns the probe (see the header).
+    // SystemPanel, which owns the probe. Without it only the hardening row exists.
     property bool limineAvailable: false
 
     // Instant privileged actuation handed up to the Hub (suspend for the polkit prompt,
@@ -74,19 +69,12 @@ Column {
     signal runPrivileged(var cmd, var onDone)
 
     // ── Remote control surface (roving index lives in SystemPanel) ──────────────────
-    // Field names: "sb" (the Secure Boot switch), "finish" (the pending TPM2 re-seal,
-    // present only while one is owed) and "harden" (the hardening profile). SystemPanel
-    // reads `fields` to build its content descriptor list, so a row appearing or
-    // disappearing — with the backend, or with a pending re-seal — reshapes the roving
-    // order for free. The hardening row is last and unconditional: it is the only one
-    // that exists on every install.
     property string focusedField: ""
-    readonly property var fields: (root.limineAvailable
-                                   ? (root.tpmPending !== "no" ? ["sb", "finish"] : ["sb"])
-                                   : []).concat(["harden"])
+    readonly property var fields: (root.limineAvailable ? ["sb", "tpm", "recovery"] : []).concat(["harden"])
     function rowItem(field) {
         if (field === "sb") return sbRow;
-        if (field === "finish") return finishRow;
+        if (field === "tpm") return tpmRow;
+        if (field === "recovery") return recRow;
         if (field === "harden") return hardenRow;
         return null;
     }
@@ -95,25 +83,26 @@ Column {
         if (it && it.activated !== undefined) it.activated();
     }
 
-    // Open a privileged, interactive command in a terminal and close the Hub, so the
-    // disk-passphrase prompt lands on a real pty instead of a hidden popup.
-    function runTerm(cmd) { Quickshell.execDetached(cmd); Overlays.close("hub"); }
+    // A privileged, interactive command in a terminal that stays open, then close the Hub.
+    function runTerm(argv) {
+        Quickshell.execDetached(Term.execHold(["pkexec", "/usr/lib/w/w-hub-actuate"].concat(argv)));
+        Overlays.close("hub");
+    }
+    function sessionExit(action) { Quickshell.execDetached(["w-session-exit", action]); Overlays.close("hub"); }
 
     // ── Secure Boot state (w-secureboot status --porcelain) ─────────────────────────
-    property string sbState: ""   // "on" | "off" | "unsupported" | "" (not read yet)
+    property string sbState: ""        // "on" | "off" | "unsupported" | "" (not read yet)
+    property string sbFirmware: ""     // "yes" | "no" — the firmware enforces Secure Boot
+    property string sbSetup: ""        // "yes" — the firmware is in Setup Mode
     property string tpmPending: "no"   // "no" | "reboot_needed" | "ready"
+    property string sbMode: "none"     // "own" | "shim" | "none" — who trusts W's key
+    property string sbMok: "na"        // "yes" | "no" | "unknown" | "na" — W's key in MokList
     readonly property bool sbUnsupported: root.sbState === "unsupported"
-    readonly property bool sbAvailable: root.sbState === "on" || root.sbState === "off"
-    readonly property string sbCurrentId: root.sbAvailable ? root.sbState : "off"
-    readonly property var sbOptions: [
-        { id: "off", label: Strings.t("hub.secureBoot.off") },
-        { id: "on",  label: Strings.t("hub.secureBoot.on") },
-    ]
+    // The one state in which PCR7 tells W's boot chain from anyone else's.
+    readonly property bool sbEnforced: root.sbState === "on" && root.sbFirmware === "yes" && root.tpmPending === "no"
     Process {
         id: sbRead
-        // Only where there is a backend to ask: on a plain GRUB install the Secure Boot
-        // rows are absent, so the probe would be pure waste. limineAvailable arrives
-        // asynchronously from SystemPanel, which is what starts this.
+        // limineAvailable arrives asynchronously from SystemPanel, which starts this.
         running: root.limineAvailable
         command: ["w-secureboot", "status", "--porcelain"]
         stdout: StdioCollector {
@@ -122,37 +111,135 @@ Column {
                 const lines = (this.text || "").split("\n").filter(l => l.length > 0);
                 const f = lines.length >= 2 ? lines[1].split("\t") : [];
                 root.sbState = f[0] || "";
+                root.sbFirmware = f[1] || "";
+                root.sbSetup = f[2] || "";
                 root.tpmPending = f[3] || "no";
+                root.sbMode = f[4] || "none";
+                root.sbMok = f[6] || "na";
             }
         }
     }
 
-    // ── Hardening state (w-kernel harden status --porcelain) ────────────────────────
-    // Unprivileged, and re-read explicitly after our own setter exits (runPrivileged's
-    // onDone) rather than watched: nothing else changes the profile while the panel is
-    // up. `pending` is the configured cmdline disagreeing with /proc/cmdline — the boot
-    // half of the profile only lands on the next boot, and `off` additionally leaves
-    // already-applied sysctl values in the running kernel, which the hint says out loud.
-    property string hardenState: ""      // "on" | "off" | "mixed" | "" (not read yet)
-    property bool   hardenPending: false
-    readonly property var hardenOptions: [
-        { id: "off", label: Strings.t("hub.harden.off") },
-        { id: "on",  label: Strings.t("hub.harden.on") },
-    ]
+    // Can logind reboot straight into the firmware setup (OsIndications)? Unprivileged.
+    property bool canFirmwareSetup: false
     Process {
-        id: hardenRead
-        running: true
-        command: ["w-kernel", "harden", "status", "--porcelain"]
+        running: root.limineAvailable
+        command: ["busctl", "call", "org.freedesktop.login1", "/org/freedesktop/login1",
+                  "org.freedesktop.login1.Manager", "CanRebootToFirmwareSetup"]
+        stdout: StdioCollector { onStreamFinished: root.canFirmwareSetup = (this.text || "").trim() === "s \"yes\"" }
+    }
+
+    // Where the walk-through stands: the row's value, the next-step line, the menu.
+    readonly property var sbPlan: {
+        const modeName = Strings.t("hub.secureBoot.mode." + root.sbMode);
+        const fw = root.canFirmwareSetup ? ["firmware"] : [];
+        if (root.sbState === "off")
+            return { value: Strings.t("hub.secureBoot.off"),
+                     step: Strings.t(root.sbSetup === "yes" ? "hub.secureBoot.step.prepareOwn" : "hub.secureBoot.step.prepare"),
+                     actions: ["prepare"] };
+        if (root.sbState !== "on") return { value: "—", step: "", actions: [] };
+        const prepared = Strings.t("hub.secureBoot.prepared") + " · " + modeName;
+        if (root.tpmPending === "reboot_needed")
+            return { value: prepared,
+                     step: Strings.t(root.sbMode === "shim" ? "hub.secureBoot.step.rebootMok" : "hub.secureBoot.step.reboot"),
+                     actions: ["reboot", "disable"] };
+        if (root.sbMode === "shim" && root.sbMok === "no")
+            return { value: prepared, step: Strings.t("hub.secureBoot.step.mokLost"), actions: ["retry", "disable"] };
+        if (root.sbFirmware !== "yes")
+            return { value: prepared, step: Strings.t("hub.secureBoot.step.firmwareOn"), actions: fw.concat(["disable"]) };
+        if (root.tpmPending === "ready")
+            return { value: prepared, step: Strings.t("hub.secureBoot.step.finish"), actions: ["finish"] };
+        // On. shim: W boots only through shim while the firmware enforces its factory
+        // keys, so turning off starts in the firmware (w-secureboot disable refuses).
+        return { value: Strings.t("hub.secureBoot.on") + " · " + modeName,
+                 step: root.sbMode === "shim" ? Strings.t("hub.secureBoot.step.offShim") : "",
+                 actions: root.sbMode === "shim" ? fw : ["disable"] };
+    }
+    readonly property var sbOptions: root.sbPlan.actions.map((a) => ({ id: a, label: Strings.t("hub.secureBoot.act." + a) }))
+    function sbAct(a) {
+        if (a === "prepare" || a === "finish" || a === "retry") root.runTerm(["secureboot", "on"]);
+        else if (a === "disable") root.runTerm(["secureboot", "off"]);
+        else if (a === "reboot") root.sessionExit("reboot");
+        else if (a === "firmware") root.sessionExit("firmware");
+    }
+
+    // ── Disk unlock factors (pkexec … crypt-status → w-crypt status --porcelain) ────
+    property string cryptRead: ""     // "" (reading) | "ok" | "failed"
+    property bool   tpmDevice: false
+    property string tpm2: "none"      // "none" | "tpm" | "pin"
+    property string reseal: "no"      // "no" | "pending" | "stale" | "unknown"
+    property bool   recoveryKey: false
+    property bool   privBusy: false   // our own pkexec is up (owns Overlays.suspended)
+    property bool   portable: false   // laptop/convertible/tablet — TPM-only warning, PIN first
+    Process {
+        id: cryptProc
+        property string op: ""        // "read" | "off"
         stdout: StdioCollector {
             onStreamFinished: {
+                if (cryptProc.op !== "read") return;
                 const lines = (this.text || "").split("\n").filter(l => l.length > 0);
                 const f = lines.length >= 2 ? lines[1].split("\t") : [];
-                root.hardenState = f[0] || "";
-                root.hardenPending = (f[1] || "no") === "yes";
+                if (f.length < 6) return;
+                root.tpmDevice = f[1] === "yes";
+                root.tpm2 = f[2];
+                root.recoveryKey = f[4] === "yes";
+                root.reseal = f[5];
+                root.cryptRead = "ok";
             }
         }
+        onExited: (code) => {
+            root.privBusy = false;
+            Overlays.suspended = false;
+            if (cryptProc.op === "read" && root.cryptRead !== "ok") root.cryptRead = "failed";
+            if (cryptProc.op === "off" && code === 0) { root.tpm2 = "none"; root.reseal = "no"; }
+        }
     }
-    function reloadHarden() { hardenRead.running = false; hardenRead.running = true; }
+    function cryptRun(op, argv) {
+        root.privBusy = true;
+        Overlays.suspended = true;
+        cryptProc.running = false;
+        cryptProc.op = op;
+        cryptProc.command = ["pkexec", "/usr/lib/w/w-hub-actuate"].concat(argv);
+        cryptProc.running = true;
+    }
+    function loadCrypt() { root.cryptRead = ""; root.cryptRun("read", ["crypt-status"]); }
+    // limineAvailable is pushed in by SystemPanel's Binding after creation, so its one
+    // false → true change is the tab entry — exactly one prompt per entry.
+    onLimineAvailableChanged: if (root.limineAvailable) root.loadCrypt()
+    // A section destroyed with our prompt up never reaches onExited — don't leave the
+    // Hub hidden. Gated on OUR process: the auth card owns the flag while it is up.
+    Component.onDestruction: if (root.privBusy) Overlays.suspended = false
+    Process {
+        running: root.limineAvailable
+        command: ["hostnamectl", "chassis"]
+        stdout: StdioCollector {
+            onStreamFinished: root.portable = ["laptop", "convertible", "tablet", "handset"].indexOf((this.text || "").trim()) >= 0
+        }
+    }
+
+    readonly property bool tpmLocked: root.cryptRead === "ok"
+                                      && (!root.tpmDevice || (root.tpm2 === "none" && !root.sbEnforced))
+    // Without Secure Boot enforced only the ways back are offered for an existing seal
+    // (one made from the CLI with --no-secureboot, or by an unattended install).
+    readonly property var tpmOptions: {
+        let o = [{ id: "none", label: Strings.t("hub.tpm.none") }];
+        if (root.sbEnforced) {
+            const tpm = { id: "tpm", label: Strings.t("hub.tpm.tpm") };
+            const pin = { id: "pin", label: Strings.t(root.portable ? "hub.tpm.pinRecommended" : "hub.tpm.pin") };
+            o = o.concat(root.portable ? [pin, tpm] : [tpm, pin]);
+        }
+        if (root.tpm2 !== "none") o.push({ id: "reseal", label: Strings.t("hub.tpm.reseal") });
+        return o;
+    }
+    function tpmAct(id) {
+        if (id === root.tpm2) return;
+        if (id === "none") root.cryptRun("off", ["crypt", "tpm-off"]);
+        else if (id === "tpm") root.runTerm(["crypt", "tpm-on"]);
+        else if (id === "pin") root.runTerm(["crypt", "tpm-pin"]);
+        else if (id === "reseal") root.runTerm(["crypt", "tpm-reseal"]);
+    }
+    readonly property string cryptValueFallback: root.cryptRead === "failed" ? Strings.t("hub.crypt.noAccess")
+                                                 : root.cryptRead === "" ? "…" : ""
 
     // ── Layout ─────────────────────────────────────────────────────────────────────
     spacing: 12
@@ -168,17 +255,25 @@ Column {
         visible: root.limineAvailable
         icon: "security-high"; glyph: String.fromCodePoint(0xf0498)   // nf-md-shield
         label: Strings.t("hub.secureBoot")
-        enabled: root.sbState !== ""
+        enabled: root.sbState !== "" && root.sbOptions.length > 0
         locked: root.sbUnsupported
         lockedHint: Strings.t("hub.secureBootUnsupportedHint")
-        currentId: root.sbCurrentId
+        currentId: ""
         options: root.sbOptions
-        value: root.sbUnsupported ? Strings.t("hub.secureBootUnsupported")
-               : (root.sbAvailable ? Strings.t("hub.secureBoot." + root.sbCurrentId) : "—")
+        value: root.sbUnsupported ? Strings.t("hub.secureBootUnsupported") : root.sbPlan.value
         focused: root.focusedField === "sb"
-        onActivated: if (root.menuLayer) root.menuLayer.openMenu(sbRow, root.sbOptions, root.sbCurrentId, (id) => {
-            root.runTerm(Term.exec(["pkexec", "/usr/lib/w/w-hub-actuate", "secureboot", id]))
-        })
+        onActivated: if (root.menuLayer && sbRow.interactive)
+            root.menuLayer.openMenu(sbRow, root.sbOptions, "", (id) => root.sbAct(id))
+    }
+    // The next step, in accent ink — what the row's menu is about to do, or what has to
+    // happen outside W (a reboot, the blue MokManager screen, the firmware setup).
+    Text {
+        width: parent.width
+        visible: root.limineAvailable && !root.sbUnsupported && root.sbPlan.step !== ""
+        text: root.sbPlan.step
+        color: Colors.accentInk
+        font.family: Fonts.family; font.pixelSize: 11
+        wrapMode: Text.WordWrap
     }
     Text {
         width: parent.width
@@ -189,28 +284,92 @@ Column {
         wrapMode: Text.WordWrap
     }
 
-    // PCR7 (what TPM2 disk auto-unlock is sealed to) only updates on an actual
-    // reboot, so a fresh enrollment cannot finish sealing it in the same session —
-    // this row makes that pending step visible instead of the toggle silently
-    // reading "On" while the disk still asks for its passphrase at every boot.
-    HubRow {
-        id: finishRow
+    // ── Disk unlock ────────────────────────────────────────────────────────────────
+    HubSection {
         width: parent.width
-        visible: root.limineAvailable && root.tpmPending !== "no"
-        icon: "view-refresh"; glyph: String.fromCodePoint(0xf0450)   // nf-md-restart
-        label: Strings.t("hub.secureBoot.finishTitle")
-        sublabel: root.tpmPending === "reboot_needed"
-                  ? Strings.t("hub.secureBoot.pendingReboot")
-                  : Strings.t("hub.secureBoot.pendingReady")
-        actionText: root.tpmPending === "ready" ? Strings.t("hub.secureBoot.finish") : ""
-        focused: root.focusedField === "finish"
+        visible: root.limineAvailable
+        text: Strings.t("hub.crypt")
+    }
+    SelectRow {
+        id: tpmRow
+        width: parent.width
+        visible: root.limineAvailable
+        icon: "security-medium"; glyph: String.fromCodePoint(0xf061a)   // nf-md-chip
+        label: Strings.t("hub.tpm")
+        enabled: root.cryptRead !== ""
+        locked: root.tpmLocked
+        lockedHint: Strings.t(root.tpmDevice ? "hub.tpm.needSecureBoot" : "hub.tpm.noDevice")
+        currentId: root.tpm2
+        options: root.tpmOptions
+        value: root.cryptValueFallback
+               || (!root.tpmDevice ? Strings.t("hub.tpm.noDeviceShort") : Strings.t("hub.tpm.value." + root.tpm2))
+        focused: root.focusedField === "tpm"
         onActivated: {
-            if (root.tpmPending !== "ready") return;
-            root.runTerm(Term.exec(["pkexec", "/usr/lib/w/w-hub-actuate", "secureboot", "on"]))
+            if (root.cryptRead === "failed") { root.loadCrypt(); return; }
+            if (root.menuLayer && tpmRow.interactive)
+                root.menuLayer.openMenu(tpmRow, root.tpmOptions, root.tpm2, (id) => root.tpmAct(id));
+        }
+    }
+    Text {
+        width: parent.width
+        visible: root.limineAvailable && root.cryptRead === "ok" && (root.reseal === "stale" || root.reseal === "pending")
+        text: Strings.t("hub.tpm.reseal." + root.reseal)
+        color: Colors.accentInk
+        font.family: Fonts.family; font.pixelSize: 11
+        wrapMode: Text.WordWrap
+    }
+    Text {
+        width: parent.width
+        visible: root.limineAvailable
+        text: Strings.t("hub.tpmHint") + (root.portable ? " " + Strings.t("hub.tpmHintLaptop") : "")
+        color: Colors.muted
+        font.family: Fonts.family; font.pixelSize: 11
+        wrapMode: Text.WordWrap
+    }
+    HubRow {
+        id: recRow
+        width: parent.width
+        visible: root.limineAvailable
+        icon: "dialog-password"; glyph: String.fromCodePoint(0xf087e)   // nf-md-lifebuoy
+        label: Strings.t("hub.recovery")
+        sublabel: Strings.t("hub.recoveryHint")
+        value: root.cryptValueFallback || Strings.t(root.recoveryKey ? "hub.recovery.yes" : "hub.recovery.no")
+        actionText: root.cryptRead === "ok" ? Strings.t(root.recoveryKey ? "hub.recovery.replace" : "hub.recovery.add")
+                    : root.cryptRead === "failed" ? Strings.t("hub.crypt.retry") : ""
+        focused: root.focusedField === "recovery"
+        onActivated: {
+            if (root.cryptRead === "failed") root.loadCrypt();
+            else if (root.cryptRead === "ok") root.runTerm(["crypt", root.recoveryKey ? "recovery-replace" : "recovery-add"]);
         }
     }
 
     // ── Kernel hardening (w-kernel harden) ─────────────────────────────────────────
+    property string hardenState: ""      // "on" | "off" | "mixed" | "" (not read yet)
+    property bool   hardenPending: false
+    readonly property var hardenOptions: [
+        { id: "off", label: Strings.t("hub.harden.off") },
+        { id: "on",  label: Strings.t("hub.harden.on") },
+    ]
+    // Unprivileged, and re-read explicitly after our own setter exits (runPrivileged's
+    // onDone) rather than watched: nothing else changes the profile while the panel is
+    // up. `pending` is the configured cmdline disagreeing with /proc/cmdline — the boot
+    // half of the profile only lands on the next boot, and `off` additionally leaves
+    // already-applied sysctl values in the running kernel, which the hint says out loud.
+    Process {
+        id: hardenRead
+        running: true
+        command: ["w-kernel", "harden", "status", "--porcelain"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const lines = (this.text || "").split("\n").filter(l => l.length > 0);
+                const f = lines.length >= 2 ? lines[1].split("\t") : [];
+                root.hardenState = f[0] || "";
+                root.hardenPending = (f[1] || "no") === "yes";
+            }
+        }
+    }
+    function reloadHarden() { hardenRead.running = false; hardenRead.running = true; }
+
     HubSection { width: parent.width; text: Strings.t("hub.harden") }
     SelectRow {
         id: hardenRow
@@ -240,10 +399,9 @@ Column {
         font.family: Fonts.family; font.pixelSize: 11
         wrapMode: Text.WordWrap
     }
-    // Deliberately a line of text and not a HubRow: unlike the Secure Boot one above,
-    // this pending step has no action to offer — the cmdline half simply takes effect
-    // at the next boot — so giving it a focusable row would put a dead stop in the
-    // keyboard roving order.
+    // Deliberately a line of text and not a HubRow: this pending step has no action to
+    // offer — the cmdline half simply takes effect at the next boot — so giving it a
+    // focusable row would put a dead stop in the keyboard roving order.
     Text {
         width: parent.width
         visible: root.hardenPending

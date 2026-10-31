@@ -45,9 +45,15 @@ pacman -Su --noconfirm
 # time a suite grows a dependency. The stale copy would then report a green run
 # over suites it never executed, which is exactly what --strict exists to prevent.
 # The rationale for each entry lives there too.
+#
+# The second group is scripts/iso-secureboot.sh's: Limine itself (the second stage
+# shim loads, with its config-hash tool), the CMS pair (openssl) and pefile for the
+# MokList hash. mtools, dosfstools and xorriso arrive with archiso, objcopy with
+# base-devel.
 info "Installing build and check dependencies..."
 mapfile -t CHECK_PKGS < <(sed -e 's/#.*//' -e 's/[[:space:]]//g' "$REPO/ci/check-packages.txt" | grep -v '^$')
-pacman -S --noconfirm --needed archiso base-devel "${CHECK_PKGS[@]}"
+pacman -S --noconfirm --needed archiso base-devel "${CHECK_PKGS[@]}" \
+  limine openssl python-pefile
 
 # The paths suite asserts no shipped /usr/bin path collides with a file owned by
 # an Arch package — which needs the files database. Without it that probe SKIPs,

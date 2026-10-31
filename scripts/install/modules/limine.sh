@@ -31,9 +31,7 @@ limine_prep_initramfs() {
   ui_info "Configuring encrypted initramfs (sd-encrypt)..."
   sed -i 's|^HOOKS=.*|HOOKS=(base systemd autodetect microcode modconf kms keyboard sd-vconsole block sd-encrypt filesystems fsck)|' "$mkconf"
 
-  local part2 uuid
-  part2="$(part "$CONF_DISK" 2)"
-  uuid="$(blkid -s UUID -o value "$part2")"
+  local uuid; uuid="$(blkid -s UUID -o value "$CONF_ROOT_PART")"
   mkdir -p "$MNT/etc/kernel"
   # One shared cmdline for all kernels/snapshots. rootflags subvol=@ is overridden
   # per-snapshot by limine-snapper-sync. `quiet splash` → Plymouth. TPM2 unlock (once
@@ -48,9 +46,16 @@ limine_prep_initramfs() {
 # (`w-crypt enroll-tpm`). A headless preset install has nobody at the console to type
 # the LUKS passphrase, so every boot of the pipeline (the firstboot reboot included)
 # would hang at the unlock prompt — enroll auto-unlock right here in S1 instead.
-# Same policy as w-crypt's default: PCR 7 (Secure Boot state; identical between this
-# ISO boot and the installed system — SB is off/unchanged in both, verify on the
-# first live run). No TPM → warn and continue: the install itself still succeeds,
+# Interactive installs under an enforcing Secure Boot enroll too (desktops only — a
+# laptop keeps the passphrase: a stolen one would boot to its login screen, see
+# package-limine.md): there the order "Secure Boot, then TPM2" already holds.
+# Bound to NO PCR here, and resealed to PCR 7 (w-crypt's default policy) by
+# w-firstboot on the installed system's own first boot: PCR 7 of this live session is
+# not the installed system's — the medium boots through shim, which measures its own
+# state (SBAT level, MOK) into PCR 7 even with Secure Boot off, while the installed
+# Limine starts without it. Sealed to this boot, every later boot would ask for the
+# passphrase. The marker tells w-firstboot the unbound seal is the installer's.
+# No TPM → warn and continue: the install itself still succeeds,
 # each boot then needs a human for the passphrase (TPM-less fleet hardware). A TPM
 # that is present but fails to enroll is fatal — better a loud die now than a silent
 # hour-long timeout on an invisible unlock prompt later.
@@ -59,24 +64,98 @@ limine_enroll_tpm() {
     echo "WARN: no TPM 2.0 device — skipping auto-unlock enrollment; every boot will ask for the LUKS passphrase."
     return 0
   fi
-  ui_info "Enrolling TPM2 auto-unlock (PCR 7)..."
-  local part2; part2="$(part "$CONF_DISK" 2)"
+  ui_info "Enrolling TPM2 auto-unlock (sealed to PCR 7 on the first boot)..."
   # systemd-cryptenroll authorizes the new slot with the existing passphrase — hand
   # it over as a root-only key file (never argv). Runs in the chroot: the target has
   # the tpm2 stack via mod_limine's tpm2-tools, and arch-chroot bind-mounts /dev.
   local keyfile="$MNT/root/.w-luks-enroll"
+  { set +x; } 2>/dev/null   # keep the passphrase out of the trace log
   (umask 077; printf '%s' "$CONF_LUKS_PASS" > "$keyfile")
+  [[ -n "${W_TRACE_FD:-}" ]] && set -x || true
   local rc=0
-  chroot_run systemd-cryptenroll "$part2" --unlock-key-file=/root/.w-luks-enroll \
-    --tpm2-device=auto --tpm2-pcrs=7 || rc=$?
+  chroot_run systemd-cryptenroll "$CONF_ROOT_PART" --unlock-key-file=/root/.w-luks-enroll \
+    --tpm2-device=auto --tpm2-pcrs= || rc=$?
   rm -f "$keyfile"
   (( rc == 0 )) || die "TPM2 enrollment failed (rc=$rc) — headless boots would hang at the passphrase prompt."
+  mkdir -p "$MNT/var/lib/w" && : > "$MNT/var/lib/w/tpm-reseal-pending"
+}
+
+# ── Secure Boot at install (install context, firmware enforcing) ───────────────
+# The medium came up through shim, so the firmware trusts Microsoft's 3rd-party CA:
+# `w-secureboot enable --mode shim` phase 1, run in the chroot — machine-local sbctl
+# keys, Limine-for-shim (grubx64.efi) with the seed limine.conf's hash, NVRAM "W",
+# EFI/W/W-MOK.cer. Interactive: the MOK enrollment is queued with a one-time code
+# chosen here (MOK_CODE, shown by show_done — kept out of the trace log), and the
+# medium's own hash is queued for deletion in the same MokManager visit. Unattended:
+# nothing is queued — shim, refusing the unknown Limine, opens MokManager by itself,
+# and "Enroll key from disk" needs no code. w-firstboot runs phase 2.
+MOK_CODE=""
+limine_secureboot() {
+  ui_info "Secure Boot is enforcing — setting up shim and this machine's key..."
+  # shim-signed is AUR: prebuilt in the medium's w-repo (build-iso.sh).
+  local pkg; pkg="$(ls /root/w-repo/shim-signed-*.pkg.tar.* 2>/dev/null | head -1 || true)"
+  [[ -n "$pkg" ]] || die "shim-signed is missing from the medium's w-repo — cannot boot under Secure Boot."
+  cp "$pkg" "$MNT/var/tmp/"
+  chroot_run pacman -U --noconfirm --needed "/var/tmp/${pkg##*/}"
+  rm -f "$MNT/var/tmp/${pkg##*/}"
+
+  local -a env=(W_SB_NONINTERACTIVE=1)
+  local codefile="$MNT/root/.w-mok-code" hashfile=/tmp/.w-mok-hash
+  if [[ -z "$W_UNATTENDED" ]]; then
+    { set +x; } 2>/dev/null   # keep the code out of the trace log
+    MOK_CODE="$(od -An -N8 -tu1 /dev/urandom | awk '{for (i = 1; i <= NF; i++) printf "%d", $i % 10}')"
+    (umask 077; printf '%s' "$MOK_CODE" > "$codefile"; mokutil --generate-hash="$MOK_CODE" > "$hashfile")
+    [[ -n "${W_TRACE_FD:-}" ]] && set -x || true
+    env=(W_MOK_CODE_FILE=/root/.w-mok-code)
+  fi
+  local rc=0
+  chroot_run env "${env[@]}" w-secureboot enable --mode shim || rc=$?
+  rm -f "$codefile"
+  (( rc == 0 )) || die "Secure Boot setup (w-secureboot enable, phase 1) failed (rc=$rc)."
+  [[ -n "$W_UNATTENDED" ]] || limine_mok_drop_medium "$hashfile"
+  rm -f "$hashfile"
+}
+
+# The medium's own hash (/w/mok-sha256, written by iso-secureboot.sh) came into
+# MokList to boot it; it goes out in the visit that adds W's key, so MokList does not
+# grow by an entry per image. Best-effort: a medium that cannot be read any more
+# (copytoram and gone, Ventoy) or a hash that is not enrolled is simply left alone.
+limine_mok_drop_medium() {
+  local hashfile="$1" tag dev dir h=""
+  if [[ -r /run/archiso/bootmnt/w/mok-sha256 ]]; then
+    h="$(awk '{print $1; exit}' /run/archiso/bootmnt/w/mok-sha256)"
+  else
+    tag="$(sed -n -E 's/.*archisosearchuuid=([^ ]+).*/UUID=\1/p' /proc/cmdline)"
+    dev="$(blkid -o device -t "$tag" 2>/dev/null | head -1 || true)"
+    dir="$(mktemp -d)"
+    if [[ -n "$tag" && -n "$dev" ]] && mount -o ro "$dev" "$dir" 2>/dev/null; then
+      h="$(awk '{print $1; exit}' "$dir/w/mok-sha256" 2>/dev/null || true)"
+      umount "$dir"
+    fi
+    rmdir "$dir"
+  fi
+  [[ "$h" =~ ^[0-9a-f]{64}$ ]] || { echo "MOK: the medium's hash is not readable — left in MokList."; return 0; }
+  mokutil --list-enrolled 2>/dev/null | tr -d ' :' | grep -qix "$h" \
+    || { echo "MOK: the medium's hash $h is not in MokList."; return 0; }
+  mokutil --delete-hash "$h" --hash-file "$hashfile" \
+    || echo "WARN: could not queue the medium's hash for deletion — it stays in MokList."
 }
 
 # ── /etc/default/limine — consumed by the AUR limine-update post-boot ─────────
-# $1 = target file path, $2 = enroll-config (yes|no) for Secure Boot.
+# $1 = target file path, $2 = enroll-config (yes|no) for Secure Boot, $3 = Secure Boot
+# mode (own|shim|empty — /var/lib/w/secureboot-mode, written by w-secureboot).
 limine_write_default() {
-  local file="$1" enroll="$2"
+  local file="$1" enroll="$2" sbmode="${3:-}"
+  # Without Secure Boot the entry-tool's own fallback (a plain copy of Limine at
+  # EFI/BOOT/BOOTX64.EFI) is right. With it, that copy is unsigned and the firmware
+  # rejects it — post.d/95-w-secureboot (w-secureboot-stage) owns the fallback path
+  # instead, and the entry-tool must stop overwriting it.
+  local fallback="yes" order=""
+  [[ -n "$sbmode" ]] && fallback="no"
+  # shim mode: limine-install (pacman hook on every limine upgrade) re-registers a
+  # missing "Limine" NVRAM entry, first by default. Under the factory keys the
+  # firmware rejects that binary — harmless, but keep it behind W's shim entry.
+  [[ "$sbmode" == shim ]] && order=$'\n\n# Secure Boot via shim: a re-registered direct Limine entry is rejected by the\n# firmware (factory keys), so it goes last, behind W\'s shim entry.\nUEFI_BOOT_ORDER=last'
   mkdir -p "$(dirname "$file")"
   cat > "$file" <<EOF
 # Managed by W (mod_limine). Overrides /etc/limine-entry-tool.conf.
@@ -87,9 +166,10 @@ ESP_PATH="/boot/efi"
 # for limine-snapper-sync. Toggle ENABLE_UKI=yes later if UKIs are ever preferred.
 ENABLE_UKI=no
 
-# Keep an unsigned Limine at the removable fallback path (EFI/BOOT/BOOTX64.EFI) so a
-# blocked boot (e.g. a stale enrolled config hash under Secure Boot) is always recoverable.
-ENABLE_LIMINE_FALLBACK=yes
+# Removable fallback path (EFI/BOOT/BOOTX64.EFI): limine-update keeps a copy of Limine
+# there while Secure Boot is off; under Secure Boot W's post.d/95-w-secureboot stages
+# it instead (signed, config hash enrolled — see /usr/lib/w/w-secureboot-stage).
+ENABLE_LIMINE_FALLBACK=$fallback${order}
 
 # Secure Boot: enroll a BLAKE2B hash of limine.conf into the signed Limine binary. When
 # on, every limine.conf change must be re-enrolled. The re-enroll runs automatically via
@@ -177,6 +257,118 @@ EOF
   chmod 755 "$file"
 }
 
+# ── post.d hook — Windows next to W: its entry + a visible menu ─────────────────
+# Same channel as 50-w-default-entry: runs after every limine.conf write (limine-
+# update, limine-snapper-sync), and 60- still sorts before 90-limine-enroll-config, so
+# the Secure Boot hash covers the result. limine-entry-tool's FIND_BOOTLOADERS only
+# looks inside W's own ESP and its --scan is interactive, hence our own entry.
+# Per Windows found by w-boot-otheros: a top-level entry at the end of the menu that
+# reboots into the firmware's Windows entry (protocol efi_boot_entry — BootNext, not a
+# chainload: BitLocker would ask for its recovery key), and quiet:no + timeout:5 so the
+# menu is seen. The entries carry a marker comment; a Windows that went away takes its
+# entry with it and puts back the install-time quiet:yes + timeout:1.5. No Windows and
+# no marked entry → the file is not written at all. $1 = target hook path.
+limine_write_other_os_hook() {
+  local file="$1"
+  mkdir -p "$(dirname "$file")"
+  cat > "$file" <<'EOF'
+#!/usr/bin/env bash
+# Managed by W (mod_limine). Windows entries (BootNext) + a visible menu when the
+# firmware can boot a Windows; see /usr/lib/w/w-boot-otheros.
+set -u
+esp="/boot/efi"
+[[ -f /etc/default/limine ]] && esp="$(awk -F'"' '/^ESP_PATH=/{print $2}' /etc/default/limine)"
+conf="${esp:-/boot/efi}/limine.conf"
+[[ -f "$conf" && -x /usr/lib/w/w-boot-otheros ]] || exit 0
+
+mark="comment: Restarts into Windows through the firmware (W)"
+found="$(/usr/lib/w/w-boot-otheros)"
+[[ -n "$found" ]] || grep -qxF "    $mark" "$conf" || exit 0
+
+# Everything but the marked top-level entries, trailing blank lines dropped.
+new="$(awk -v m="    $mark" '
+  function flush() { if (!(blk && marked)) printf "%s", buf; buf = ""; marked = 0 }
+  /^\/[^\/]/ { flush(); blk = 1 }
+  { buf = buf $0 "\n"; if ($0 == m) marked = 1 }
+  END { flush() }' "$conf")"$'\n'
+
+set_key() {  # $1 key, $2 value — replace, or insert before the first non-comment line
+  if grep -q "^$1:" <<< "$new"; then
+    new="$(sed "s#^$1:.*#$1: $2#" <<< "$new")"$'\n'
+  else
+    new="$(sed "0,/^[^#]/s#^\([^#]\)#$1: $2\n\1#" <<< "$new")"$'\n'
+  fi
+}
+if [[ -n "$found" ]]; then
+  set_key timeout 5
+  set_key quiet no
+  while IFS=$'\t' read -r _ label; do
+    new+=$'\n'"/$label"$'\n'"    $mark"$'\n'"    protocol: efi_boot_entry"$'\n'"    entry: $label"$'\n'
+  done <<< "$found"
+else
+  set_key timeout 1.5
+  set_key quiet yes
+fi
+[[ "$new" == "$(cat "$conf")"$'\n' ]] || printf '%s' "$new" > "$conf"
+EOF
+  chmod 755 "$file"
+}
+
+# ── post.d hook — Secure Boot loaders (signed fallback / shim chain) ───────────
+# Last in the chain on purpose: 95- runs after 90-limine-enroll-config has enrolled
+# the final limine.conf hash and signed limine_x64.efi, so what it copies or rebuilds
+# matches the config Limine reads. The work is in w-secureboot-stage (also run by the
+# pacman hook and by w-secureboot); this only bridges the entry-tool's hook channel to
+# it, and without a Secure Boot mode the helper exits at once. $1 = target hook path.
+limine_write_secureboot_hook() {
+  local file="$1"
+  mkdir -p "$(dirname "$file")"
+  cat > "$file" <<'EOF'
+#!/usr/bin/env bash
+# Managed by W (mod_limine). Secure Boot loaders beside limine-entry-tool's own;
+# see /usr/lib/w/w-secureboot-stage.
+[[ -x /usr/lib/w/w-secureboot-stage ]] || exit 0
+/usr/lib/w/w-secureboot-stage; rc=$?
+# A failed enroll (the entry-tool's 90-, or the stage above) leaves a hash Limine
+# halts on: retry, and say so loudly if that fails too.
+command -v w-secureboot >/dev/null && { w-secureboot reenroll --if-stale || rc=1; }
+exit $rc
+EOF
+  chmod 755 "$file"
+}
+
+# ── Secure Boot mode of a machine enabled before modes existed ─────────────────
+# `w-secureboot enable` with own keys predates /var/lib/w/secureboot-mode: such a
+# machine has sbctl keys and config-hash enrollment on, but no mode file — so its
+# removable fallback is still the entry-tool's unsigned copy, which the firmware
+# rejects (a lost NVRAM entry = no boot). Name the mode once; the limine-update that
+# follows in mod_limine stages the signed fallback through 95-w-secureboot. shim mode
+# never existed without the file, so own is the only possible answer here.
+# Enrollment alone is no proof: the installer once turned it on with no keys at all,
+# Secure Boot off. own without sbctl's keys cannot be (its PK IS those keys) — such a
+# machine gets no mode, and a mode file this function wrote for it is dropped.
+limine_sbctl_keys() { [[ "$(sbctl setup --print-state --json 2>/dev/null)" == *'"installed": true'* ]]; }
+limine_migrate_secureboot_mode() {
+  local f="/var/lib/w/secureboot-mode"
+  if [[ -f "$f" ]]; then
+    if [[ "$(cat "$f")" == own ]] && ! limine_sbctl_keys; then
+      ui_info "Secure Boot mode 'own' without sbctl keys — not Secure Boot, dropping the mode..."
+      rm -f "$f"
+    fi
+    return 0
+  fi
+  grep -q '^ENABLE_ENROLL_LIMINE_CONFIG=yes' /etc/default/limine 2>/dev/null || return 0
+  limine_sbctl_keys || return 0
+  ui_info "Secure Boot (own keys) is on — staging a signed fallback loader..."
+  mkdir -p "$(dirname "$f")"
+  echo own > "$f"
+}
+
+# `#<BLAKE2B>` of a staged file for its Limine path (nothing when it is absent). Under
+# Secure Boot the signed loader carries the config's hash and the config the files' —
+# the chain limine-entry-tool writes later too (ENABLE_VERIFICATION).
+limine_pin() { [[ -f "$1" ]] && printf '#%s' "$(b2sum "$1" | cut -d' ' -f1)"; return 0; }
+
 # ── First-boot limine.conf (theme header + one entry) ────────────────────────
 # $1 = target limine.conf, $2 = kernel cmdline, $3 = mnt prefix (for logo staging).
 # Post-boot limine-update regenerates the entries; w-style renders the theme header.
@@ -222,6 +414,7 @@ limine_write_conf() {
   fi
   # Fallback to plain black if theme.conf was unreadable — first boot must stay bootable.
   : "${bg:=000000}" "${fg:=ffffff}" "${brand:=c46bd6}" "${help_col:=8a7a90}"
+  local d; d="$(dirname "$file")"
 
   cat > "$file" <<EOF
 # Managed by W. First-boot seed — limine-update regenerates entries post-boot,
@@ -242,11 +435,11 @@ interface_help_hidden: yes
 
 /W Linux
     protocol: linux
-    path: boot():/vmlinuz-linux-zen
+    path: boot():/vmlinuz-linux-zen$(limine_pin "$d/vmlinuz-linux-zen")
     cmdline: $cmdline
-    module_path: boot():/intel-ucode.img
-    module_path: boot():/amd-ucode.img
-    module_path: boot():/initramfs-linux-zen.img
+    module_path: boot():/intel-ucode.img$(limine_pin "$d/intel-ucode.img")
+    module_path: boot():/amd-ucode.img$(limine_pin "$d/amd-ucode.img")
+    module_path: boot():/initramfs-linux-zen.img$(limine_pin "$d/initramfs-linux-zen.img")
 EOF
 }
 
@@ -272,8 +465,10 @@ limine_bootstrap_esp() {
   limine_write_conf "$esp/limine.conf" "$cmdline" "$mnt"
 
   # Register a firmware boot entry (best-effort; the removable fallback covers wiped NVRAM).
-  if [[ -n "$mnt" ]]; then
-    chroot_run efibootmgr --create --disk "$CONF_DISK" --part 1 \
+  # Disk + partition number come from the real ESP node, not a layout constant.
+  local esp_disk esp_num
+  if [[ -n "$mnt" ]] && read -r esp_disk esp_num < <(part_location "$CONF_ESP_PART"); then
+    chroot_run efibootmgr --create --disk "$esp_disk" --part "$esp_num" \
       --loader '\EFI\limine\limine_x64.efi' --label 'W (Limine)' &>/dev/null || true
   fi
 }
@@ -300,7 +495,9 @@ mod_limine() {
 
   ui_info "Installing Limine bootloader..."
   # Official packages (limine + Secure Boot + TPM2 tooling). AUR hooks are live-only.
-  w_pac -S --noconfirm --needed limine sbctl tpm2-tools
+  # mokutil + binutils (objcopy/objdump) serve Secure Boot through shim (w-secureboot,
+  # w-secureboot-stage); shim-signed itself is AUR — live-only, with the hook pair below.
+  w_pac -S --noconfirm --needed limine sbctl tpm2-tools mokutil binutils
   if [[ -z "$mnt" ]]; then
     # Live: pull the AUR automation (kernel-entry hooks + snapper bridge). This is
     # NOT best-effort automation on top of a working system — without it the ESP is
@@ -340,6 +537,29 @@ mod_limine() {
       fi
       rm -rf "$staged"
     fi
+    # Microsoft-signed shim (Fedora's, repackaged by AUR shim-signed) for Secure Boot
+    # on the firmware's factory keys — `w-secureboot enable` without Setup Mode. Not
+    # the boot path until that mode is on (w-secureboot refuses it without shim), so a
+    # missing package is a WARN. Prebuilt in w-repo by build-iso.sh; otherwise built
+    # here through the same seam (it only unpacks an RPM — seconds).
+    if ! pacman -Q shim-signed &>/dev/null; then
+      local shim_pkg
+      shim_pkg="$(ls /var/lib/w/w-repo/shim-signed-*.pkg.tar.* 2>/dev/null | head -1 || true)"
+      if [[ -z "$shim_pkg" ]]; then
+        local shim_staged; shim_staged="$(mktemp -d -p /var/tmp)"
+        w_aur_build "$shim_staged" shim-signed || true
+        shim_pkg="$(ls "$shim_staged"/shim-signed-*.pkg.tar.* 2>/dev/null | head -1 || true)"
+      fi
+      [[ -n "$shim_pkg" ]] && { pacman -U --noconfirm --needed "$shim_pkg" || true; }
+      [[ -n "${shim_staged:-}" ]] && rm -rf "$shim_staged"
+      pacman -Q shim-signed &>/dev/null \
+        || echo "WARN: shim-signed is not installed — Secure Boot on the firmware's factory keys (shim) is unavailable."
+    fi
+    limine_migrate_secureboot_mode
+    # Config-hash guard at shutdown (rootfs ships the unit; a no-op without a mode).
+    # Live only: Secure Boot is turned on after firstboot, which always runs this.
+    systemctl enable --now w-secureboot-guard.service 2>/dev/null \
+      || echo "WARN: w-secureboot-guard.service could not be enabled — an edit of limine.conf past limine-entry-tool would halt the next Secure Boot boot."
     # Snapshot→boot bridge (Limine analog of grub-btrfsd): watches Snapper and syncs
     # bootable snapshot entries into limine.conf. Enable but do NOT start now — this
     # module runs before fix_snapper (last), so the root Snapper config doesn't exist
@@ -378,7 +598,31 @@ mod_limine() {
     fi
   fi
 
-  limine_write_default "${mnt}/etc/default/limine" "$enroll"
+  local sbmode=""
+  [[ -z "$mnt" && -f /var/lib/w/secureboot-mode ]] && sbmode="$(cat /var/lib/w/secureboot-mode)"
+  # Live enrollment without a Secure Boot mode is that keyless leftover: the hash then
+  # guards nothing and halts the boot on any limine.conf edit past the entry-tool. Off,
+  # as on a fresh install — pre.d/10-limine-reset-enroll strips it from the binary.
+  [[ -z "$mnt" && -z "$sbmode" ]] && enroll="no"
+  limine_write_default "${mnt}/etc/default/limine" "$enroll" "$sbmode"
+  # Secure Boot loaders (95-w-secureboot → w-secureboot-stage): inert until
+  # w-secureboot names a mode, installed everywhere so the hook chain is complete.
+  install -Dm755 "$SRC/rootfs/usr/lib/w/w-secureboot-stage" "${mnt}/usr/lib/w/w-secureboot-stage"
+  if [[ -n "$mnt" ]]; then
+    # Ahead of firstboot's rootfs deploy: Secure Boot phase 1 runs in the chroot
+    # (limine_secureboot), and w-firstboot reseals TPM2 / finishes phase 2 before
+    # apply --all. apply's rootfs later lays the same files down again.
+    local f
+    for f in usr/bin/w-secureboot usr/bin/w-crypt; do install -Dm755 "$SRC/rootfs/$f" "$mnt/$f"; done
+    for f in w-i18n-lib.sh w-conf-lib.sh w-sbat-lib.sh; do
+      install -Dm644 "$SRC/rootfs/usr/lib/w/$f" "$mnt/usr/lib/w/$f"
+    done
+  fi
+  limine_write_secureboot_hook "${mnt}/etc/boot/hooks/post.d/95-w-secureboot"
+  # Windows next to W (60-w-other-os); the helper is in rootfs too, installed here so
+  # the install-time seed — written before firstboot deploys rootfs — gets it as well.
+  install -Dm755 "$SRC/rootfs/usr/lib/w/w-boot-otheros" "${mnt}/usr/lib/w/w-boot-otheros"
+  limine_write_other_os_hook "${mnt}/etc/boot/hooks/post.d/60-w-other-os"
 
   # Live system with AUR tooling present → let limine-update own the config/staging.
   if [[ -z "$mnt" ]] && command -v limine-update &>/dev/null; then
@@ -392,6 +636,13 @@ mod_limine() {
     limine_retire_seed "$esp"
   else
     limine_bootstrap_esp "$esp" "$mnt"
+    # The seed is not written by limine-entry-tool, so its hooks do not run on it.
+    # Best-effort: a missing Windows entry must not fail the install.
+    if [[ -n "$mnt" ]]; then
+      chroot_run /etc/boot/hooks/post.d/60-w-other-os || true
+    else
+      /etc/boot/hooks/post.d/60-w-other-os || true
+    fi
   fi
 }
 

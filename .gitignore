@@ -12,6 +12,8 @@ vm/e2e/preset.conf
 vm/e2e/fault.conf
 vm/e2e/preset-plain.conf
 vm/e2e/preset-encrypted.conf
+vm/e2e/preset-dualboot.conf
+vm/e2e/preset-dualboot-plain.conf
 # …and any hand-kept variant beside them. The working copies carry the edge_repo
 # credentials for dev-edge; a backup named preset-encrypted.conf.<something> is the
 # obvious thing to make while switching remotes, and would otherwise be picked up
@@ -22,6 +24,7 @@ vm/e2e/id_ed25519.pub
 archiso/work/
 archiso/out/
 archiso/w-repo/
+archiso/codesign/
 # Staged at build time by build-iso.sh (scripts/packages/rootfs + w-repo + the
 # Plymouth theme, all baked into the ISO) — generated, not part of the profile.
 archiso/profile-build/

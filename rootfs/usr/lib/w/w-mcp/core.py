@@ -1,17 +1,18 @@
 # w-mcp core — shared SDK for the W MCP server's domain modules.
 #
-# The orchestrator (/usr/bin/w-mcp) is a thin hub: it creates the FastMCP
+# The orchestrator (/usr/bin/w-mcp) is a thin hub: it creates the MCPServer
 # server, then loads every modules/<domain>.py and calls its register(mcp). The
 # real per-domain tool logic lives in those modules; the helpers they all share
 # (command runner, knowledge/actuation plumbing, the tool() registration wrapper)
 # live here — exactly the w-style split (bin/w-style orchestrator + lib/core.sh
 # SDK + modules/<band>-<name>/module.sh). See ai-integration.md.
 #
-# This module is import-only: it never creates the FastMCP instance (the hub owns
+# This module is import-only: it never creates the MCPServer instance (the hub owns
 # it and passes it to tool()), so it has no dependency on the mcp package and can
 # be imported and unit-tested on its own.
 
 import fnmatch
+import functools
 import grp
 import inspect
 import os
@@ -278,45 +279,86 @@ def desc(text):
     return _Field(description=text)
 
 
-def _strip_titles(schema):
+def strip_titles(schema):
     """JSON Schema minus pydantic's auto `title` keys (`"title": "Unit"` on every
     property, `"title": "w_logsArguments"` on the object) — they carry nothing a
     model can use and are resent on every request by hosts that forward the
-    schema as-is (Goose keeps them; Claude Code forwards everything)."""
+    schema as-is (Goose keeps them; Claude Code forwards everything). Applied on
+    the wire by bin/w-mcp's list_tools() override. A future *property* named
+    `title` survives: it maps to a schema dict, the auto key to a string."""
     if isinstance(schema, dict):
-        return {k: _strip_titles(v) for k, v in schema.items() if k != "title"}
+        return {k: strip_titles(v) for k, v in schema.items()
+                if not (k == "title" and isinstance(v, str))}
     if isinstance(schema, list):
-        return [_strip_titles(x) for x in schema]
+        return [strip_titles(x) for x in schema]
     return schema
+
+
+# The error contract (ai-authoring.md §«Ошибки тула»): an anticipated failure is
+# RETURNED as a "(…)" text line, never raised (core.run, _disabled_msg). Whatever
+# still escapes a tool is a crash — and python-mcp ≥ 2 masks a crash as the bare
+# "Error executing tool <name>" plus a traceback on stderr. W's assistant is the
+# user's own system helper on a local stdio pipe: it must see *why* (a full disk,
+# a permission), so tool() re-raises the escape as the SDK's ToolError, which
+# reaches the model verbatim with isError=true. Imported lazily-guarded: core.py
+# stays importable without the mcp package (contract.py / check.sh).
+try:
+    from mcp.server.mcpserver.exceptions import ToolError
+except ImportError:
+    class ToolError(Exception):
+        pass
+
+
+def _forward_errors(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except ToolError:
+            raise
+        except Exception as e:  # the crash path: reported, not swallowed
+            # The SDK prefixes "Error executing tool <name>: " itself.
+            raise ToolError(f"{type(e).__name__}: {e}") from e
+    return wrapper
+
+
+def serialized(lock):
+    """Decorator: run under `lock`. Sync tools execute in SDK worker threads
+    (python-mcp ≥ 2, anyio.to_thread), so concurrent tools/call really run in
+    parallel; a check-then-write on a shared store (free slug → write file) must
+    hold its store's lock or two calls claim the same name."""
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            with lock:
+                return fn(*args, **kwargs)
+        return wrapper
+    return deco
 
 
 def tool(mcp, *, domain, minimal=False):
     """Decorator: register a function as an MCP tool and record its metadata.
 
-    Wraps FastMCP's own mcp.tool() and appends {name, domain, minimal} to
+    Wraps MCPServer's own mcp.tool() and appends {name, domain, minimal} to
     REGISTRY. In the minimal profile, a tool not flagged minimal is recorded but
     NOT offered. Use as `@tool(mcp, domain=DOMAIN, minimal=True)` inside a
     module's register().
 
     Wire hygiene (ai-integration.md §7 — the schema block is the biggest fixed
-    cost per request): the description is the *dedented* docstring (FastMCP
+    cost per request): the description is the *dedented* docstring (MCPServer
     ships `fn.__doc__` verbatim, 8 spaces of source indentation per line);
     `structured_output=False` drops the auto `{"result": str}` outputSchema
     every `-> str` tool would otherwise carry (~140 B × N tools, zero meaning —
-    hosts read the text content); property titles are stripped after the fact
-    (`_tool_manager` is FastMCP-private, hence the getattr guard: on an SDK
-    that renames it the titles simply stay — a few KB, never a failure).
+    hosts read the text content). Property titles are stripped on the wire
+    (strip_titles). REGISTRY keeps the bare `fn`; the SDK gets the
+    _forward_errors wrapper (functools.wraps: same signature, same schema).
     """
     def deco(fn):
         REGISTRY.append({"name": fn.__name__, "domain": domain, "minimal": minimal, "fn": fn})
         if PROFILE == "minimal" and not minimal:
             return fn  # out of profile: recorded, but not exposed to the host
-        out = mcp.tool(description=inspect.cleandoc(fn.__doc__ or ""), structured_output=False)(fn)
-        mgr = getattr(mcp, "_tool_manager", None)
-        t = mgr.get_tool(fn.__name__) if mgr is not None else None
-        if t is not None:
-            t.parameters = _strip_titles(t.parameters)
-        return out
+        return mcp.tool(description=inspect.cleandoc(fn.__doc__ or ""),
+                        structured_output=False)(_forward_errors(fn))
     return deco
 
 
@@ -331,7 +373,7 @@ PROMPTS = []  # list of {"name": str, "domain": str}
 
 def prompt(mcp, *, domain):
     """Decorator: register an MCP prompt (a host-agnostic task recipe) and record
-    its domain. Wraps FastMCP's mcp.prompt(); use as `@prompt(mcp, domain=DOMAIN)`
+    its domain. Wraps MCPServer's mcp.prompt(); use as `@prompt(mcp, domain=DOMAIN)`
     inside a module's register(), on a function returning the recipe text."""
     def deco(fn):
         PROMPTS.append({"name": fn.__name__, "domain": domain})

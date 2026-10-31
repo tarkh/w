@@ -12,7 +12,7 @@
 # `broadcom-wl` on 2026-09-01 and upstream archiso removed the line rather than
 # replacing it, so W's ISO no longer covers these chips in the live session unless
 # it is built with `build-iso.sh --broadcom-wl` (the DKMS route costs ~570 MiB of
-# compiler in the image — see the option's comment there, and the README section).
+# compiler in the image — see the option's comment there, and the INSTALL.md section).
 # THIS module is unaffected: the target gets the driver either way.
 #
 # Both the install AND the blacklist are gated on lspci actually finding a known

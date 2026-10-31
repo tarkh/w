@@ -184,6 +184,54 @@ manual swap cannot do.
 
 ---
 
+## Symptom: `CHECKSUM MISMATCH FOR CONFIG FILE` right after power-on
+
+Only on an encrypted install where Secure Boot was turned on in W
+(`w-secureboot enable`). The boot loader carries a fingerprint of its menu file,
+`limine.conf` on the EFI partition, and halts when the file no longer matches it.
+W refreshes the fingerprint on every change it makes itself, and before every
+shutdown, reboot or hibernation it also catches a change made some other way (a hand
+edit, a third-party tool) and refreshes the fingerprint for it. So this screen means
+the system never got that far: a power loss or a hard reset cut off a regeneration or
+followed an edit, or the EFI partition was changed while W was not running.
+**Turning Secure Boot off in the firmware does not help**: the check
+stays as long as the fingerprint exists. Snapshots do not help either — the EFI
+partition is not part of them.
+
+Boot the W install medium; it starts with Secure Boot on. The first time a medium
+is used on this machine, its boot loader is not trusted yet: a blue *Shim UEFI key
+management* screen appears after `Verification failed`. Press a key within 10
+seconds, then choose **Enroll hash from disk** → the medium → `EFI/BOOT/grubx64.efi`
+→ **Continue** → **Yes** → **Reboot**. No password is asked, and W's own disk unlock
+is not affected. If the firmware itself refuses the medium (`Access Denied`, or a
+Secure Boot violation screen), it trusts Windows only — allow the *Microsoft 3rd-party
+UEFI CA* in its Secure Boot settings, or switch Secure Boot off for this repair. Open
+the disk and mount the system with its EFI partition:
+
+```sh
+cryptsetup open /dev/<root-partition> cryptroot
+mount -o subvol=@ /dev/mapper/cryptroot /mnt
+mount /dev/<efi-partition> /mnt/boot/efi
+```
+
+`cryptsetup` first says the TPM policy does not match — expected outside the
+machine's own boot chain; it then asks for the passphrase or the recovery key.
+
+Look at the file before trusting it again: the next command makes the boot loader
+accept **whatever is in it now**. If you did not make the change yourself, put back
+a known-good copy first.
+
+```sh
+less /mnt/boot/efi/limine.conf
+arch-chroot /mnt w-secureboot reenroll
+```
+
+Unmount and boot (if you switched Secure Boot off, switch it back on first). The
+disk unlocks through TPM2 again on its own — the boot chain is the same one it was
+sealed to.
+
+---
+
 ## Symptom: the disk passphrase is not accepted
 
 The passphrase slot is the fallback that always exists; TPM2 unlock and the printed

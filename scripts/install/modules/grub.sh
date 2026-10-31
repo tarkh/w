@@ -51,6 +51,9 @@ mod_grub() {
   grub_set_kv "$grub_default" GRUB_TIMEOUT_STYLE   "$grub_timeout_style"
   grub_set_kv "$grub_default" GRUB_TIMEOUT         "$grub_timeout"
   grub_set_kv "$grub_default" GRUB_THEME           "$theme_path"
+  # Upstream's NVRAM lister would add every firmware entry (setup apps, the EFI shell)
+  # — 35_w-other-os adds just the Windows ones.
+  grub_set_kv "$grub_default" GRUB_DISABLE_BOOTNEXT "true"
 
   ui_info "Silencing GRUB boot messages (patching 10_linux)..."
   local linux_script="${mnt}/etc/grub.d/10_linux"
@@ -59,6 +62,13 @@ mod_grub() {
   ui_info "Deploying pacman hook for grub updates..."
   mkdir -p "${mnt}/etc/pacman.d/hooks"
   cp "$SRC/rootfs/etc/pacman.d/hooks/grub-silence.hook" "${mnt}/etc/pacman.d/hooks/grub-silence.hook"
+
+  # Windows next to W: its menu entry + a visible menu, re-detected on every
+  # grub-mkconfig (35_w-other-os → w-boot-otheros). Both are in rootfs too; installed
+  # here so the very first grub.cfg — before firstboot deploys rootfs — has them.
+  ui_info "Deploying other-OS menu entries (35_w-other-os)..."
+  install -Dm755 "$SRC/rootfs/usr/lib/w/w-boot-otheros" "${mnt}/usr/lib/w/w-boot-otheros"
+  install -Dm755 "$SRC/rootfs/etc/grub.d/35_w-other-os" "${mnt}/etc/grub.d/35_w-other-os"
 
   ui_info "Regenerating GRUB config..."
   if [[ -n "$mnt" ]]; then

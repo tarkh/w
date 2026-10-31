@@ -11,7 +11,7 @@ description: >-
   RGB devices for just one user.
 sources:
   - path: .claude/library/w-theme.md
-    sha256: af639f1f32d207f1c340875e6a62780b6c7a0439d700ccc48b8caea95e023844
+    sha256: 9a8ce83e71f135534e6f1ef53949acb809a2fc8f0d233d1f764b41029506f118
   - path: .claude/library/w-style.md
     sha256: 9cc1c525e21d8b113ba995b0d12ebecab3c39fdd8bc1fb8d27f2c019b6715ec0
   - path: .claude/library/w-wallpaper.md
@@ -120,6 +120,11 @@ at a container (or at a raw accent) where it should point at `W_ON_SURFACE_ACCEN
   white sheet — recommend it to anyone who finds the light theme harsh. `high` goes the
   other way, toward crisp and near-absolute. No level lowers legibility: every foreground
   still clears its contrast target.
+- **The surfaces can wear their own colour, separate from the accents.**
+  - `--tint neutral|subtle|full` sets how much colour the canvas, cards and text carry. `full` is the default single-hue theme. `neutral` is graphite (or paper) with only a trace of the tone, under accents that keep the base colour. This is the answer to "dark interface, but accents in the wallpaper's colour".
+  - `--surface accent|wallpaper|<n>|#rrggbb` picks that colour. `wallpaper` is the image's own ground: the slate of a dark night whose only bright spot is an amber moon. A number is another base colour, so the sky goes on the surfaces and the gold on the accents.
+  - An image painted in one hue offers no separate tone: its dark ground already IS the accent's hue. In that case `--tint` is the knob to use.
+- **`--saturation muted|balanced|vivid`** sets how colourful the theme's colours are: the accents (window border, active buttons, selection), the shell's icons, terminal and syntax colours. `balanced` is the default. `muted` is a calmer desktop with the same colour relations. `vivid` is the most colourful the screen can show. This is the answer to "the accent looks washed out / not like my wallpaper" and to "too loud". The background and text keep their tint (that is `--tint`), and the danger colour and RGB lighting do not follow it. Every step still clears its contrast targets. The effect is smaller on amber/yellow/teal wallpapers than on purple/blue ones (the screen's gamut). A black-and-white image ignores it.
 - Other options: `--appearance dark|light` (default dark), `--activate` to switch to it
   immediately, `--json` to print the palette matrix without creating anything, `--scheme`
   to override the automatic matugen scheme.
@@ -127,7 +132,7 @@ at a container (or at a raw accent) where it should point at `W_ON_SURFACE_ACCEN
   theme** in `/etc/w/themes/` (this is also how the shipped themes are authored).
 
 `w-theme edit <name>` rebuilds a generated theme's palette **in place, keeping its
-wallpaper**: `--seed-index`, `--contrast`, `--appearance` and `--rename` — anything not
+wallpaper**: `--seed-index`, `--contrast`, `--tint`, `--surface`, `--saturation`, `--appearance` and `--rename` — anything not
 given keeps what the theme already has. Use it for "make my theme softer / lighter /
 built around the blue instead"; use `new` when the wallpaper itself should change, since
 that is a different theme. If the edited theme is the one being worn, the session

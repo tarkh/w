@@ -49,6 +49,7 @@ Scope {
     // been a Lock tile. Both this and RootGrid's signal are kept on purpose — the pair
     // is the one worked-out answer to that class of bug (see RootGrid's own note), and
     // wiring a future capture/lock/recording tile back up is then a one-line emit.
+    property var pendingCmd: null
 
     // Step aside for a polkit prompt: hide (suspend), run the privileged command as a
     // tracked process (pkexec blocks until the prompt is answered), and restore + refresh

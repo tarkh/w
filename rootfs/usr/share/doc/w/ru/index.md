@@ -80,7 +80,7 @@ W выводит `w-info`.
 - [`w-reset`](reference/w-reset.md) — Принудительный возврат конфига любого модуля или бандла W к дефолту.
 - [`w-rollback`](reference/w-rollback.md) — Откат системы к btrfs-снапшоту, на любом из путей загрузки.
 - [`w-screenshot`](reference/w-screenshot.md) — Снимок экрана — область/окно/монитор, разметить/скопировать/сохранить.
-- [`w-secureboot`](reference/w-secureboot.md) — Настройка и управление Secure Boot (ключи sbctl + хеш Limine).
+- [`w-secureboot`](reference/w-secureboot.md) — Настройка и управление Secure Boot (ключи sbctl или shim + MOK, хеш Limine).
 - [`w-session`](reference/w-session.md) — Запоминание и восстановление сессии (окна, рабочие столы, раскладка).
 - [`w-ssh`](reference/w-ssh.md) — Выбор SSH-агента сессии и генерация из него пер-хостовых селекторов ключей.
 - [`w-style`](reference/w-style.md) — Отрисовка активной темы во всех оформляемых подсистемах.

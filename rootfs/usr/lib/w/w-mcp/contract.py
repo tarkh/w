@@ -3,7 +3,7 @@
 # core.py: no dependency on the `mcp` package, so the exact same checks run in
 # scripts/check/tests/*.bats (dev machine, python-mcp not installed) and inside
 # `w-mcp --selftest` on a real target (where python-mcp IS installed and modules
-# are already registered against the real FastMCP instance).
+# are already registered against the real MCPServer instance).
 #
 # Two entry points:
 #   collect_checks(registry, lib_dir, agents_path) — checks an ALREADY populated
@@ -32,7 +32,7 @@ LIB = Path(__file__).resolve().parent
 
 
 class _RecordingMCP:
-    """Just enough of FastMCP's surface for a module's register(mcp) to run
+    """Just enough of MCPServer's surface for a module's register(mcp) to run
     without the real `mcp` package. core.tool() already records everything the
     checks below need into core.REGISTRY; `.offered` additionally captures which
     names actually got wrapped (used by _check_profile_gate)."""
@@ -73,7 +73,7 @@ def discover_and_register(mcp, lib_dir=None):
 # ── 7.4.1 Tool Contract Selftest ──────────────────────────────────────────────
 def _check_schema_validity(registry):
     """Every registered tool's parameters and return value must be type-annotated
-    — that's what lets FastMCP build a real JSON Schema instead of an untyped
+    — that's what lets MCPServer build a real JSON Schema instead of an untyped
     `any`. Cheap, offline, catches a class of regression no wire-level test can
     (a missing annotation still "works" until a strict host validates the schema)."""
     problems = []

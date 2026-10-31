@@ -34,12 +34,32 @@ Commands:
                             --seed-index <n>          which base colour of the
                                                       image to build from
                                                       (0 = most dominant)
+                            --tint neutral|subtle|full
+                                                      how much colour the
+                                                      surfaces and text wear;
+                                                      neutral = graphite/paper
+                                                      with a trace of the tone,
+                                                      default full
+                            --surface <tone>          which colour the surfaces
+                                                      wear, the accents keep
+                                                      theirs: accent (default),
+                                                      wallpaper (the colour most
+                                                      of the image is painted
+                                                      in), a base-colour number,
+                                                      or #rrggbb
+                            --saturation muted|balanced|vivid
+                                                      how colourful the accents,
+                                                      icons and terminal colours
+                                                      are; the background keeps
+                                                      its tint; default balanced
                             --scheme <matugen type>   default: adaptive
                             --activate                switch to it once built
                             --json                    print the palette matrix
                                                       only, create nothing: every
                                                       base colour the image
-                                                      offers × dark/light × every
+                                                      offers × surface tone ×
+                                                      tint × saturation × dark/light ×
+                                                      every
                                                       contrast level (GUI preview;
                                                       the other options are then
                                                       irrelevant, it returns all
@@ -77,7 +97,10 @@ Examples:
   w-theme reset
   w-theme new sunset --wallpaper ~/Pictures/sunset.jpg --activate
   w-theme new garden --wallpaper ~/Pictures/park.jpg --seed-index 1 --contrast low
+  w-theme new dusk --wallpaper ~/Pictures/dusk.jpg --tint neutral
+  w-theme new night --wallpaper ~/Pictures/night.jpg --surface wallpaper --tint subtle
   sudo w-theme new corporate --wallpaper /srv/brand.png
+  w-theme new amber --wallpaper ~/Pictures/amber.jpg --saturation vivid
   w-theme edit sunset --contrast low
   w-theme rm sunset
 ```

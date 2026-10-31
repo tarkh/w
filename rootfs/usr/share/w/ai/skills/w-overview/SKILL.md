@@ -7,7 +7,7 @@ description: >-
   before answering questions about how W is organized or which command to use.
 sources:
   - path: .claude/library/essentials.md
-    sha256: aa4ccd72c50f112f71cf20d84e7b2fc626b593eb034d390bef0cf8430c5e5a4a
+    sha256: 17cb4c2d185ad184099e3e86e188b2c8ad8b06023618753f71068bff6777e601
   - path: .claude/library/w-help.md
     sha256: 8c25257c356a6703463d4673b42a6bb157315ae70ff646b15cce82a259b58410
 ---
@@ -132,7 +132,8 @@ commands — they encode W's conventions and keep the system consistent. Most su
 - `w-crypt status|enroll-tpm|recovery-add` — LUKS2 disk-encryption management (only
   on encrypted installs).
 - `w-secureboot enable|disable|status` — Secure Boot via sbctl (encrypted/Limine
-  path). Post-install only — the installer never enables SB and does not ask about it.
+  path). Post-install, unless Secure Boot already enforces during the install — then
+  the installer sets it up itself (shim).
   `enable` is two-phase (enroll, reboot, run it again) — see **w-security**.
 
 ## Desktop essentials

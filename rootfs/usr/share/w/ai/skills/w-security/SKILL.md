@@ -10,13 +10,13 @@ description: >-
   fingerprints, firmware, or LUKS/TPM2/Secure Boot questions.
 sources:
   - path: .claude/library/security.md
-    sha256: 3ec7c64f94e8053341ba52ded39be6b779d58ea1284c8db81f32c45f0697e12c
+    sha256: 85649ab384308d1c5a2bdf97aebd4dc077ea08025974c54bb7d939a270c2f0a5
   - path: .claude/library/w-fingerprint.md
     sha256: db6347feb144b0a35aec53c7c5cb7ee5b3386a4d2cfa904f582ec9915356bd24
   - path: .claude/library/w-ssh.md
     sha256: b1a094a3801dad4efdd25e9e56439883f0e2a3d71cde53a717ca77597bb8ca2b
   - path: .claude/library/package-limine.md
-    sha256: 90f577760d873a5fe5e297a03ab55419c0289be95462e5ef6ccd20ca8a89be3d
+    sha256: eb9176cd75feeaf2a089a2f4c379557f16dabd78e8002c5580763f98ee2ccb70
 tools:
   - w_fwupd_refresh
 ---
@@ -203,38 +203,109 @@ On an encrypted install, W uses LUKS2 (Argon2id) + TPM2 auto-unlock + a passphra
 fallback, with **Limine** as the bootloader and snapshot-boot support. Two tools manage it
 (run with `sudo`):
 
-- `w-crypt status | enroll-tpm | reenroll-tpm | recovery-add | wipe-tpm` — TPM2 auto-unlock
-  enrollment and a printable recovery key.
-- `w-secureboot status[--porcelain] | enable | disable | setup | sign | reenroll` — Secure
-  Boot via sbctl. **`enable`/`disable` are the entry points** (also what the Hub's Security
-  control runs — the System panel's **Security** tab, which is present only on the
-  encrypted+Limine install path, since a plain GRUB system ships no sbctl at all). TPM2 auto-unlock is sealed to PCR7, which measures the Secure Boot policy, so
-  toggling SB always breaks it — but PCR7 is only measured by the firmware/bootloader at
-  boot time, not live, so `enable` **cannot** enroll the sbctl keys and re-seal TPM2 in one
-  shot: doing both in the same session seals against the still-old PCR7 and the disk would
-  keep asking for its passphrase forever. `enable` is therefore two calls with a reboot in
-  between: the first enrolls the keys and asks for a reboot (no TPM prompt yet); after
-  rebooting, run `enable` again to actually re-seal TPM2 (one disk-passphrase prompt), which
-  only proceeds if a reboot genuinely happened since enrollment (tracked by boot ID) — this
-  protects against silently reproducing the same broken seal. `status --porcelain`'s 4th
-  field, `tpm_pending` (`no`/`reboot_needed`/`ready`), tells you which phase you're in; the
-  Hub surfaces this as a "Finish enabling" row under the toggle rather than lying that it's
-  simply "On". `disable` is a single call: it removes TPM2 first (the passphrase prompt
-  returns immediately) *then* resets the sbctl keys back to Setup Mode — no PCR timing
-  issue there since nothing needs to match a future boot. `enable`'s first call still
-  requires the firmware to already be in Setup Mode (a manual UEFI step); the older
-  `setup`/`sign`/`reenroll` remain for manual/advanced use and are what `enable` calls
-  under the hood.
-- **The installer never turns Secure Boot on, and does not ask about it.** Enrolling keys
+- `w-crypt status [--porcelain] | enroll-tpm [--pin] [--no-secureboot] | reenroll-tpm |
+  recovery-add [--replace] | wipe-tpm` — automatic unlock and a printable recovery key; the
+  Hub's System → **Security** tab has a row for each (Automatic unlock: Off / TPM / TPM + PIN /
+  Re-seal; Recovery key: Create / Replace). `enroll-tpm` **refuses while Secure Boot is not on
+  in W and enforced by the firmware** (PCR7 is then the same for any USB stick) —
+  `--no-secureboot` is only for an admin who sealed to other PCRs in `/etc/w/crypt.conf`;
+  never suggest it as a workaround. On a laptop recommend `--pin` (TPM2 + PIN: the boot asks
+  for a short PIN, a keypad glyph under the field; three wrong PINs — or a changed boot chain —
+  bring up the lock-glyph prompt, which takes the passphrase or the recovery key; the
+  passphrase typed at the PIN prompt counts as a wrong PIN). Status
+  porcelain (root): `luks tpm_device tpm2(none|tpm|pin) pcrs recovery
+  reseal(no|pending|stale|unknown)`; `stale` = the sealed PCR policy no longer matches this
+  boot (firmware/shim/dbx update) → `sudo w-crypt reenroll-tpm`, which keeps a PIN seal a PIN
+  seal (asks for a new PIN; needs a terminal).
+- `w-secureboot status[--porcelain] | enable [--mode own|shim] | disable | setup | sign |
+  reenroll [--if-stale]` — Secure Boot. **`enable`/`disable` are the entry points** (what the Hub's
+  System → **Security** tab's Secure Boot row runs; its rows exist only on the encrypted+Limine
+  path). The Hub row is a walk-through: it shows W's state and the firmware's, names the next
+  step (prepare W → reboot / MokManager → turn SB on in the firmware → finish) and can reboot
+  straight into the firmware setup (`w-session-exit firmware`). Limine
+  is signed with sbctl's db key, generated on this machine; the **mode** says who trusts it
+  and `enable` picks it from the firmware (`status` shows the mode, porcelain field 5):
+  - `shim` — firmware keeps its factory keys (the usual laptop). Microsoft-signed shim
+    (Fedora's, package `shim-signed`) boots Limine, and W's key goes into shim's MokList:
+    after the first `enable` the user reboots, the blue *Shim UEFI key management* menu
+    opens by itself → Enroll MOK → Continue → Yes → the one-time code `enable` printed (not
+    echoed) → Reboot, all within 5 minutes (the firmware watchdog then reboots and the
+    request is lost; `enable` re-queues it). Never **Reset MOK** — it erases all keys.
+    The first `enable` makes the `W` firmware entry first and the next boot; if Windows
+    starts anyway, pick W in the firmware's boot menu (F11/F12/Esc) and put W first there.
+    Windows' BitLocker is not affected. Refused when the firmware lacks the Microsoft
+    3rd-party UEFI CA (Secured-core default) — tell the user to enable "Allow Microsoft
+    3rd-party UEFI CA". `disable` here needs Secure Boot turned off in the firmware first.
+  - `own` — firmware in Setup Mode (user cleared its keys): sbctl's keys are enrolled
+    (Microsoft's kept); changes PCR7 of every OS, so BitLocker asks for its recovery key once.
+  TPM2 auto-unlock is sealed to PCR7, measured only at boot, so `enable` is **two calls with
+  a reboot in between**: the first changes keys / queues the MokManager step, the second
+  (after the reboot, tracked by boot ID) re-seals an **existing** TPM2 seal. It never creates
+  one — automatic unlock is a separate `w-crypt enroll-tpm` step, so a laptop turning Secure
+  Boot on stays on its passphrase. Porcelain field 4 `tpm_pending` (`no`/`reboot_needed`/
+  `ready`) says which phase; field 7 `mok` (`yes`/`no`/`unknown`/`na`) whether W's key reached
+  MokList (`no` after a lost MokManager request → `enable` again re-queues it).
+  `disable` removes the TPM2 seal too (the passphrase is asked again). Loaders for the mode are laid out by
+  `/usr/lib/w/w-secureboot-stage` after every Limine regeneration; `setup`/`sign`/`reenroll`
+  are the advanced pieces `enable` uses.
+- **Once Secure Boot is on in W, `/boot/efi/limine.conf` is fingerprinted** into the boot
+  loader. A stale fingerprint halts Limine with `CHECKSUM MISMATCH FOR CONFIG FILE` —
+  **even with Secure Boot switched off in the firmware**, and snapshots do not cover the
+  ESP. A guard keeps it current: `w-secureboot reenroll --if-stale` (re-enrolls only on a
+  mismatch) runs after every Limine regeneration, before every poweroff/reboot
+  (`w-secureboot-guard.service`) and before hibernation, so an edit past limine-entry-tool
+  survives a clean shutdown. Porcelain field 6 `config_hash` is `ok`/`stale`/`unknown`
+  (`unknown` without root — the ESP is root-only); on `stale`, run `sudo w-secureboot
+  reenroll` right away and check what it reports. What the guard cannot catch — power loss
+  or a hard reset right after a change, an ESP changed while W was not running — still
+  needs the way back: live medium → chroot → `w-secureboot reenroll`; point the user to
+  `/usr/share/doc/w/RECOVERY.md` §"CHECKSUM MISMATCH FOR CONFIG FILE".
+- **The install medium boots with Secure Boot on.** Once per downloaded image shim refuses
+  it (`Verification failed`) and opens MokManager: any key within 10 s → Enroll hash from
+  disk → the medium → `EFI/BOOT/grubx64.efi` → Continue → Yes → Reboot (no password).
+  `Access Denied` = a Secured-core firmware: allow the 3rd-party UEFI CA or switch Secure
+  Boot off.
+- **Installed with Secure Boot enforcing, W sets it up itself** (shim mode): only the
+  encrypted stack is offered; the installer's last screen shows a one-time code, and on the
+  next boot MokManager wants **Enroll MOK** (and **Delete MOK** — the medium's hash, same
+  code; it drops the public image's trust, which the installed W does not need) → Reboot;
+  request lost → after `Verification failed` any key within 10 s → Enroll key from disk →
+  `EFI/W/W-MOK.cer`. Firstboot finishes
+  phase 2. TPM2 auto-unlock comes with it on a desktop; a laptop keeps the passphrase (a
+  stolen laptop with TPM-only boots to the login screen) — Hub → Security → Automatic unlock
+  (`sudo w-crypt enroll-tpm --pin`) adds it.
+- **With Secure Boot off at install, the installer does not turn it on.** Enrolling keys
   needs the firmware in Setup Mode and switching SB on needs a UEFI toggle plus a reboot —
-  none of which an installer can do. A fresh encrypted install therefore boots with SB off
+  none of which an installer can do. Such an encrypted install boots with SB off
   and asks for the LUKS passphrase every time; both are expected. The order that works is
-  Secure Boot first, TPM2 auto-unlock second (that is what `enable` does): sealing TPM2
+  Secure Boot first, TPM2 auto-unlock second (`enable`, then `w-crypt enroll-tpm`): sealing TPM2
   while SB is off is close to pointless, because PCR7 then reads the same for any medium
-  someone boots, so the TPM would hand the key to a USB stick just as readily.
+  someone boots, so the TPM would hand the key to a USB stick just as readily. The
+  installer offers the encrypted stack first (the recommended default; plain GRUB is the
+  compatibility choice) and leaves TPM2 to the user — except unattended preset installs
+  (nobody is there to type) and desktops installed under Secure Boot; both are sealed to
+  PCR 7 on the first boot. When the user asks why the passphrase
+  is asked at every boot, explain this and point to the docs guide `security.md`
+  §"Disk encryption and Secure Boot"; whether to enable auto-unlock is their call.
 
-These tools are only present on encrypted/Limine installs; on a standard install the
+These tools are only present on encrypted/Limine installs; on a plain GRUB install the
 bootloader is GRUB and neither applies.
+
+### Windows next to W (dual boot) and BitLocker
+
+When the firmware has a Windows boot entry, both boot menus (GRUB and Limine) show for
+5 s with a Windows entry; without one the menu stays hidden. That entry does not
+chainload Windows — it restarts into the firmware's own "Windows Boot Manager" entry
+(BootNext), so BitLocker sees a normal Windows boot and does not ask for its recovery
+key. No Windows entry in the menu → the firmware lost it (e.g. after a firmware reset):
+start Windows once from the firmware's boot menu (F12/F8/Esc) and it restores the entry;
+the menu picks it up at the next kernel update. What still triggers a BitLocker key
+prompt is turning Secure Boot off (or allowing the 3rd-party CA on a Secured-core machine) and `w-secureboot` in `own`
+mode (both change PCR7) — the `shim` mode does not; have the user keep the recovery key at hand.
+The other way round: Windows installs Microsoft's Secure Boot updates (dbx, 2023
+certificates) only while Secure Boot is on, so its first boots after W turned it on change
+PCR7 for W — the disk asks for the passphrase once, then `sudo w-crypt reenroll-tpm` (Hub →
+Security → Re-seal). Best: let Windows finish its updates, then re-seal.
 
 ### ESP space on an encrypted install
 

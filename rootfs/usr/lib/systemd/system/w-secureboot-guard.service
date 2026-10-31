@@ -1,0 +1,18 @@
+# W Linux — before every poweroff/reboot, make sure the Secure Boot loaders still carry
+# the hash of the current limine.conf, and re-enroll it if not: Limine halts the next
+# boot on a mismatch (an edit past limine-entry-tool, an enroll that failed). Enabled by
+# mod_limine (apply.sh --limine); a no-op until w-secureboot turns Secure Boot on.
+[Unit]
+Description=W Secure Boot config-hash guard
+RequiresMountsFor=/boot/efi
+# Stopped after limine-snapper-sync, the last writer of limine.conf at shutdown.
+Before=limine-snapper-sync.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/bin/w-secureboot reenroll --if-stale
+
+[Install]
+WantedBy=multi-user.target

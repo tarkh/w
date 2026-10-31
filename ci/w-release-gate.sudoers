@@ -33,7 +33,12 @@
 #   sed -e 's|<user>|tarkh|g' -e 's|<repo>|/home/tarkh/Dev/w|g' \
 #       ci/w-release-gate.sudoers > /tmp/w-release-gate
 #   visudo -cf /tmp/w-release-gate                         # syntax check
-#   sudo install -m0440 -o root -g root /tmp/w-release-gate /etc/sudoers.d/w-release-gate
+#   sudo install -m0440 -o root -g root /tmp/w-release-gate /etc/sudoers.d/zz-w-release-gate
+#
+# The zz- prefix is load-bearing: sudoers.d is read in lexical order and the LAST
+# matching rule wins. A W machine carries /etc/sudoers.d/wheel (`%wheel ALL=(ALL:ALL)
+# ALL`, password required), and "w-release-gate" sorts before "wheel" — under that
+# name the grant is parsed first, overridden, and sudo -n asks for a password.
 #
 # NOTE: this file is a TEMPLATE — never install it with the <placeholders>
 # unresolved (a literal <repo> path would make the grant match nothing).

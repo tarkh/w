@@ -1,0 +1,39 @@
+#! /bin/sh
+set -e
+# Managed by W (mod_grub). Windows next to W: a menu entry per Windows the firmware
+# can boot (/usr/lib/w/w-boot-otheros), and the menu shown instead of hidden — the
+# user has a choice to make. No Windows → no output, the menu stays as 00_header made
+# it. Runs on every grub-mkconfig, so the entries follow the machine.
+#
+# Each entry reboots into the firmware's own Windows entry (BootNext) rather than
+# chainloading bootmgfw.efi — chainloaded, BitLocker sees different PCRs and asks for
+# its recovery key. That is also why upstream's 31_efi_bootnext is off
+# (GRUB_DISABLE_BOOTNEXT): it lists every NVRAM entry, firmware apps included.
+# The timeout lines come after 00_header's, and GRUB reads them when the menu is
+# about to show, so the later value wins.
+
+prefix="/usr"
+exec_prefix="/usr"
+datarootdir="/usr/share"
+
+. "$pkgdatadir/grub-mkconfig_lib"
+
+[ -x /usr/lib/w/w-boot-otheros ] || exit 0
+found="$(/usr/lib/w/w-boot-otheros)"
+[ -n "$found" ] || exit 0
+
+tab="$(printf '\t')"
+printf '%s\n' "$found" | while IFS="$tab" read -r num label; do
+  echo "Found Windows: $label (Boot$num)" >&2
+  cat << EOF
+menuentry '$(echo "$label" | grub_quote)' --class windows --class os \$menuentry_id_option 'w-bootnext-$num' {
+	if bootnext $num; then
+		reboot
+	fi
+}
+EOF
+done
+cat << EOF
+set timeout_style=menu
+set timeout=5
+EOF

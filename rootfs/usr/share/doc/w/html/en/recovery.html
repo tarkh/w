@@ -137,6 +137,41 @@ restored system, boot a snapshot from the Limine menu once and run
 <code>sudo w-rollback run</code> — it restores the kernel pair from the EFI partition, which a
 manual swap cannot do.</p>
 <hr />
+<h2 id="symptom-checksum-mismatch-for-config-file-right-after-poweron">Symptom: <code>CHECKSUM MISMATCH FOR CONFIG FILE</code> right after power-on <a class="anchor" href="#symptom-checksum-mismatch-for-config-file-right-after-poweron" aria-hidden="true">#</a></h2>
+<p>Only on an encrypted install where Secure Boot was turned on in W
+(<code>w-secureboot enable</code>). The boot loader carries a fingerprint of its menu file,
+<code>limine.conf</code> on the EFI partition, and halts when the file no longer matches it.
+W refreshes the fingerprint on every change it makes itself, and before every
+shutdown, reboot or hibernation it also catches a change made some other way (a hand
+edit, a third-party tool) and refreshes the fingerprint for it. So this screen means
+the system never got that far: a power loss or a hard reset cut off a regeneration or
+followed an edit, or the EFI partition was changed while W was not running.
+<strong>Turning Secure Boot off in the firmware does not help</strong>: the check
+stays as long as the fingerprint exists. Snapshots do not help either — the EFI
+partition is not part of them.</p>
+<p>Boot the W install medium; it starts with Secure Boot on. The first time a medium
+is used on this machine, its boot loader is not trusted yet: a blue <em>Shim UEFI key
+management</em> screen appears after <code>Verification failed</code>. Press a key within 10
+seconds, then choose <strong>Enroll hash from disk</strong> → the medium → <code>EFI/BOOT/grubx64.efi</code>
+→ <strong>Continue</strong> → <strong>Yes</strong> → <strong>Reboot</strong>. No password is asked, and W's own disk unlock
+is not affected. If the firmware itself refuses the medium (<code>Access Denied</code>, or a
+Secure Boot violation screen), it trusts Windows only — allow the <em>Microsoft 3rd-party
+UEFI CA</em> in its Secure Boot settings, or switch Secure Boot off for this repair. Open
+the disk and mount the system with its EFI partition:</p>
+<pre><code>cryptsetup open /dev/&lt;root-partition&gt; cryptroot
+mount <span class="f">-o</span> subvol=@ /dev/mapper/cryptroot /mnt
+mount /dev/&lt;efi-partition&gt; /mnt/boot/efi</code></pre>
+<p><code>cryptsetup</code> first says the TPM policy does not match — expected outside the
+machine's own boot chain; it then asks for the passphrase or the recovery key.</p>
+<p>Look at the file before trusting it again: the next command makes the boot loader
+accept <strong>whatever is in it now</strong>. If you did not make the change yourself, put back
+a known-good copy first.</p>
+<pre><code>less /mnt/boot/efi/limine.conf
+arch-chroot /mnt <span class="w">w-secureboot</span> reenroll</code></pre>
+<p>Unmount and boot (if you switched Secure Boot off, switch it back on first). The
+disk unlocks through TPM2 again on its own — the boot chain is the same one it was
+sealed to.</p>
+<hr />
 <h2 id="symptom-the-disk-passphrase-is-not-accepted">Symptom: the disk passphrase is not accepted <a class="anchor" href="#symptom-the-disk-passphrase-is-not-accepted" aria-hidden="true">#</a></h2>
 <p>The passphrase slot is the fallback that always exists; TPM2 unlock and the printed
 recovery key are extra slots on top of it. <code>w-crypt</code> manages them:</p>
@@ -177,7 +212,7 @@ boot that broke is still there after you have recovered from it.</p>
     </article>
     <nav class="pager"><a class="prev" href="guide/power.html"><small>Previous</small>Power and battery</a><a class="next" href="guide/packs.html"><small>Next</small>Packs — optional software bundles</a></nav>
   </main>
-  <aside class="toc"><h2>On this page</h2><ul><li><a href="#the-one-command">The one command</a></li><li><a href="#symptom-it-boots-but-something-broke-after-an-update">Symptom: it boots, but something broke after an update</a></li><li><a href="#symptom-the-screen-stays-black-after-login-or-the-login-screen-never-appears">Symptom: the screen stays black after login, or the login screen never appears</a></li><li><a href="#symptom-it-does-not-boot">Symptom: it does not boot</a></li><li><a href="#a-snapshot-is-in-the-list-but-not-in-the-boot-menu" class="sub">A snapshot is in the list but not in the boot menu</a></li><li><a href="#what-a-snapshot-boot-looks-like" class="sub">What a snapshot boot looks like</a></li><li><a href="#symptom-it-does-not-even-reach-the-boot-menu">Symptom: it does not even reach the boot menu</a></li><li><a href="#symptom-the-disk-passphrase-is-not-accepted">Symptom: the disk passphrase is not accepted</a></li><li><a href="#symptom-a-file-in-your-home-directory-is-gone">Symptom: a file in your home directory is gone</a></li><li><a href="#undoing-a-rollback">Undoing a rollback</a></li><li><a href="#where-the-machine-writes-down-what-happened">Where the machine writes down what happened</a></li></ul></aside>
+  <aside class="toc"><h2>On this page</h2><ul><li><a href="#the-one-command">The one command</a></li><li><a href="#symptom-it-boots-but-something-broke-after-an-update">Symptom: it boots, but something broke after an update</a></li><li><a href="#symptom-the-screen-stays-black-after-login-or-the-login-screen-never-appears">Symptom: the screen stays black after login, or the login screen never appears</a></li><li><a href="#symptom-it-does-not-boot">Symptom: it does not boot</a></li><li><a href="#a-snapshot-is-in-the-list-but-not-in-the-boot-menu" class="sub">A snapshot is in the list but not in the boot menu</a></li><li><a href="#what-a-snapshot-boot-looks-like" class="sub">What a snapshot boot looks like</a></li><li><a href="#symptom-it-does-not-even-reach-the-boot-menu">Symptom: it does not even reach the boot menu</a></li><li><a href="#symptom-checksum-mismatch-for-config-file-right-after-poweron">Symptom: CHECKSUM MISMATCH FOR CONFIG FILE right after power-on</a></li><li><a href="#symptom-the-disk-passphrase-is-not-accepted">Symptom: the disk passphrase is not accepted</a></li><li><a href="#symptom-a-file-in-your-home-directory-is-gone">Symptom: a file in your home directory is gone</a></li><li><a href="#undoing-a-rollback">Undoing a rollback</a></li><li><a href="#where-the-machine-writes-down-what-happened">Where the machine writes down what happened</a></li></ul></aside>
 </div>
 </body>
 </html>

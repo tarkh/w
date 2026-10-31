@@ -28,6 +28,36 @@ defaults is one command per area: see `w-reset`.
 `w-info` lists them; `w-<tool> help` prints each tool's help; the command
 reference of this documentation has a page per tool.
 
+**Why does W ask for the disk passphrase at every boot?**
+The disk is encrypted, and until you turn on automatic unlock the passphrase is
+its only key. Automatic unlock needs Secure Boot first: **Hub → System →
+Security** walks through Secure Boot, then turns on automatic unlock (TPM, or
+TPM + PIN on a laptop) — see
+[disk encryption and Secure Boot](guide/security.md#disk-encryption-and-secure-boot).
+
+**Can I install W next to Windows?**
+Yes — into free space. First, in Windows, shrink the C: volume (Disk Management →
+Shrink Volume) to free 40 GiB or more — enter 40960 MB or more in the Shrink
+dialog; the installer never resizes NTFS itself. The installer shows sizes in GiB,
+the same numbers Windows shows (Windows labels them "GB"), so the room you freed
+reads back unchanged. Then pick the disk — the list shows each disk's partitions
+and free space — and "Into free space": W creates its own boot
+partition (ESP) and root there, and every existing partition — the Windows ESP
+included — stays untouched. If BitLocker is on, save its recovery key before you
+start. With Secure Boot left on, W installs and boots through Microsoft-signed shim
+and Windows notices nothing; only firmware that refuses the W medium ("Secured-core")
+needs a Secure Boot setting changed, and then Windows asks for that key once. W becomes the first boot
+entry, and its boot menu — otherwise hidden — now shows for 5 seconds with a
+Windows entry. Choosing it restarts the computer straight into Windows: W hands
+over to the firmware's own Windows entry instead of starting Windows itself, so
+BitLocker sees a normal Windows boot and does not ask for the key each time. The
+entry follows the firmware: if Windows is removed, the entry and the visible menu
+go away with the next kernel update; if the firmware lost the Windows entry (after
+a firmware reset), start Windows once from the firmware's boot menu (the key shown
+at power-on, often F12, F8 or Esc) — Windows restores it. Windows keeps the hardware clock in local time and W in
+UTC — if the clock is off by your time zone after switching, run
+`timedatectl set-local-rtc 1` in W.
+
 ## Updates and recovery
 
 **An update broke my system. How do I roll back?**

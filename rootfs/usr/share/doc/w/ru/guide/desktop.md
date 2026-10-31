@@ -6,7 +6,7 @@ order: 4
 summary: Окна, рабочие столы, попапы, уведомления, скриншоты и восстановление сессии.
 sources:
   - path: .claude/library/package-hyprland.md
-    sha256: 5b41eca06b7f8c238033f578d12114de97d29b1db03938e01cbfda8423a05930
+    sha256: ae20e1fbc2ce69e471865de43c1957dd9b56b8ca50d15df64ab9e45af6147ad3
   - path: .claude/library/quickshell.md
     sha256: da1b14d9d934188dd9b49ece41af8b58ab8d5abe06c6172e198e1c5ade171759
   - path: .claude/library/w-screenshot.md

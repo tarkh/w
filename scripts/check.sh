@@ -78,7 +78,8 @@ for f in "${ALL_FILES[@]}"; do
     # scripts/packs/<bundle>/*.py — helpers a bundle's setup scripts run via
     # `python3 x` (the telegram tdata seeder); the perms suite exempts the
     # bundle tree, ruff must not.
-    *.sh|rootfs/usr/bin/*|rootfs/usr/lib/w/*|devtools/usr/local/bin/*|rootfs/etc/initcpio/*|vm/*.py|scripts/packs/*/*.py) ;;
+    # scripts/check/tests/*.py — drivers a bats suite runs (mcp-wire.py).
+    *.sh|rootfs/usr/bin/*|rootfs/usr/lib/w/*|devtools/usr/local/bin/*|rootfs/etc/initcpio/*|vm/*.py|scripts/packs/*/*.py|scripts/check/tests/*.py) ;;
     *) continue ;;
   esac
   # First line via `read` (not $(head …)) — binary neighbors in these trees

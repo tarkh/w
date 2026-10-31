@@ -107,7 +107,7 @@ def register(mcp):
         update channel (edge/stable). Everything is read live on each call — nothing
         here is cached or remembered, so it can never go stale (unlike GPU swaps,
         keymap/locale/timezone changes, which would silently rot a stored fact)."""
-        lines = [f"Hostname: {run(['hostname'])}"]
+        lines = [f"Hostname: {os.uname().nodename}"]
 
         cpu = "?"
         try:

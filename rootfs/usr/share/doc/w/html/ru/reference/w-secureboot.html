@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>w-secureboot · W Linux</title>
-<meta name="description" content="Настройка и управление Secure Boot (ключи sbctl + хеш Limine).">
+<meta name="description" content="Настройка и управление Secure Boot (ключи sbctl или shim + MOK, хеш Limine).">
 <link rel="icon" href="../../assets/logo.svg">
 <link rel="stylesheet" href="../../assets/style.css">
 <script src="../../ru/search-index.js" defer></script>
@@ -26,22 +26,30 @@
   <main>
     <article>
       <h1>w-secureboot</h1>
-      <p><code>w-secureboot</code> — Настройка и управление Secure Boot (ключи sbctl + хеш Limine).</p>
+      <p><code>w-secureboot</code> — Настройка и управление Secure Boot (ключи sbctl или shim + MOK, хеш Limine).</p>
 <h2 id="использование">Использование <a class="anchor" href="#использование" aria-hidden="true">#</a></h2>
 <pre><code>Использование: <span class="w">w-secureboot</span> &lt;команда&gt;
 
-Info: Настройка и управление Secure Boot (ключи sbctl + хеш Limine).
+Info: Настройка и управление Secure Boot (ключи sbctl или shim + MOK, хеш Limine).
 
 Команды:
-  status [<span class="f">--porcelain</span>]   Состояние setup-mode/занесения sbctl и подписанные файлы
-  enable                 Включить Secure Boot: занести ключи + подписать Limine. В два
-                          этапа — первый вызов заносит ключи и просит перезагрузку;
-                          после неё запустите снова, чтобы переустановить авторазблокировку
-                          диска TPM2 (PCR7 обновляется только на той перезагрузке, не сразу)
-  disable                Выключить Secure Boot: снять разблокировку TPM2 + сбросить ключи (Setup Mode)
-  setup                  Разовое включение: создать+занести ключи (Setup Mode) + подписать Limine, хеш
-  sign                   Переподписать все отслеживаемые sbctl бинарники (после обновления Limine)
-  reenroll               Заново занести хеш конфига Limine (после правки limine.conf)
+  status [<span class="f">--porcelain</span>]   Режим Secure Boot, состояние прошивки и подписанные файлы
+  enable [<span class="f">--mode</span> own|shim]
+                         Включить Secure Boot. Режим следует за прошивкой: Setup Mode
+                          → свои ключи; заводские ключи → подписанный Microsoft shim +
+                          ключ этой машины в MokList (не затрагивает BitLocker). В два
+                          этапа — первый вызов меняет ключи или ставит шаг MokManager в
+                          очередь и просит перезагрузку; после неё запустите снова, чтобы
+                          завершить и перепечатать уже включённую авторазблокировку TPM2
+                          (PCR7 обновляется только на той перезагрузке; добавляет её
+                          <span class="s">&#x27;w-crypt enroll-tpm&#x27;</span>)
+  disable                Выключить Secure Boot: снять разблокировку TPM2 + сбросить ключи
+                          (own) или цепочку shim (shim, после выключения SB в прошивке)
+  setup                  Разово, свои ключи: создать+занести (Setup Mode) + подписать
+  sign                   Переподписать файлы sbctl (после обновления Limine)
+  reenroll [<span class="f">--if-stale</span>]  Заново занести хеш limine.conf (после его правки);
+                          <span class="f">--if-stale</span>: только если загрузчики с ним разошлись
+                          (запускается само перед выключением и гибернацией)
   help                   Показать эту справку
 
 Коды выхода:

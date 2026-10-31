@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# w-boot-otheros — the Windows installs this machine's firmware can boot, for W's
+# boot menus: GRUB's /etc/grub.d/35_w-other-os and Limine's post.d/60-w-other-os.
+#
+# Helper, not a command: called by those two by absolute path, on every regeneration
+# of the menu (install, kernel updates, snapshots), so a Windows that appears or goes
+# away later is picked up the next time the menu is written.
+#
+# The source is the firmware's own boot entries, not the disks: an entry counts when
+# it loads \EFI\Microsoft\Boot\bootmgfw.efi from a GPT partition that is present on a
+# local disk right now (a wiped Windows leaves its NVRAM entry behind). Nothing is
+# mounted — the foreign ESP is never touched, not even read-only.
+#
+# The menus start Windows through BootNext (a reboot into this firmware entry), never
+# by chainloading bootmgfw.efi: chainloaded, it is measured after W's loader, the TPM
+# PCRs differ from a direct boot and BitLocker asks for its recovery key every time.
+#
+# Output: one line per Windows, "<bootnum>\t<label>" (bootnum = 4 hex digits, label =
+# the entry's description, which Limine's efi_boot_entry matches by name). Nothing
+# found, or no EFI variables → no output, exit 0.
+
+set -uo pipefail
+
+out="$(efibootmgr 2>/dev/null)" || exit 0
+present="$(lsblk -rno PARTUUID 2>/dev/null | tr 'A-Z' 'a-z')"
+
+# "Boot0000* Windows Boot Manager<TAB>HD(1,GPT,<uuid>,…)/\EFI\…" — efibootmgr 18 prints
+# the file path bare (optional data glued onto it), older ones as File(\EFI\…); a
+# substring match on the lowercased device path covers both.
+re_entry=$'^Boot([0-9A-Fa-f]{4})\\*? ([^\t]+)\t(.*)$'
+re_hd='HD\([0-9]+,GPT,([0-9A-Fa-f-]{36}),'
+declare -A seen=()
+while IFS= read -r line; do
+  [[ "$line" =~ $re_entry ]] || continue
+  num="${BASH_REMATCH[1]}" label="${BASH_REMATCH[2]}" dp="${BASH_REMATCH[3]}"
+  [[ "${dp,,}" == *'\efi\microsoft\boot\bootmgfw.efi'* && "$dp" =~ $re_hd ]] || continue
+  uuid="${BASH_REMATCH[1],,}"
+  grep -qxF -- "$uuid" <<< "$present" || continue
+  [[ -z "${seen[$uuid]:-}" ]] || continue
+  seen[$uuid]=1
+  printf '%s\t%s\n' "$num" "$label"
+done <<< "$out"
+exit 0

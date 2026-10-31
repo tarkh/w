@@ -5,7 +5,8 @@
 //     pending reboot flag from w-update, plus, on an edge system, the w-sync behind-count),
 //     Logs (retention policy + journal usage) and Session memory.
 //   • Date & Time — DateTimeSection.qml, a sibling file (timezone + NTP, over w-time).
-//   • Security    — SecuritySection.qml, a sibling file (Secure Boot, over w-secureboot).
+//   • Security    — SecuritySection.qml, a sibling file (Secure Boot, TPM2 unlock, recovery
+//                   key, hardening — over w-secureboot, w-crypt and w-kernel).
 //   • Rollback    — RollbackSection.qml, a sibling file (snapshot list, over w-rollback).
 // The first three were root-level Hub tiles of their own until the menu reorganisation;
 // each is one short topic that reference settings apps file under System, and none earns
@@ -1026,8 +1027,8 @@ Item {
             }
 
             // ── Tab: Security ───────────────────────────────────────────────────
-            // Secure Boot enrolling opens a terminal and closes the Hub on its own; the
-            // hardening toggle is instant actuation and comes back up as runPrivileged.
+            // Secure Boot and the disk-unlock factors open a terminal and close the Hub on
+            // their own; the hardening toggle is instant actuation via runPrivileged.
             Loader {
                 id: secLoader
                 width: col.width

@@ -8,9 +8,10 @@ source "$SCRIPT_DIR/arch-iso.conf"
 DISK="$SCRIPT_DIR/w-base.qcow2"
 VARS="$SCRIPT_DIR/OVMF_VARS.fd"
 VARS_SECBOOT="$SCRIPT_DIR/OVMF_VARS.secboot.fd"
+VARS_SECBOOT_MS="$SCRIPT_DIR/OVMF_VARS.secboot-ms.fd"
 
 echo "Removing old disk and NVRAM..."
-rm -f "$DISK" "$VARS" "$VARS_SECBOOT"
+rm -f "$DISK" "$VARS" "$VARS_SECBOOT" "$VARS_SECBOOT_MS"
 # Wipe the emulated TPM state too, so a fresh install can re-enroll cleanly.
 rm -rf "${SWTPM_DIR:-/tmp/w-swtpm}"
 

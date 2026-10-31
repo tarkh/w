@@ -54,6 +54,15 @@
 #                      site (rootfs/usr/share/doc/w/html) and the docs suite runs
 #                      its --check. Without the parser the golden check cannot
 #                      render and the suite fails on the container, not the docs.
+#   python-mcp         the protocol suite (ai-protocol.bats) spawns a real w-mcp
+#                      and speaks stdio JSON-RPC to it. Absent, all its cases
+#                      SKIP — and the one gate that would notice a python-mcp
+#                      major moving the wire (1.x → 2.x removed the server
+#                      package w-mcp imported) rides untested on a green run.
+#   grub               the bootmenu suite runs W's grub.d/35_w-other-os against the
+#                      real grub-mkconfig_lib it sources. Only an OPTIONAL
+#                      dependency of archiso, so neither image carried it: both
+#                      grub cases SKIP and --strict turns the unit suite red.
 #
 # NOT here: archiso and base-devel. Those are the ISO BUILD, not the checks, and
 # they stay in ci/iso-build-entrypoint.sh where the build lives.
@@ -83,3 +92,5 @@ python-cryptography
 qt6-declarative
 quickshell
 python-markdown-it-py
+python-mcp
+grub

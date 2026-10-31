@@ -19,13 +19,17 @@
 # warnings are non-blocking and surface in the response.
 import datetime
 import re
+import threading
 from typing import Annotated
 
-from core import SYS_ROOT, USER_ROOT, desc, tool
+from core import SYS_ROOT, USER_ROOT, desc, serialized, tool
 from skill_linter import lint_skill, parse_frontmatter
 
 DOMAIN = "shared"
 
+# Dedup-check → write (and rm) run under one lock: concurrent w_skill_add calls
+# (SDK worker threads) would otherwise both pass the duplicate check.
+_STORE_LOCK = threading.Lock()
 _NAME_RE = re.compile(r"^[a-z0-9-]{2,40}$")
 _MAX_CONTENT_BYTES = 32 * 1024
 _TOKEN_RE = re.compile(r"[\w-]+")
@@ -172,6 +176,7 @@ def _dedup_matches(name, description, tags):
     return hits
 
 
+@serialized(_STORE_LOCK)
 def _skill_add(name, description, content, tags, overwrite):
     name = (name or "").strip()
     if not _valid_name(name):
@@ -252,6 +257,7 @@ def _skill_show(name):
     return f"[{scope}] {path}\n\n" + path.read_text(errors="replace")
 
 
+@serialized(_STORE_LOCK)
 def _skill_rm(name):
     name = (name or "").strip()
     d = _user_skill_dir() / name

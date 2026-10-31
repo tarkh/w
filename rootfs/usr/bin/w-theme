@@ -338,11 +338,13 @@ matugen_enumerate() { # <tmpdir> → "<index>\t<hex>" lines
 # ── Extraction workspace (shared by `new` and `edit`) ─────────────────────────
 # Both start from an image and need the same three answers: which base colours it
 # offers, which matugen scheme suits it, and whether it carries any hue at all.
-# Sets PAL_SEED / PAL_MONO / PAL_SCHEME / PAL_CANDIDATES.
-PAL_SEED=""; PAL_MONO=0; PAL_SCHEME=""; PAL_CANDIDATES=()
+# Sets PAL_SEED / PAL_MONO / PAL_SCHEME / PAL_GROUND / PAL_CANDIDATES.
+PAL_SEED=""; PAL_MONO=0; PAL_SCHEME=""; PAL_GROUND=""; PAL_CANDIDATES=()
 
-palette_prepare() { # <tmpdir> <image> [scheme override]
-  local tmp="$1" image="$2" scheme="${3:-}"
+# The overrides are what `edit` reads back from a theme's header: the verdicts
+# the theme was built with, so a rebuild does not re-decide them from a re-encode.
+palette_prepare() { # <tmpdir> <image> [scheme override] [mono override]
+  local tmp="$1" image="$2" scheme="${3:-}" mono="${4:-}"
 
   # matugen refuses to start without a parseable config, and both an empty file
   # and a lone [config] table count as unparseable — [templates] must be present
@@ -367,16 +369,18 @@ palette_prepare() { # <tmpdir> <image> [scheme override]
     || die "could not analyse the image"
 
   local key value measured="" advised=""
-  PAL_SEED=""; PAL_MONO=0
+  PAL_SEED=""; PAL_MONO=0; PAL_GROUND=""
   while IFS='=' read -r key value; do
     case "$key" in
       color)  PAL_SEED="$value" ;;
       chroma) measured="$value" ;;
       scheme) advised="$value" ;;
       mono)   PAL_MONO="$value" ;;
+      ground) PAL_GROUND="$value" ;;
     esac
   done < <(python3 "$PALETTE_PY" dominant "$tmp/hist.txt")
   PAL_SCHEME="${scheme:-$advised}"
+  PAL_MONO="${mono:-$PAL_MONO}"
   echo "w-theme: source $PAL_SEED (chroma $measured) → $PAL_SCHEME" >&2
 
   # A black-and-white image has one honest answer, not a choice of several.
@@ -419,7 +423,7 @@ palette_position() { # <requested>
 
 # Every candidate × every contrast level, from one process: the Hub previews the
 # whole matrix without re-running anything when a swatch or a level is clicked.
-palette_preview_json() { # <tmpdir> [current appearance] [current contrast] [current seed index]
+palette_preview_json() { # <tmpdir> [appearance] [contrast] [seed index] [surface] [tint] [saturation]
   local pos dumps=() seeds=() mono_flag=() current=()
   [[ "$PAL_MONO" == "1" ]] && mono_flag=(--mono)
   for pos in "${!PAL_CANDIDATES[@]}"; do
@@ -431,16 +435,21 @@ palette_preview_json() { # <tmpdir> [current appearance] [current contrast] [cur
   [[ -n "${2:-}" ]] && current+=(--current-appearance "$2")
   [[ -n "${3:-}" ]] && current+=(--current-contrast "$3")
   [[ -n "${4:-}" ]] && current+=(--current-seed-index "$4")
-  python3 "$PALETTE_PY" json "${dumps[@]}" "${seeds[@]}" "${mono_flag[@]}" "${current[@]}"
+  [[ -n "${5:-}" ]] && current+=(--current-surface "$5")
+  [[ -n "${6:-}" ]] && current+=(--current-tint "$6")
+  [[ -n "${7:-}" ]] && current+=(--current-saturation "$7")
+  python3 "$PALETTE_PY" json "${dumps[@]}" "${seeds[@]}" "${mono_flag[@]}" \
+    --ground "$PAL_GROUND" "${current[@]}"
 }
 
-palette_render() { # <tmpdir> <appearance> <position> <contrast> <name> <wallpaper label>
+palette_render() { # <tmpdir> <appearance> <position> <contrast> <name> <wallpaper label> <surface> <tint> <saturation>
   local dump mono_flag=()
   dump="$(palette_dump "$1" "$3")"
   [[ "$PAL_MONO" == "1" ]] && mono_flag=(--mono)
   python3 "$PALETTE_PY" render "$dump" "$DEFAULT_THEME_DIR/theme.conf" \
     --appearance "$2" --contrast "$4" --name "$5" --wallpaper "$6" \
-    --seed "$(palette_seed_hex "$3")" --seed-index "$3" "${mono_flag[@]}"
+    --seed "$(palette_seed_hex "$3")" --seed-index "$3" --surface "$7" --tint "$8" \
+    --saturation "$9" --scheme "$PAL_SCHEME" "${mono_flag[@]}"
 }
 
 validate_contrast() { # <level>
@@ -448,8 +457,39 @@ validate_contrast() { # <level>
   die "--contrast takes low, medium or high"
 }
 
+validate_tint() { # <level>
+  case "$1" in neutral|subtle|full) return 0 ;; esac
+  die "--tint takes neutral, subtle or full"
+}
+
+validate_saturation() { # <level>
+  case "$1" in muted|balanced|vivid) return 0 ;; esac
+  die "--saturation takes muted, balanced or vivid"
+}
+
+# The surface tone a --surface spec names, as the hex the engine takes ("" = the
+# accent's own tone). Resolved after extraction: `wallpaper` and a base-colour
+# position only mean something once the image has been read.
+palette_surface() { # <spec> <seed position>
+  case "$1" in
+    ""|accent) echo "" ;;
+    wallpaper)
+      [[ -n "$PAL_GROUND" ]] \
+        || die "this image has no background tone of its own — try --tint neutral"
+      echo "$PAL_GROUND" ;;
+    \#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F])
+      echo "${1,,}" ;;
+    *)
+      [[ "$1" =~ ^[0-9]+$ && "$1" -lt ${#PAL_CANDIDATES[@]} ]] \
+        || die "--surface takes accent, wallpaper, a base-colour number or a #rrggbb colour"
+      [[ "$1" -eq "$2" ]] && { echo ""; return 0; }
+      palette_seed_hex "$1" ;;
+  esac
+}
+
 cmd_new() {
   local name="" wallpaper="" appearance="dark" scheme="" contrast="medium" seed_index=0 activate=0 as_json=0
+  local surface="accent" tint="full" saturation="balanced"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --wallpaper)  wallpaper="${2:-}"; shift 2 ;;
@@ -457,6 +497,9 @@ cmd_new() {
       --scheme)     scheme="${2:-}"; shift 2 ;;
       --contrast)   contrast="${2:-}"; shift 2 ;;
       --seed-index) seed_index="${2:-0}"; shift 2 ;;
+      --surface)    surface="${2:-}"; shift 2 ;;
+      --tint)       tint="${2:-}"; shift 2 ;;
+      --saturation) saturation="${2:-}"; shift 2 ;;
       --activate)   activate=1; shift ;;
       --json)       as_json=1; shift ;;
       -*)           die "unknown option: $1" ;;
@@ -466,6 +509,8 @@ cmd_new() {
   [[ -n "$wallpaper" ]] || { echo "w-theme: usage: w-theme new <name> --wallpaper <image>" >&2; exit 2; }
   [[ "$appearance" == dark || "$appearance" == light ]] || die "--appearance takes dark or light"
   validate_contrast "$contrast"
+  validate_tint "$tint"
+  validate_saturation "$saturation"
   [[ "$seed_index" =~ ^[0-9]+$ ]] || die "--seed-index takes a number"
 
   command -v magick   &>/dev/null || die "imagemagick is required (pacman -S imagemagick)"
@@ -498,9 +543,10 @@ cmd_new() {
   fi
 
   seed_index="$(palette_position "$seed_index")"
-  echo "w-theme: building theme '$name' ($appearance, $PAL_SCHEME, contrast $contrast)..." >&2
+  surface="$(palette_surface "$surface" "$seed_index")"
+  echo "w-theme: building theme '$name' ($appearance, $PAL_SCHEME, contrast $contrast, tint $tint, saturation $saturation)..." >&2
   install -d "$tmp/stage"
-  palette_render "$tmp" "$appearance" "$seed_index" "$contrast" "$name" "$wallpaper" \
+  palette_render "$tmp" "$appearance" "$seed_index" "$contrast" "$name" "$wallpaper" "$surface" "$tint" "$saturation" \
     >"$tmp/stage/theme.conf" || die "palette engine failed"
   wallpaper_build_set "$wallpaper" "$tmp/stage" || exit 1
 
@@ -537,14 +583,22 @@ SETTINGS_LINE='^# w-theme: '
 
 theme_is_generated() { grep -qE "$GENERATED_MARKER" "$1/theme.conf" 2>/dev/null; }
 
-# The parameters a theme was built with (defaults when the theme predates the
-# settings line — its settings are then the engine's own defaults).
-theme_settings() { # <dir> → prints "seed hex<TAB>contrast"
-  local line seed="" contrast=""
+# The parameters a theme was built with (defaults when the theme predates a key
+# — its settings are then the engine's own defaults; an empty scheme/mono means
+# "measure the image", which is what such a theme was built by).
+# Sets REC_SEED / REC_CONTRAST / REC_SURFACE / REC_TINT / REC_SATURATION / REC_SCHEME / REC_MONO.
+theme_settings() { # <dir>
+  local line
   line="$(grep -E "$SETTINGS_LINE" "$1/theme.conf" 2>/dev/null | head -1 || true)"
-  [[ "$line" =~ seed=(#[0-9a-fA-F]{6}) ]] && seed="${BASH_REMATCH[1]}"
-  [[ "$line" =~ contrast=([a-z]+) ]] && contrast="${BASH_REMATCH[1]}"
-  printf '%s\t%s\n' "$seed" "${contrast:-medium}"
+  REC_SEED=""; REC_CONTRAST="medium"; REC_SURFACE="accent"; REC_TINT="full"; REC_SATURATION="balanced"; REC_SCHEME=""; REC_MONO=""
+  [[ "$line" =~ " seed="(#[0-9a-fA-F]{6}) ]] && REC_SEED="${BASH_REMATCH[1]}"
+  [[ "$line" =~ " contrast="([a-z]+) ]] && REC_CONTRAST="${BASH_REMATCH[1]}"
+  [[ "$line" =~ " surface="(#[0-9a-fA-F]{6}) ]] && REC_SURFACE="${BASH_REMATCH[1]}"
+  [[ "$line" =~ " tint="([a-z]+) ]] && REC_TINT="${BASH_REMATCH[1]}"
+  [[ "$line" =~ " saturation="([a-z]+) ]] && REC_SATURATION="${BASH_REMATCH[1]}"
+  [[ "$line" =~ " scheme="([a-z-]+) ]] && REC_SCHEME="${BASH_REMATCH[1]}"
+  [[ "$line" =~ " mono="([01]) ]] && REC_MONO="${BASH_REMATCH[1]}"
+  return 0
 }
 
 # Which of the candidates now on offer is the colour a theme was built from.
@@ -562,13 +616,16 @@ palette_position_of_seed() { # <hex>
 }
 
 cmd_edit() {
-  local name="" rename="" appearance="" contrast="" seed_index="" as_json=0
+  local name="" rename="" appearance="" contrast="" seed_index="" surface="" tint="" saturation="" as_json=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --rename)     rename="${2:-}"; shift 2 ;;
       --appearance) appearance="${2:-}"; shift 2 ;;
       --contrast)   contrast="${2:-}"; shift 2 ;;
       --seed-index) seed_index="${2:-}"; shift 2 ;;
+      --surface)    surface="${2:-}"; shift 2 ;;
+      --tint)       tint="${2:-}"; shift 2 ;;
+      --saturation) saturation="${2:-}"; shift 2 ;;
       --json)       as_json=1; shift ;;
       -*)           die "unknown option: $1" ;;
       *)            [[ -z "$name" ]] || die "unexpected argument: $1"; name="$1"; shift ;;
@@ -596,15 +653,19 @@ cmd_edit() {
   # on its own means "same theme, more contrast" rather than "rebuild with
   # defaults". The base colour is resolved after the extraction, by hex — see
   # palette_position_of_seed.
-  local recorded recorded_seed; recorded="$(theme_settings "$dir")"
-  recorded_seed="${recorded%%$'\t'*}"
-  [[ -n "$contrast" ]] || contrast="${recorded#*$'\t'}"
+  theme_settings "$dir"
+  [[ -n "$contrast" ]] || contrast="$REC_CONTRAST"
+  [[ -n "$surface" ]] || surface="$REC_SURFACE"
+  [[ -n "$tint" ]] || tint="$REC_TINT"
+  [[ -n "$saturation" ]] || saturation="$REC_SATURATION"
   if [[ -z "$appearance" ]]; then
     appearance="$(grep -oE '^W_APPEARANCE="(dark|light)"' "$dir/theme.conf" | head -1 | cut -d'"' -f2)"
     appearance="${appearance:-dark}"
   fi
   [[ "$appearance" == dark || "$appearance" == light ]] || die "--appearance takes dark or light"
   validate_contrast "$contrast"
+  validate_tint "$tint"
+  validate_saturation "$saturation"
   [[ -z "$seed_index" || "$seed_index" =~ ^[0-9]+$ ]] || die "--seed-index takes a number"
 
   command -v magick  &>/dev/null || die "imagemagick is required (pacman -S imagemagick)"
@@ -626,24 +687,28 @@ cmd_edit() {
   # shellcheck disable=SC2064  # expand $tmp now: the trap must survive the function
   trap "rm -rf '$tmp'" EXIT
 
-  palette_prepare "$tmp" "$master"
+  palette_prepare "$tmp" "$master" "$REC_SCHEME" "$REC_MONO"
 
   # An explicit --seed-index is a position in the list this very run produced
   # (that is what a front-end previewed and clicked); without one, the theme's
   # recorded colour decides, which survives the ranking moving underneath it.
-  [[ -n "$seed_index" ]] || seed_index="$(palette_position_of_seed "$recorded_seed")"
+  [[ -n "$seed_index" ]] || seed_index="$(palette_position_of_seed "$REC_SEED")"
+  seed_index="$(palette_position "$seed_index")"
+  # A recorded tone is a hex and is used as-is: unlike a base colour it needs no
+  # matugen dump, so it cannot drift with the ranking.
+  surface="$(palette_surface "$surface" "$seed_index")"
 
   if (( as_json )); then
-    palette_preview_json "$tmp" "$appearance" "$contrast" "$seed_index"
+    palette_preview_json "$tmp" "$appearance" "$contrast" "$seed_index" "${surface:-accent}" "$tint" "$saturation"
     return 0
   fi
 
-  seed_index="$(palette_position "$seed_index")"
   local final="${rename:-$name}"
-  echo "w-theme: rebuilding '$name' ($appearance, contrast $contrast, base colour $seed_index)..." >&2
-  # The header names the theme, so it is written with the name the theme will have
-  # once this call is done, not the one it had when it started.
-  palette_render "$tmp" "$appearance" "$seed_index" "$contrast" "$final" "$master" \
+  echo "w-theme: rebuilding '$name' ($appearance, contrast $contrast, base colour $seed_index, tint $tint, saturation $saturation)..." >&2
+  # The header names the theme and its wallpaper, so both are written as they will
+  # be once this call is done (a rename moves the directory the master lives in).
+  palette_render "$tmp" "$appearance" "$seed_index" "$contrast" "$final" \
+    "$(dirname "$dir")/$final/${master#"$dir"/}" "$surface" "$tint" "$saturation" \
     >"$tmp/theme.conf" || die "palette engine failed"
   [[ -s "$tmp/theme.conf" ]] || die "palette engine produced nothing"
 
@@ -808,12 +873,32 @@ Commands:
                             --seed-index <n>          which base colour of the
                                                       image to build from
                                                       (0 = most dominant)
+                            --tint neutral|subtle|full
+                                                      how much colour the
+                                                      surfaces and text wear;
+                                                      neutral = graphite/paper
+                                                      with a trace of the tone,
+                                                      default full
+                            --surface <tone>          which colour the surfaces
+                                                      wear, the accents keep
+                                                      theirs: accent (default),
+                                                      wallpaper (the colour most
+                                                      of the image is painted
+                                                      in), a base-colour number,
+                                                      or #rrggbb
+                            --saturation muted|balanced|vivid
+                                                      how colourful the accents,
+                                                      icons and terminal colours
+                                                      are; the background keeps
+                                                      its tint; default balanced
                             --scheme <matugen type>   default: adaptive
                             --activate                switch to it once built
                             --json                    print the palette matrix
                                                       only, create nothing: every
                                                       base colour the image
-                                                      offers × dark/light × every
+                                                      offers × surface tone ×
+                                                      tint × saturation × dark/light ×
+                                                      every
                                                       contrast level (GUI preview;
                                                       the other options are then
                                                       irrelevant, it returns all
@@ -851,7 +936,10 @@ Examples:
   w-theme reset
   w-theme new sunset --wallpaper ~/Pictures/sunset.jpg --activate
   w-theme new garden --wallpaper ~/Pictures/park.jpg --seed-index 1 --contrast low
+  w-theme new dusk --wallpaper ~/Pictures/dusk.jpg --tint neutral
+  w-theme new night --wallpaper ~/Pictures/night.jpg --surface wallpaper --tint subtle
   sudo w-theme new corporate --wallpaper /srv/brand.png
+  w-theme new amber --wallpaper ~/Pictures/amber.jpg --saturation vivid
   w-theme edit sunset --contrast low
   w-theme rm sunset
 EOF

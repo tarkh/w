@@ -408,3 +408,303 @@ PY
   run python3 "$PALETTE" nearest --to "" "#ff553a" "#5a93dc"
   [ "$output" = "0" ]
 }
+
+# ── Surface tone and tint ─────────────────────────────────────────────────────
+# The surfaces (canvas, cards, text) may wear a colour of their own while the
+# accents keep the base colour's: graphite with amber, slate with gold. Both axes
+# default to the single-hue theme the engine always made, which the calibrated
+# ramp test above already pins.
+
+# Render <appearance> <tint> [surface] and dump its tokens to <out>.
+render_tone() { # <out> <appearance> <tint> [surface]
+  python3 "$PALETTE" render "$MG" "$TEMPLATE" --name unit --appearance "$2" --tint "$3" \
+    ${4:+--surface "$4"} >"$BATS_TEST_TMPDIR/t.conf"
+  dump_theme "$BATS_TEST_TMPDIR/t.conf" >"$1"
+}
+
+@test "tint: neutral is graphite with a trace of the tone, the accents keep their colour" {
+  render_tone "$BATS_TEST_TMPDIR/full.dump" dark full
+  render_tone "$BATS_TEST_TMPDIR/neutral.dump" dark neutral
+  run python3 - "$PALETTE" "$BATS_TEST_TMPDIR/full.dump" "$BATS_TEST_TMPDIR/neutral.dump" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("palette", sys.argv[1])
+palette = importlib.util.module_from_spec(spec); spec.loader.exec_module(palette)
+def tokens(path):
+    return dict(l.split("=", 1) for l in open(path).read().splitlines() if "=" in l)
+full, neutral = tokens(sys.argv[2]), tokens(sys.argv[3])
+lch = lambda tok, t: palette.rgb_to_oklch(palette.hex_to_rgb(tok[t]))
+problems = []
+for t in ("W_PALETTE_SURFACE_3", "W_PALETTE_TEXT", "W_PALETTE_TEXT_BRIGHT"):
+    _, c, h = lch(neutral, t)
+    # Near-grey — but not chroma zero: an absolute grey beside a saturated accent
+    # reads as the accent's complement (grey among magenta looks green).
+    if not 0.003 < c < 0.02:
+        problems.append(f"{t} chroma {c:.3f} is not a tinted neutral")
+    elif palette._hue_distance(h, lch(full, "W_PALETTE_SURFACE_3")[2]) > 15:
+        problems.append(f"{t} hue {h:.0f} left the tone")
+problems += [f"{t} changed with the tint" for t in ("W_PALETTE_ACCENT", "W_PALETTE_VIVID", "W_PALETTE_ACCENT_CONTAINER")
+             if full[t] != neutral[t]]
+print("\n".join(problems))
+sys.exit(1 if problems else 0)
+PY
+  [ "$status" -eq 0 ]
+}
+
+@test "tint: subtle stays visibly between neutral and full at every contrast level" {
+  # Scaled before the soft level's chroma cap, subtle reached the same cap as full
+  # and the two rendered almost identically — a three-step control with two steps.
+  run python3 - "$PALETTE" "$MG" <<'PY'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("palette", sys.argv[1])
+palette = importlib.util.module_from_spec(spec); spec.loader.exec_module(palette)
+mg = json.load(open(sys.argv[2]))
+problems = []
+for appearance in ("dark", "light"):
+    for level in palette.CONTRAST_LEVELS:
+        c = {tint: palette.rgb_to_oklch(palette.hex_to_rgb(
+                 palette.build_pigments(mg, appearance, contrast=level, tint=tint)["SURFACE_3"]))[1]
+             for tint in palette.TINT_LEVELS}
+        if not c["neutral"] < c["subtle"] < 0.8 * c["full"]:
+            problems.append(f"{appearance}/{level}: " + ", ".join(f"{k} {v:.3f}" for k, v in c.items()))
+print("\n".join(problems))
+sys.exit(1 if problems else 0)
+PY
+  [ "$status" -eq 0 ]
+}
+
+@test "surface: the surfaces take the tone's hue, the accents keep the base colour's" {
+  render_tone "$BATS_TEST_TMPDIR/accent.dump" dark full
+  render_tone "$BATS_TEST_TMPDIR/sky.dump" dark full "#3f7fc4"
+  run python3 - "$PALETTE" "$BATS_TEST_TMPDIR/accent.dump" "$BATS_TEST_TMPDIR/sky.dump" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("palette", sys.argv[1])
+palette = importlib.util.module_from_spec(spec); spec.loader.exec_module(palette)
+def tokens(path):
+    return dict(l.split("=", 1) for l in open(path).read().splitlines() if "=" in l)
+accent, sky = tokens(sys.argv[2]), tokens(sys.argv[3])
+hue = lambda tok, t: palette.rgb_to_oklch(palette.hex_to_rgb(tok[t]))[2]
+want = palette.rgb_to_oklch(palette.hex_to_rgb("#3f7fc4"))[2]
+problems = [f"{t} hue {hue(sky, t):.0f} is not the tone's {want:.0f}"
+            for t in ("W_PALETTE_SURFACE_3", "W_PALETTE_TEXT_FAINT")
+            if palette._hue_distance(hue(sky, t), want) > 10]
+problems += [f"{t} followed the surface tone" for t in ("W_PALETTE_ACCENT", "W_PALETTE_VIVID")
+             if accent[t] != sky[t]]
+print("\n".join(problems))
+sys.exit(1 if problems else 0)
+PY
+  [ "$status" -eq 0 ]
+}
+
+@test "surface: every tone and tint clears the contrast targets" {
+  for appearance in dark light; do
+    for tint in neutral subtle full; do
+      render_tone "$BATS_TEST_TMPDIR/$appearance-$tint.dump" "$appearance" "$tint" "#4f9d3a"
+    done
+  done
+  run python3 - "$PALETTE" "$BATS_TEST_TMPDIR" <<'PY'
+import glob, importlib.util, sys
+spec = importlib.util.spec_from_file_location("palette", sys.argv[1])
+palette = importlib.util.module_from_spec(spec); spec.loader.exec_module(palette)
+pairs = [("W_TERM_FG", "W_TERM_BG", 4.5), ("W_QS_TEXT", "W_QS_SURFACE", 4.5),
+         ("W_QS_ACCENT_FG", "W_QS_ACCENT", 4.5), ("W_QS_ACCENT_INK", "W_QS_SURFACE", 4.5),
+         ("W_QS_ICON_TINT", "W_QS_SURFACE", 4.5), ("W_QS_MUTED", "W_QS_SURFACE", 3.0)]
+problems = []
+for path in sorted(glob.glob(f"{sys.argv[2]}/*.dump")):
+    tok = dict(l.split("=", 1) for l in open(path).read().splitlines() if "=" in l)
+    for fg, bg, target in pairs:
+        ratio = palette.contrast_ratio(tok[fg], tok[bg])
+        if ratio < target:
+            problems.append(f"{path.rsplit('/', 1)[1]}: {fg} on {bg} is {ratio:.2f} < {target}")
+print("\n".join(problems))
+sys.exit(1 if problems else 0)
+PY
+  [ "$status" -eq 0 ]
+}
+
+@test "render: records the tone, tint and the verdicts a rebuild must not re-decide" {
+  run python3 "$PALETTE" render "$MG" "$TEMPLATE" --name unit --surface "#1e1f23" --tint subtle \
+    --scheme scheme-content
+  [ "$status" -eq 0 ]
+  [[ "$output" == *" surface=#1e1f23 tint=subtle scheme=scheme-content mono=0"* ]]
+  # Without them a theme is the single-hue one, and says so.
+  run python3 "$PALETTE" render "$MG" "$TEMPLATE" --name unit
+  [[ "$output" == *" surface=accent tint=full"* ]]
+}
+
+@test "dominant: reports the ground the image is painted in, not a grey or a speck" {
+  # A graphite night, faintly slate in places, with one small amber moon.
+  cat >"$BATS_TEST_TMPDIR/night.txt" <<'HIST'
+   45874: ( 18, 18, 18) #121212 srgb(18,18,18)
+   38971: ( 45, 45, 45) #2D2D2D srgb(45,45,45)
+    3331: ( 30, 31, 35) #1E1F23 srgb(30,31,35)
+     102: (227,156, 24) #E39C18 srgb(227,156,24)
+HIST
+  run python3 "$PALETTE" dominant "$BATS_TEST_TMPDIR/night.txt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"color=#E39C18"* ]]
+  [[ "$output" == *"ground=#1e1f23"* ]]
+  # The same night re-encoded as a theme's own wallpaper: one level of blue less
+  # (chroma 0.0048). It is the same ground and has to survive `w-theme edit`.
+  sed -i 's/( 30, 31, 35) #1E1F23 srgb(30,31,35)/( 30, 32, 34) #1E2022 srgb(30,32,34)/' \
+    "$BATS_TEST_TMPDIR/night.txt"
+  run python3 "$PALETTE" dominant "$BATS_TEST_TMPDIR/night.txt"
+  [[ "$output" == *"ground=#1e2022"* ]]
+  # A pure grey picture has no ground tone to offer.
+  printf '  900: (20,20,20) #141414 srgb(20,20,20)\n' >"$BATS_TEST_TMPDIR/grey.txt"
+  run python3 "$PALETTE" dominant "$BATS_TEST_TMPDIR/grey.txt"
+  [ "${lines[-1]}" = "ground=" ]
+}
+
+@test "json: every seed offers its tones × every tint" {
+  run python3 "$PALETTE" json "$MG" "$MG_MONO" --seed "#c967e1" --seed "#3f7fc4" --ground "#4f9d3a" \
+    --current-seed-index 0 --current-surface "#e0a92c" --current-tint subtle
+  [ "$status" -eq 0 ]
+  echo "$output" >"$BATS_TEST_TMPDIR/matrix.json"
+  run python3 - "$BATS_TEST_TMPDIR/matrix.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+problems = []
+first, second = d["seeds"]
+# The ground first, then the other base colour; a recorded tone the image no
+# longer offers is kept rather than dropped.
+if [t["id"] for t in first["tones"]] != ["#4f9d3a", "#3f7fc4", "#e0a92c"]:
+    problems.append(f"seed 0 tones: {first['tones']}")
+if "#3f7fc4" in [t["id"] for t in second["tones"]]:
+    problems.append("a seed offers its own colour as a separate tone")
+for seed in d["seeds"]:
+    # The accent tone at full tint is the plain `appearance` matrix.
+    cells = [seed["appearance"], seed["tinted"]["accent"]["neutral"], seed["tinted"]["accent"]["subtle"]]
+    cells += [seed["tinted"][t["id"]][tint] for t in seed["tones"] for tint in ("neutral", "subtle", "full")]
+    for cell in cells:
+        for appearance in ("dark", "light"):
+            for level in ("low", "medium", "high"):
+                if not cell[appearance][level].get("SURFACE_0"):
+                    problems.append(f"seed {seed['index']}: a cell lacks {appearance}/{level}")
+if d["current"].get("surface") != "#e0a92c" or d["current"].get("tint") != "subtle":
+    problems.append(f"current tone not echoed: {d['current']}")
+print("\n".join(problems))
+sys.exit(1 if problems else 0)
+PY
+  [ "$status" -eq 0 ]
+}
+
+# The saturation axis, across hues whose gamut differs wildly at the accent's
+# lightness: the purple fixture, plus the same dump re-centred on amber, teal and
+# yellow (only `palettes.primary.60` and the error hue are read by the engine).
+saturation_py() { # <python body>; `palette`, `dumps`, `lch`, `problems` are in scope
+  python3 - "$PALETTE" "$MG" <<PY
+import copy, importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("palette", sys.argv[1])
+palette = importlib.util.module_from_spec(spec); spec.loader.exec_module(palette)
+base = json.load(open(sys.argv[2]))
+dumps = {"purple": base}
+for name, colour in (("amber", "#e39c18"), ("teal", "#2aa198"), ("yellow", "#c5c32b")):
+    mg = copy.deepcopy(base); mg["palettes"]["primary"]["60"]["color"] = colour; dumps[name] = mg
+lch = lambda c: palette.rgb_to_oklch(palette.hex_to_rgb(c))
+problems = []
+$1
+print("\n".join(problems[:20]))
+sys.exit(1 if problems else 0)
+PY
+}
+
+@test "saturation: balanced is the theme the engine always made" {
+  run diff <(python3 "$PALETTE" render "$MG" "$TEMPLATE" --name unit) \
+           <(python3 "$PALETTE" render "$MG" "$TEMPLATE" --name unit --saturation balanced)
+  [ "$status" -eq 0 ]
+  # A balanced theme's header is the one it always had; another step is recorded.
+  [[ "$(python3 "$PALETTE" render "$MG" "$TEMPLATE" --name unit)" != *"saturation="* ]]
+  run python3 "$PALETTE" render "$MG" "$TEMPLATE" --name unit --tint subtle --saturation vivid
+  [[ "$output" == *" tint=subtle saturation=vivid"* ]]
+}
+
+@test "saturation: muted scales every family, vivid takes a share of each slot's own room" {
+  # Per slot, not per family: one family-wide ceiling once gave a dark amber
+  # container the same colour on two different steps.
+  run saturation_py '
+fills = [s for s in palette.SATURATION_SLOTS if not s.startswith("ON_") and not s.endswith("_INK")]
+for hue, mg in dumps.items():
+    for appearance in ("dark", "light"):
+        for level in palette.CONTRAST_LEVELS:
+            pig = {s: palette.build_pigments(mg, appearance, contrast=level, saturation=s)
+                   for s in palette.SATURATION_LEVELS}
+            for slot in fills:
+                (l, b, h), m, v = lch(pig["balanced"][slot]), lch(pig["muted"][slot])[1], lch(pig["vivid"][slot])[1]
+                room = palette.fit_chroma(l, 1.0, h) - b
+                where = f"{hue}/{appearance}/{level}/{slot}"
+                if not m < 0.72 * b + 0.004:
+                    problems.append(f"{where}: muted {m:.3f} vs balanced {b:.3f}")
+                if v < b + 0.5 * palette.VIVID_GAIN * room - 0.004:
+                    problems.append(f"{where}: vivid {v:.3f} from {b:.3f} with room {room:.3f}")
+            for s in palette.SATURATION_LEVELS:
+                # The accent never turns into the error colour.
+                if not lch(pig[s]["ACCENT"])[1] < lch(pig[s]["VIVID"])[1]:
+                    problems.append(f"{hue}/{appearance}/{level}/{s}: ACCENT reached VIVID")'
+  [ "$status" -eq 0 ]
+}
+
+@test "saturation: only the chromatic families move, and every step clears its contrast" {
+  run saturation_py '
+for hue, mg in dumps.items():
+    for appearance in ("dark", "light"):
+        for level in palette.CONTRAST_LEVELS:
+            for tint in palette.TINT_LEVELS:
+                pig = {}
+                for s in ("balanced", "muted", "vivid"):
+                    pig[s] = palette.build_pigments(mg, appearance, contrast=level, tint=tint, saturation=s)
+                    palette.enforce_contrast(pig[s], appearance, level)
+                    where = f"{hue}/{appearance}/{level}/{tint}/{s}"
+                    # A step clears every floor balanced clears. (Balanced itself misses
+                    # ON_ACCENT on a dark high-contrast theme: the on-colour is picked
+                    # before the pass lightens ACCENT. A known gap of the engine.)
+                    for fg, bg, target in palette.CONTRAST_PAIRS:
+                        if fg not in palette.SATURATION_SLOTS:
+                            continue
+                        was = palette.contrast_ratio(pig["balanced"][fg], pig["balanced"][bg])
+                        need = target if was >= target else was - 0.05
+                        if palette.contrast_ratio(pig[s][fg], pig[s][bg]) < need:
+                            problems.append(f"{where}: {fg} on {bg} < {need:.2f}")
+                    moved = [k for k in pig[s] if k not in palette.SATURATION_SLOTS and pig[s][k] != pig["balanced"][k]]
+                    if moved:
+                        problems.append(f"{where}: {moved} followed the saturation")
+mono = json.load(open(sys.argv[2].replace("purple", "mono")))
+for s in ("muted", "vivid"):
+    if palette.build_pigments(mono, "dark", mono=True, saturation=s) != palette.build_pigments(mono, "dark", mono=True):
+        problems.append(f"a black-and-white theme changed at {s}")'
+  [ "$status" -eq 0 ]
+}
+
+@test "json: the saturation overlay is exactly what a full render makes" {
+  python3 "$PALETTE" json "$MG" --seed "#c967e1" --ground "#4f9d3a" \
+    --current-seed-index 0 --current-saturation vivid >"$BATS_TEST_TMPDIR/matrix.json"
+  python3 "$PALETTE" json "$MG_MONO" --mono >"$BATS_TEST_TMPDIR/mono.json"
+  run python3 - "$PALETTE" "$MG" "$BATS_TEST_TMPDIR/matrix.json" "$BATS_TEST_TMPDIR/mono.json" <<'PY'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("palette", sys.argv[1])
+palette = importlib.util.module_from_spec(spec); spec.loader.exec_module(palette)
+mg, d = json.load(open(sys.argv[2])), json.load(open(sys.argv[3]))
+problems = []
+seed = d["seeds"][0]
+if sorted(seed["saturated"]) != sorted(["accent"] + [t["id"] for t in seed["tones"]]):
+    problems.append(f"overlay tones: {sorted(seed['saturated'])}")
+for tone, by_tint in seed["saturated"].items():
+    for tint, by_sat in by_tint.items():
+        if sorted(by_sat) != ["muted", "vivid"]:
+            problems.append(f"{tone}/{tint}: steps {sorted(by_sat)}")
+        for saturation, cells in by_sat.items():
+            for appearance, levels in cells.items():
+                for level, slots in levels.items():
+                    full = palette.build_pigments(mg, appearance, contrast=level, surface="" if tone == "accent" else tone,
+                                                  tint=tint, saturation=saturation)
+                    palette.enforce_contrast(full, appearance, level)
+                    if slots != {s: full[s] for s in palette.SATURATION_PREVIEW}:
+                        problems.append(f"{tone}/{tint}/{saturation}/{appearance}/{level} differs from a full render")
+if d["current"].get("saturation") != "vivid":
+    problems.append(f"current saturation not echoed: {d['current']}")
+if json.load(open(sys.argv[4]))["seeds"][0]["saturated"]:
+    problems.append("a black-and-white image offers saturation steps")
+print("\n".join(problems[:10]))
+sys.exit(1 if problems else 0)
+PY
+  [ "$status" -eq 0 ]
+}

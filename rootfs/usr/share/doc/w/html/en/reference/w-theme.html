@@ -52,12 +52,32 @@ Commands:
                             <span class="f">--seed-index</span> &lt;n&gt;          which base colour of the
                                                       image to build from
                                                       (0 = most dominant)
+                            <span class="f">--tint</span> neutral|subtle|full
+                                                      how much colour the
+                                                      surfaces and text wear;
+                                                      neutral = graphite/paper
+                                                      with a trace of the tone,
+                                                      default full
+                            <span class="f">--surface</span> &lt;tone&gt;          which colour the surfaces
+                                                      wear, the accents keep
+                                                      theirs: accent (default),
+                                                      wallpaper (the colour most
+                                                      of the image is painted
+                                                      in), a base-colour number,
+                                                      or <span class="c">#rrggbb</span>
+                            <span class="f">--saturation</span> muted|balanced|vivid
+                                                      how colourful the accents,
+                                                      icons and terminal colours
+                                                      are; the background keeps
+                                                      its tint; default balanced
                             <span class="f">--scheme</span> &lt;matugen type&gt;   default: adaptive
                             <span class="f">--activate</span>                switch to it once built
                             <span class="f">--json</span>                    print the palette matrix
                                                       only, create nothing: every
                                                       base colour the image
-                                                      offers × dark/light × every
+                                                      offers × surface tone ×
+                                                      tint × saturation × dark/light ×
+                                                      every
                                                       contrast level (GUI preview;
                                                       the other options are then
                                                       irrelevant, it returns all
@@ -95,7 +115,10 @@ Examples:
   <span class="w">w-theme</span> reset
   <span class="w">w-theme</span> new sunset <span class="f">--wallpaper</span> ~/Pictures/sunset.jpg <span class="f">--activate</span>
   <span class="w">w-theme</span> new garden <span class="f">--wallpaper</span> ~/Pictures/park.jpg <span class="f">--seed-index</span> 1 <span class="f">--contrast</span> low
+  <span class="w">w-theme</span> new dusk <span class="f">--wallpaper</span> ~/Pictures/dusk.jpg <span class="f">--tint</span> neutral
+  <span class="w">w-theme</span> new night <span class="f">--wallpaper</span> ~/Pictures/night.jpg <span class="f">--surface</span> wallpaper <span class="f">--tint</span> subtle
   sudo <span class="w">w-theme</span> new corporate <span class="f">--wallpaper</span> /srv/brand.png
+  <span class="w">w-theme</span> new amber <span class="f">--wallpaper</span> ~/Pictures/amber.jpg <span class="f">--saturation</span> vivid
   <span class="w">w-theme</span> edit sunset <span class="f">--contrast</span> low
   <span class="w">w-theme</span> rm sunset</code></pre>
 <p>This page is generated from the command's own help text (w-docs-refgen). The

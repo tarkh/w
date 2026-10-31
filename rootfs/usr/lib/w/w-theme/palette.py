@@ -28,14 +28,16 @@ numpy/Pillow into the base system for a colour conversion would be absurd.
 
 Commands:
     dominant <histogram>                  read an ImageMagick histogram, report the
-                                          colour that should seed the theme
+                                          colour that should seed the theme and
+                                          the ground tone the image is painted in
     seeds <hex>... | --dump <mg.json>...  keep the candidate base colours that are
                                           genuinely different colours
     render <matugen.json> <template.conf> emit a theme.conf on stdout
     json   <matugen.json>...              emit the pigment matrix as JSON: every
-                                          candidate seed × dark/light × every
-                                          contrast level (the Hub previews the
-                                          whole thing from one process)
+                                          candidate seed × surface tone × tint ×
+                                          dark/light × every contrast level (the
+                                          Hub previews the whole thing from one
+                                          process)
 """
 
 from __future__ import annotations
@@ -110,16 +112,22 @@ def oklch_to_hex(lightness: float, chroma: float, hue: float) -> str:
     Chroma reduction keeps hue and lightness, which is what the mapping promised.
     """
     lightness = max(0.0, min(1.0, lightness))
+    return rgb_to_hex(oklch_to_rgb((lightness, fit_chroma(lightness, chroma, hue), hue)))
+
+
+def fit_chroma(lightness: float, chroma: float, hue: float) -> float:
+    """The largest chroma up to `chroma` that this lightness and hue hold in sRGB."""
+    lightness = max(0.0, min(1.0, lightness))
     lo, hi = 0.0, max(0.0, chroma)
     if _in_gamut(oklch_to_rgb((lightness, hi, hue))):
-        return rgb_to_hex(oklch_to_rgb((lightness, hi, hue)))
+        return hi
     for _ in range(24):
         mid = (lo + hi) / 2
         if _in_gamut(oklch_to_rgb((lightness, mid, hue))):
             lo = mid
         else:
             hi = mid
-    return rgb_to_hex(oklch_to_rgb((lightness, lo, hue)))
+    return lo
 
 
 # ── WCAG contrast ─────────────────────────────────────────────────────────────
@@ -348,6 +356,15 @@ LOW_CHROMA = 0.080
 _HISTOGRAM = re.compile(r"^\s*(\d+):.*?(#[0-9A-Fa-f]{6})")
 
 
+def _histogram(histogram: str) -> list[tuple[int, str]]:
+    entries = []
+    for line in histogram.splitlines():
+        m = _HISTOGRAM.match(line)
+        if m:
+            entries.append((int(m.group(1)), m.group(2)))
+    return entries
+
+
 def dominant_colour(histogram: str) -> tuple[str, float]:
     """Pick the colour a theme should be built from, and report its chroma.
 
@@ -358,11 +375,7 @@ def dominant_colour(histogram: str) -> tuple[str, float]:
     a photo of a grey wall scores every cluster near zero and is called
     achromatic — which is the honest answer.
     """
-    entries = []
-    for line in histogram.splitlines():
-        m = _HISTOGRAM.match(line)
-        if m:
-            entries.append((int(m.group(1)), m.group(2)))
+    entries = _histogram(histogram)
     if not entries:
         return "#808080", 0.0
     total = sum(c for c, _ in entries) or 1
@@ -373,6 +386,38 @@ def dominant_colour(histogram: str) -> tuple[str, float]:
         if score > best_score:
             best_hex, best_score, best_chroma = colour, score, chroma
     return best_hex, best_chroma
+
+
+# The ground tone: the colour the image is mostly MADE OF, as opposed to the one
+# that carries it. A dark landscape with one amber sun is built around the amber
+# (dominant_colour), but its surfaces may want the slate the rest of the picture
+# is painted in. Scored by area alone, among clusters that still hold a readable
+# hue — below GROUND_MIN_CHROMA a hue angle is quantisation noise, and below
+# GROUND_MIN_SHARE the cluster is a detail, not a ground. The chroma it has is not
+# carried over: the tint level decides how strongly the surfaces wear it.
+#
+# The floor sits well below the faint grounds it exists for: a slate night
+# measured 0.0080 from the original and 0.0048 from the theme's own re-encode
+# (#1E2023 → #1E2022, one level of blue), so a floor at 0.005 offered the tone
+# when the theme was created and silently dropped it when it was edited.
+GROUND_MIN_CHROMA = 0.003
+GROUND_MIN_SHARE = 0.02
+
+
+def ground_colour(histogram: str) -> str:
+    entries = _histogram(histogram)
+    total = sum(c for c, _ in entries) or 1
+    best_hex, best_count = "", 0
+    for count, colour in entries:
+        if count / total < GROUND_MIN_SHARE or count <= best_count:
+            continue
+        if rgb_to_oklch(hex_to_rgb(colour))[1] >= GROUND_MIN_CHROMA:
+            best_hex, best_count = colour.lower(), count
+    return best_hex
+
+
+def _hue_distance(a: float, b: float) -> float:
+    return abs((a - b + 180) % 360 - 180)
 
 
 # How far apart two candidate base colours must be, in OKLCH hue degrees, to be
@@ -439,6 +484,30 @@ def nearest_seed(target: str, colours: list[str]) -> int:
     return min(range(len(colours)), key=lambda i: distance(colours[i]))
 
 
+def surface_tones(accent: str, seeds: list[str], ground: str = "") -> list[str]:
+    """The hues a theme's surfaces may take instead of its accent's.
+
+    The image's ground first (what most of it is painted in), then its other base
+    colours — a garden picture can wear the sky on its surfaces and the gold on
+    its accents. Same 28° honesty rule as the seed row: a tone that is just a
+    shade of the accent, or of a tone already offered, is not a separate choice.
+    """
+    hue = lambda c: rgb_to_oklch(hex_to_rgb(c))[2]
+    taken, tones = [hue(accent)], []
+    for colour in ([ground] if ground else []) + seeds:
+        if any(_hue_distance(hue(colour), t) < SEED_MIN_HUE_DISTANCE for t in taken):
+            continue
+        taken.append(hue(colour))
+        tones.append(colour)
+    return tones
+
+
+def tone_swatch(tone: str) -> str:
+    """A tone as a swatch: its hue at the chroma it gives surfaces, at mid lightness."""
+    _, chroma, hue = rgb_to_oklch(hex_to_rgb(tone))
+    return oklch_to_hex(0.60, _family_chroma(chroma), hue)
+
+
 def seed_colour(mg: dict) -> str:
     """The colour a dump was built around, as the swatch for that candidate.
 
@@ -471,14 +540,97 @@ def source_character(mg: dict) -> tuple[float, float, float]:
     return hue, chroma, error_hue
 
 
+# Surface tint: how much colour the surfaces and text wear. `full` is the
+# calibrated look (and with the accent's own tone, byte-for-byte the theme the
+# engine always made); `subtle` is a fraction of it. `neutral` is graphite /
+# paper — but not chroma zero: an absolute grey beside a saturated accent is read
+# as the accent's complement (grey among magenta looks green), so the neutral
+# keeps a fixed trace of the tone, the same amount that holds a black-and-white
+# theme neutral. Absolute rather than a fraction, so it is equally faint on any
+# wallpaper. The contrast level still shapes the ramp on top.
+TINT_LEVELS = ("neutral", "subtle", "full")
+TINTS = {"subtle": 0.55, "full": 1.0}
+NEUTRAL_CHROMA = 0.012
+DEFAULT_TINT = "full"
+
+
+def _family_chroma(src_chroma: float) -> float:
+    return max(0.055, min(0.130, src_chroma * 0.45))
+
+
+# Saturation: how colourful the chromatic families are — the accents, VIVID
+# (which also carries the shell's icons), the ANSI wheel and the syntax colours
+# built on them. `balanced` is the calibrated theme, byte-for-byte what the
+# engine always made. The axis keeps the families' relation to one another, the
+# way Material's scheme variants do (tonal spot = calm, vibrant = colourful):
+#   muted   every family × MUTED_SCALE — the proportions are kept exactly;
+#   vivid   every slot travels the same share of ITS OWN headroom, up to the sRGB
+#           edge at its own lightness. Proportional scaling is impossible upward:
+#           VIVID already sits on the edge for most hues, so a family with room
+#           (the accent, the ANSI wheel) grows and VIVID barely moves — the order
+#           ACCENT < VIVID holds, primary never turns into the error colour.
+# Per slot, not per family: a dark container has far less room than its base
+# stop (dark amber is brown — chroma 0.087 at most), and one family-wide ceiling
+# made two steps land on the same container colour.
+# Surfaces and text (the tint axis), DANGER (an alarm keeps its salience) and
+# RGB (its own level setting) do not follow it.
+SATURATION_LEVELS = ("muted", "balanced", "vivid")
+DEFAULT_SATURATION = "balanced"
+MUTED_SCALE = 0.60
+VIVID_GAIN = 0.70
+SATURATION_SLOTS = (
+    ("ACCENT_CONTAINER", "ACCENT", "ACCENT_SOFT", "ACCENT_INK", "ON_ACCENT", "ON_ACCENT_CONTAINER",
+     "VIVID_CONTAINER", "VIVID", "VIVID_SOFT", "VIVID_INK", "ON_VIVID")
+    + tuple(f"HUE_{name}{variant}" for name in (*CANONICAL_HUES, "MAGENTA") for variant in ("", "_BRIGHT"))
+)
+
+
+def _vivid_chroma(src_chroma: float) -> float:
+    return max(0.120, min(0.260, src_chroma * 0.95))
+
+
+def _saturate(lightness: float, chroma: float, hue: float, saturation: str) -> float:
+    # From the chroma the slot actually shows, after the gamut: many requests
+    # (VIVID above all) ask for more than sRGB holds, and scaling the request
+    # would leave a muted VIVID pinned to the same edge as the balanced one.
+    if saturation == "balanced":
+        return chroma
+    shown = fit_chroma(lightness, chroma, hue)
+    if saturation == "muted":
+        return shown * MUTED_SCALE
+    return shown + VIVID_GAIN * (fit_chroma(lightness, 1.0, hue) - shown)
+
+
+def brand_fills(t: dict, hue: float, accent_c: float, vivid_c: float, saturation: str) -> dict[str, str]:
+    """The ACCENT and VIVID fills — one formula for build_pigments and the preview."""
+    fills = {}
+    for slot, key in (("ACCENT_CONTAINER", "container"), ("ACCENT", "base"), ("ACCENT_SOFT", "soft")):
+        lightness, chroma = t["accent_l"][key], accent_c * (0.56 if key == "soft" else 1.0)
+        fills[slot] = oklch_to_hex(lightness, _saturate(lightness, chroma, hue, saturation), hue)
+    for slot, key, factor in (
+        ("VIVID_CONTAINER", "container", 0.75),
+        ("VIVID", "base", 1.0),
+        ("VIVID_SOFT", "soft", 0.92),
+    ):
+        lightness = t["vivid_l"][key]
+        fills[slot] = oklch_to_hex(lightness, _saturate(lightness, vivid_c * factor, hue, saturation), hue)
+    return fills
+
+
 def build_pigments(
-    mg: dict, appearance: str, mono: bool = False, contrast: str = DEFAULT_CONTRAST
+    mg: dict,
+    appearance: str,
+    mono: bool = False,
+    contrast: str = DEFAULT_CONTRAST,
+    surface: str = "",
+    tint: str = DEFAULT_TINT,
+    saturation: str = DEFAULT_SATURATION,
 ) -> dict[str, str]:
     t = resolve_targets(appearance, contrast)
     hue, src_chroma, error_hue = source_character(mg)
 
-    accent_c = max(0.055, min(0.130, src_chroma * 0.45))
-    vivid_c = max(0.120, min(0.260, src_chroma * 0.95))
+    accent_c = _family_chroma(src_chroma)
+    vivid_c = _vivid_chroma(src_chroma)
     wheel_c = max(0.050, min(0.150, accent_c * 0.90))
     danger_scale = min(1.0, max(0.55, src_chroma / 0.20))
     # RGB (soft/medium/crisp): chroma requests for the hardware-lighting pigments
@@ -496,6 +648,32 @@ def build_pigments(
         # for tool output. Legibility comes from the lightness ramp either way.
         accent_c, vivid_c = 0.012, 0.030
         rgb_c = (0.025, 0.060, 0.100)
+    # The chromatic families at the chosen saturation, slot by slot. The surface
+    # tone keeps the calibrated accent_c; a black-and-white theme has no colour to
+    # saturate.
+    if mono:
+        saturation = DEFAULT_SATURATION
+
+    def chromatic(lightness: float, chroma: float, h: float) -> str:
+        return oklch_to_hex(lightness, _saturate(lightness, chroma, h, saturation), h)
+
+    # The tone the surfaces and text are painted in. By default it IS the accent —
+    # the single-hue theme W has always made. A separate tone splits the theme in
+    # two: the canvas, cards and text take one colour, the accents keep theirs
+    # (graphite with amber, slate with gold). The tone is a hue plus the chroma a
+    # theme built around it would carry, so a faint ground tone still reads.
+    tone_hue, tone_c = hue, accent_c
+    if surface:
+        _, surface_chroma_src, tone_hue = rgb_to_oklch(hex_to_rgb(surface))
+        tone_c = _family_chroma(surface_chroma_src)
+    # The tint scales the chroma the ramp ends up with — after the contrast
+    # level's cap AND after the gamut — not the one it starts from: scaled
+    # before, `subtle` reached the same ceiling as `full` (the soft level's cap,
+    # the narrow gamut of a pale light surface) and the two looked identical.
+    if tint == "neutral":
+        tone_c, tint_scale = NEUTRAL_CHROMA, 1.0
+    else:
+        tint_scale = TINTS[tint]
 
     # CANVAS is the end of the ramp — the root background behind everything. It
     # is the one "absolute" that has to flip with the appearance, whereas BLACK
@@ -505,14 +683,14 @@ def build_pigments(
     # white; the low-contrast levels lift it into the palette instead.
     c_floor, c_gain, c_cap = t["surface_c"]
 
-    def surface_chroma(ramp: float) -> float:
-        c = accent_c * (c_floor + c_gain * ramp) * 1.10
-        return c if c_cap is None else min(c, c_cap)
+    def surface_chroma(ramp: float, lightness: float) -> float:
+        c = tone_c * (c_floor + c_gain * ramp) * 1.10
+        return fit_chroma(lightness, c if c_cap is None else min(c, c_cap), tone_hue) * tint_scale
 
     pig: dict[str, str] = {
         "BLACK": "#000000",
         "WHITE": "#ffffff",
-        "CANVAS": oklch_to_hex(t["canvas_l"], surface_chroma(0.0), hue),
+        "CANVAS": oklch_to_hex(t["canvas_l"], surface_chroma(0.0, t["canvas_l"]), tone_hue),
     }
 
     # Surfaces: the brand hue, chroma growing with lightness so the canvas stays
@@ -522,23 +700,14 @@ def build_pigments(
     top = t["surface_l"][3]
     for i, lightness in enumerate(t["surface_l"]):
         ramp = lightness / top if appearance == "dark" else (1 - lightness) / (1 - top)
-        pig[f"SURFACE_{i}"] = oklch_to_hex(lightness, surface_chroma(ramp), hue)
+        pig[f"SURFACE_{i}"] = oklch_to_hex(lightness, surface_chroma(ramp, lightness), tone_hue)
 
-    for slot, key in (("ACCENT_CONTAINER", "container"), ("ACCENT", "base"), ("ACCENT_SOFT", "soft")):
-        chroma = accent_c * (0.56 if key == "soft" else 1.0)
-        pig[slot] = oklch_to_hex(t["accent_l"][key], chroma, hue)
-
-    for slot, key, factor in (
-        ("VIVID_CONTAINER", "container", 0.75),
-        ("VIVID", "base", 1.0),
-        ("VIVID_SOFT", "soft", 0.92),
-    ):
-        pig[slot] = oklch_to_hex(t["vivid_l"][key], vivid_c * factor, hue)
+    pig.update(brand_fills(t, hue, accent_c, vivid_c, saturation))
 
     for slot, key in (("TEXT_BRIGHT", "bright"), ("TEXT", "base"), ("TEXT_DIM", "dim"), ("TEXT_FAINT", "faint")):
         lightness = t["text_l"][key]
         distance = 1 - lightness if appearance == "dark" else lightness
-        pig[slot] = oklch_to_hex(lightness, min(accent_c, distance * 0.08), hue)
+        pig[slot] = oklch_to_hex(lightness, min(tone_c, distance * 0.08) * tint_scale, tone_hue)
 
     for slot, key, chroma in (
         ("DANGER_CONTAINER", "container", 0.073),
@@ -549,11 +718,11 @@ def build_pigments(
 
     for name, canonical in CANONICAL_HUES.items():
         tinted = _hue_pull(canonical, hue)
-        pig[f"HUE_{name}"] = oklch_to_hex(t["hue_l"]["normal"], wheel_c, tinted)
-        pig[f"HUE_{name}_BRIGHT"] = oklch_to_hex(t["hue_l"]["bright"], wheel_c, tinted)
+        pig[f"HUE_{name}"] = chromatic(t["hue_l"]["normal"], wheel_c, tinted)
+        pig[f"HUE_{name}_BRIGHT"] = chromatic(t["hue_l"]["bright"], wheel_c, tinted)
     # Magenta is the theme's own hue — the brand tie the `w` theme makes by hand.
-    pig["HUE_MAGENTA"] = oklch_to_hex(t["hue_l"]["normal"], max(wheel_c, vivid_c * 0.6), hue)
-    pig["HUE_MAGENTA_BRIGHT"] = oklch_to_hex(t["hue_l"]["bright"], max(wheel_c, vivid_c * 0.6), hue)
+    pig["HUE_MAGENTA"] = chromatic(t["hue_l"]["normal"], max(wheel_c, vivid_c * 0.6), hue)
+    pig["HUE_MAGENTA_BRIGHT"] = chromatic(t["hue_l"]["bright"], max(wheel_c, vivid_c * 0.6), hue)
 
     # RGB lighting (Hub -> Appearance -> Settings -> RGB level): a THIRD
     # calibration, deliberately separate from ACCENT/VIVID above. Those two are
@@ -638,8 +807,17 @@ CONTRAST_PAIRS = [
 ]
 
 
+# What the preview matrix carries for the non-default saturation steps: the
+# chromatic swatches the GUI's palette row shows, not the whole family. Every
+# saturated slot costs a contrast search per cell, and the ANSI pairs alone made
+# the matrix three times slower. Surfaces never move with the step and no other
+# pair reads these slots, so their pairs give exact values on their own.
+SATURATION_PREVIEW = ("ACCENT_CONTAINER", "ACCENT", "VIVID")
+SATURATION_PREVIEW_PAIRS = [p for p in CONTRAST_PAIRS if p[0] in SATURATION_PREVIEW]
+
+
 def enforce_contrast(
-    pig: dict[str, str], appearance: str, contrast: str = DEFAULT_CONTRAST
+    pig: dict[str, str], appearance: str, contrast: str = DEFAULT_CONTRAST, pairs: list = CONTRAST_PAIRS
 ) -> list[str]:
     """Nudge foregrounds until every declared pair clears its ratio.
 
@@ -653,7 +831,7 @@ def enforce_contrast(
     lighten = TARGETS[appearance]["lighten_fg"]
     scale = CONTRAST[appearance][contrast]["ratio"]
     notes = []
-    for fg, bg, base_target in CONTRAST_PAIRS:
+    for fg, bg, base_target in pairs:
         target = base_target * scale
         before = pig[fg]
         # The "on fill" foregrounds may go either way — they are chosen by
@@ -736,6 +914,11 @@ def render(
     contrast: str = DEFAULT_CONTRAST,
     seed: str = "",
     seed_index: int = 0,
+    surface: str = "",
+    tint: str = DEFAULT_TINT,
+    scheme: str = "",
+    mono: bool = False,
+    saturation: str = DEFAULT_SATURATION,
 ) -> str:
     out, seen = [], set()
     for line in template.splitlines():
@@ -788,12 +971,22 @@ def render(
     # and "make the whole thing again from scratch". It is also the marker that
     # says a theme.conf is generated at all — hand-authored themes have no such
     # line and `edit` refuses them rather than overwriting somebody's work.
+    #
+    # The scheme and the mono verdict are recorded too: `edit` re-reads a
+    # re-encode of the crop, and an image whose chroma sits near a threshold
+    # would otherwise flip scheme on a rebuild that only meant to change contrast.
+    settings = (f"# w-theme: seed-index={seed_index} seed={seed or 'auto'} contrast={contrast}"
+                f" surface={surface or 'accent'} tint={tint}")
+    if saturation != DEFAULT_SATURATION:  # absent = balanced: such a header is the one it always had
+        settings += f" saturation={saturation}"
+    if scheme:
+        settings += f" scheme={scheme} mono={int(mono)}"
     header = [
         f"# Generated by `w-theme new {name}` — do not hand-edit expecting it to survive",
         f"# a regeneration. Source wallpaper: {wallpaper}",
         "# Palette extracted with matugen (Material HCT) and mapped in OKLCH; every",
         "# foreground below clears its WCAG target against the surface it sits on.",
-        f"# w-theme: seed-index={seed_index} seed={seed or 'auto'} contrast={contrast}",
+        settings,
         "#",
     ]
     return "\n".join(header + out) + "\n"
@@ -848,7 +1041,16 @@ def main() -> int:
         q.add_argument("--mono", action="store_true", help="the source image carries no hue")
     r.add_argument("--appearance", choices=("dark", "light"), default="dark")
     r.add_argument("--contrast", choices=CONTRAST_LEVELS, default=DEFAULT_CONTRAST)
+    r.add_argument("--surface", default="", metavar="HEX", help="tone of the surfaces (default: the accent's)")
+    r.add_argument("--tint", choices=TINT_LEVELS, default=DEFAULT_TINT)
+    r.add_argument("--saturation", choices=SATURATION_LEVELS, default=DEFAULT_SATURATION)
+    r.add_argument("--scheme", default="", help="matugen scheme, recorded for a rebuild")
     j.add_argument("--current-appearance", default="")
+    # The image's ground tone (`dominant` reports it) joins every seed's tone list.
+    j.add_argument("--ground", default="", metavar="HEX")
+    j.add_argument("--current-surface", default="")
+    j.add_argument("--current-tint", default="")
+    j.add_argument("--current-saturation", default="")
 
     args = ap.parse_args()
 
@@ -858,11 +1060,13 @@ def main() -> int:
 
     if args.cmd == "dominant":
         with open(args.histogram, encoding="utf-8") as fh:
-            colour, chroma = dominant_colour(fh.read())
+            histogram = fh.read()
+        colour, chroma = dominant_colour(histogram)
         print(f"color={colour}")
         print(f"chroma={chroma:.4f}")
         print(f"scheme={scheme_for(chroma)}")
         print(f"mono={'1' if chroma < MONO_CHROMA else '0'}")
+        print(f"ground={ground_colour(histogram)}")
         return 0
 
     if args.cmd == "seeds":
@@ -876,42 +1080,98 @@ def main() -> int:
         return 0
 
     if args.cmd == "json":
-        seeds = []
-        for i, path in enumerate(args.matugen):
-            mg = load(path)
-            cells = {}
+        def matrix(mg: dict, surface: str = "", tint: str = DEFAULT_TINT) -> tuple[dict, dict]:
+            # The cell for one tone × tint, plus the preview swatches of the other
+            # saturation steps, which the GUI lays over the cell it has.
+            cells: dict = {}
+            steps: dict = {}
+            others = [] if args.mono else [s for s in SATURATION_LEVELS if s != DEFAULT_SATURATION]
+            hue, src_chroma, _ = source_character(mg)
             for appearance in ("dark", "light"):
-                levels = {}
+                cells[appearance] = {}
                 for level in CONTRAST_LEVELS:
-                    pig = build_pigments(mg, appearance, args.mono, level)
+                    pig = build_pigments(mg, appearance, args.mono, level, surface, tint)
                     enforce_contrast(pig, appearance, level)
-                    levels[level] = pig
-                cells[appearance] = levels
+                    cells[appearance][level] = pig
+                    for saturation in others:
+                        # Only the fills move; the surfaces their pairs read are this cell's.
+                        alt = dict(pig)
+                        alt.update(brand_fills(resolve_targets(appearance, level), hue,
+                                               _family_chroma(src_chroma), _vivid_chroma(src_chroma), saturation))
+                        enforce_contrast(alt, appearance, level, SATURATION_PREVIEW_PAIRS)
+                        steps.setdefault(saturation, {}).setdefault(appearance, {})[level] = {
+                            slot: alt[slot] for slot in SATURATION_PREVIEW}
+            return cells, steps
+
+        dumps = [load(path) for path in args.matugen]
+        # What a swatch shows: the colour a candidate's palette is built around,
+        # not the raw source (which may be near-black).
+        sources = [args.seed[i] if i < len(args.seed) else seed_colour(mg) for i, mg in enumerate(dumps)]
+        current_index = int(args.current_seed_index or 0)
+        current_surface = "accent"
+        seeds = []
+        for i, mg in enumerate(dumps):
+            # A black-and-white image has no tone to offer; its tint still applies.
+            tones = [] if args.mono else surface_tones(
+                sources[i], [s for j, s in enumerate(sources) if j != i], args.ground)
+            # A theme reopened on a tone the image no longer offers (a re-encode can
+            # drop the ground below its share floor) keeps that tone: it is listed
+            # rather than silently swapped for the accent on the next Apply.
+            want = args.current_surface
+            if i == current_index and want and want != "accent":
+                near = [c for c in tones if _hue_distance(
+                    rgb_to_oklch(hex_to_rgb(c))[2], rgb_to_oklch(hex_to_rgb(want))[2]) < SEED_MIN_HUE_DISTANCE]
+                if not near:
+                    tones.append(want)
+                current_surface = near[0] if near else want
+            # Saturation × tone × tint lives apart in `saturated` (empty for a
+            # black-and-white image, which has no colour to saturate).
+            tinted: dict = {}
+            saturated: dict = {}
+            for tone in [""] + tones:
+                for tint in TINT_LEVELS:
+                    cells, steps = matrix(mg, tone, tint)
+                    tinted.setdefault(tone or "accent", {})[tint] = cells
+                    if steps:
+                        saturated.setdefault(tone or "accent", {})[tint] = steps
+            plain = tinted["accent"].pop(DEFAULT_TINT)
             seeds.append({
                 "index": i,
-                # What the swatch shows: the colour this candidate's palette is
-                # built around, not the raw source (which may be near-black).
-                "source": args.seed[i] if i < len(args.seed) else seed_colour(mg),
-                "appearance": cells,
+                "source": sources[i],
+                # Accent tone at full tint: the theme the engine has always made.
+                "appearance": plain,
+                # Every other tone × tint. A ground tone is often near-black,
+                # which says nothing as a swatch, so each is also shown at mid
+                # lightness.
+                "tones": [{"id": tone, "swatch": tone_swatch(tone)} for tone in tones],
+                "tinted": tinted,
+                "saturated": saturated,
             })
-        out: dict = {"seeds": seeds}
+        out: dict = {"mono": args.mono, "seeds": seeds}
         if args.current_contrast or args.current_seed_index or args.current_appearance:
             out["current"] = {
                 "appearance": args.current_appearance or "dark",
                 "contrast": args.current_contrast or DEFAULT_CONTRAST,
-                "seed_index": int(args.current_seed_index or 0),
+                "seed_index": current_index,
             }
+            if args.current_surface or args.current_tint:
+                out["current"]["surface"] = current_surface
+                out["current"]["tint"] = args.current_tint or DEFAULT_TINT
+            if args.current_saturation:
+                out["current"]["saturation"] = args.current_saturation
         print(json.dumps(out, indent=2))
         return 0
 
-    pig = build_pigments(load(args.matugen), args.appearance, args.mono, args.contrast)
+    pig = build_pigments(load(args.matugen), args.appearance, args.mono, args.contrast,
+                         args.surface, args.tint, args.saturation)
     notes = enforce_contrast(pig, args.appearance, args.contrast)
 
     with open(args.template, encoding="utf-8") as fh:
         template = fh.read()
     try:
         rendered = render(template, pig, args.appearance, args.name, args.wallpaper,
-                          args.contrast, args.seed, args.seed_index)
+                          args.contrast, args.seed, args.seed_index,
+                          args.surface, args.tint, args.scheme, args.mono, args.saturation)
     except TemplateMismatch as exc:
         print(f"palette: {exc}", file=sys.stderr)
         return 1

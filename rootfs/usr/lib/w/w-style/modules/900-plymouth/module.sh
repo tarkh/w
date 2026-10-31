@@ -35,6 +35,14 @@ render_system() {
     -alpha on -compose DstOut -composite \
     "$PLYMOUTH_DIR/lock.png"
 
+  # Keypad glyph for the TPM2 PIN prompt — a 3×3 grid of rounded keys (squares, so it
+  # does not read as the round dots of the field above it). Same size and accent.
+  local keys=() kx ky
+  for ky in 8 25 42; do
+    for kx in 8 25 42; do keys+=(-draw "roundrectangle $kx,$ky $((kx + 13)),$((ky + 13)) 3,3"); done
+  done
+  magick -size 64x64 xc:none -fill "$W_PLYMOUTH_BAR" "${keys[@]}" "$PLYMOUTH_DIR/pin.png"
+
   # Render the active theme's logo (baseline fallback) into the Plymouth theme dir at
   # the size this machine's panel needs — the same on-screen size the wallpapers give
   # the mark baked into them, so it does not change size when the splash hands over to

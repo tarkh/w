@@ -456,6 +456,14 @@ preset_validate() {
         [[ -z "$val" ]] && continue
         [[ "$val" == laptop || "$val" == desktop ]] || errs+=("computer_type: '$val' is not laptop|desktop")
         continue ;;
+      disk_mode)                              # optional; wipe when omitted
+        [[ -z "$val" || "$val" == wipe ]] && continue
+        if [[ "$val" != free ]]; then
+          errs+=("disk_mode: '$val' is not wipe|free")
+        elif ! v_disk_mode "$val"; then
+          errs+=("disk_mode: free needs a GPT disk with a contiguous free block of ${FREE_MIN_GIB} GiB or more ('${ANSWERS[disk]:-}')")
+        fi
+        continue ;;
       packs)                                  # optional; each named bundle must exist
         [[ -z "$val" ]] && continue
         for b in $val; do
@@ -466,6 +474,11 @@ preset_validate() {
     [[ -n "$val" ]] || { errs+=("$var: missing (required)"); continue; }
     case "$var" in
       mode) [[ "$val" == stable || "$val" == edge ]] || errs+=("mode: '$val' is not stable|edge") ;;
+      encrypt)
+        [[ "$val" == yes || "$val" == no ]] || errs+=("encrypt: '$val' is not yes|no")
+        if [[ "$val" == no ]] && sb_enforcing; then
+          errs+=("encrypt: no is impossible while Secure Boot is enforcing (GRUB is not signed) — use yes, or turn Secure Boot off")
+        fi ;;
       disk) v_blockdev "$val" || errs+=("disk: '$val' is not a block device") ;;
     esac
     [[ "$type" == yesno && "$val" != yes && "$val" != no ]] && errs+=("$var: '$val' is not yes|no")

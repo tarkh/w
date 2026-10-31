@@ -1,13 +1,21 @@
-# w-i18n-src: 64833bc075ca777cdbb509536a264a0d9e550cb85854651ab5743cf611aa019f
+# w-i18n-src: c7e4e266a048f08958192d4dede12b2ae813767f13c703d0fc826993c2338d7c
 Использование: w-crypt <команда>
 
 Info: Управление факторами шифрования диска — авторазблокировка TPM2 и ключи восстановления.
 
 Команды:
-  status         Показать LUKS-устройство, слоты ключей и токены (TPM2/восстановление)
-  enroll-tpm     Занести авторазблокировку TPM2 (PCR: ${W_CRYPT_TPM2_PCRS}); раз спросит пароль
+  status [--porcelain]
+                 Показать LUKS-устройство, слоты ключей и токены (TPM2/восстановление);
+                  --porcelain: одна TSV-строка luks/tpm_device/tpm2/pcrs/recovery/reseal
+  enroll-tpm [--pin] [--no-secureboot]
+                 Занести авторазблокировку TPM2 (PCR: ${W_CRYPT_TPM2_PCRS}) взамен прежней;
+                  раз спросит пароль. --pin — ещё и PIN при каждой загрузке.
+                  Отказ, пока Secure Boot выключен: без него TPM отдаёт ключ
+                  любому загрузочному носителю (--no-secureboot — обойти)
   reenroll-tpm   Переустановить TPM2 под текущую загрузку (после смены прошивки/Secure Boot)
-  recovery-add   Создать и напечатать одноразовый ключ восстановления (хранить офлайн)
+  recovery-add [--replace]
+                 Создать и напечатать одноразовый ключ восстановления (хранить офлайн);
+                  --replace удаляет прежний ключ восстановления
   wipe-tpm       Убрать токен TPM2 (вернуться к разблокировке только паролем)
   help           Показать эту справку
 
@@ -15,6 +23,6 @@ Info: Управление факторами шифрования диска �
   0 Успех   1 Ошибка выполнения   2 Ошибка вызова
 
 Примеры:
-  w-crypt status
-  sudo w-crypt enroll-tpm
-  sudo w-crypt recovery-add
+  sudo w-crypt status
+  sudo w-crypt enroll-tpm --pin
+  sudo w-crypt recovery-add --replace

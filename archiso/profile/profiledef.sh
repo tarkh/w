@@ -22,6 +22,12 @@ bootmodes=('bios.syslinux'
            'uefi.systemd-boot')
 pacman_conf="pacman.conf"
 airootfs_image_type="squashfs"
+# Code signing of airootfs.sfs (checked at boot by cms_verify=y, see
+# scripts/iso-secureboot.sh): the one-off pair build-iso.sh makes in archiso/codesign/
+# for each build. Read here, not passed as `mkarchiso -c "cert key"` — that argument
+# holds a space, which sudo-rs matches against the root grant word by word.
+_w_cms="$(realpath -m "$(dirname "${BASH_SOURCE[0]}")/../codesign")"
+if [[ -f "$_w_cms/codesign.key" ]]; then cert_list=("$_w_cms/codesign.crt" "$_w_cms/codesign.key"); fi
 airootfs_image_tool_options=('-comp' 'xz' '-Xbcj' 'x86' '-b' '1M' '-Xdict-size' '1M')
 bootstrap_tarball_compression=('zstd' '-c' '-T0' '--auto-threads=logical' '--long' '-19')
 file_permissions=(
@@ -60,11 +66,14 @@ file_permissions=(
   ["/root/w/rootfs/usr/lib/w/w-kbdlight-boot"]="0:0:755"
   ["/root/w/rootfs/usr/lib/w/w-wait-notifications"]="0:0:755"
   ["/root/w/rootfs/usr/lib/w/w-snapshot-notify"]="0:0:755"
+  ["/root/w/rootfs/usr/lib/w/w-boot-otheros"]="0:0:755"
+  ["/root/w/rootfs/usr/lib/w/w-secureboot-stage"]="0:0:755"
   ["/root/w/rootfs/usr/lib/w/w-i18n"]="0:0:755"
   ["/root/w/rootfs/usr/lib/w/w-theme/palette.py"]="0:0:755"
   ["/root/w/rootfs/usr/lib/systemd/system-sleep/w-power"]="0:0:755"
   ["/root/w/rootfs/usr/lib/systemd/system-sleep/w-sensors"]="0:0:755"
   ["/root/w/rootfs/usr/lib/systemd/system-sleep/w-rgb"]="0:0:755"
+  ["/root/w/rootfs/usr/lib/systemd/system-sleep/w-secureboot"]="0:0:755"
   # mkinitcpio install + runtime hooks: sourced by name, but mkinitcpio's own
   # add_runscript re-installs the runtime one 755 into the image, and a 644
   # install hook is skipped outright — so the whole tree is executable by nature.
@@ -72,4 +81,6 @@ file_permissions=(
   ["/root/w/rootfs/usr/share/w/ai/skills/hyprland/install.sh"]="0:0:755"
   ["/root/w/rootfs/usr/share/w/ai/hosts/goose/plugins/w-guard/scripts/guard"]="0:0:755"
   ["/root/w/rootfs/etc/greetd/w-greeter-wrapper.sh"]="0:0:755"
+  # grub-mkconfig runs only the executable scripts in /etc/grub.d.
+  ["/root/w/rootfs/etc/grub.d/35_w-other-os"]="0:0:755"
 )

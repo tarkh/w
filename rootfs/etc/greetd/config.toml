@@ -2,5 +2,8 @@
 vt = 1
 
 [default_session]
-command = "sh -c 'exec env LIBSEAT_BACKEND=logind dbus-run-session start-hyprland -- -c /etc/greetd/hyprland.lua >/dev/null 2>&1'"
+# HYPRLAND_NO_SD_TARGET: since 0.57 Hyprland raises hyprland-session.target (and with
+# it graphical-session.target) itself — here that would start the whole per-user
+# graphical stack (hypridle, portals, PipeWire, W units) as the greeter user.
+command = "sh -c 'exec env LIBSEAT_BACKEND=logind HYPRLAND_NO_SD_TARGET=1 dbus-run-session start-hyprland -- -c /etc/greetd/hyprland.lua >/dev/null 2>&1'"
 user = "greeter"

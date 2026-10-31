@@ -10,7 +10,7 @@ description: >-
   Monitors and the night light are w-displays; reopening windows at login is w-session.
 sources:
   - path: .claude/library/package-hyprland.md
-    sha256: 5b41eca06b7f8c238033f578d12114de97d29b1db03938e01cbfda8423a05930
+    sha256: ae20e1fbc2ce69e471865de43c1957dd9b56b8ca50d15df64ab9e45af6147ad3
   - path: .claude/library/package-files.md
     sha256: 85da1d2fccfd07be804443763a7fdde37727878e1b6c85d3288413f72c23b504
   - path: .claude/library/quickshell.md

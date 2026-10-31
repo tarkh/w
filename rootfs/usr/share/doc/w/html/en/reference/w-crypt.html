@@ -33,10 +33,18 @@
 Info: Manage disk-encryption factors — TPM2 auto-unlock and recovery keys.
 
 Commands:
-  status         Show LUKS device, key slots and enrolled tokens (TPM2/recovery)
-  enroll-tpm     Enroll TPM2 auto-unlock (PCRs: ${W_CRYPT_TPM2_PCRS}); asks for the passphrase once
+  status [<span class="f">--porcelain</span>]
+                 Show LUKS device, key slots and enrolled tokens (TPM2/recovery);
+                  <span class="f">--porcelain</span>: one TSV row luks/tpm_device/tpm2/pcrs/recovery/reseal
+  enroll-tpm [<span class="f">--pin</span>] [<span class="f">--no-secureboot</span>]
+                 Enroll TPM2 auto-unlock (PCRs: ${W_CRYPT_TPM2_PCRS}), replacing an existing
+                  one; asks for the passphrase once. <span class="f">--pin</span> also asks for a PIN at
+                  every boot. Refused while Secure Boot is off: without it the TPM
+                  releases the key to any boot medium (<span class="f">--no-secureboot</span> overrides)
   reenroll-tpm   Re-seal TPM2 to the current boot state (after firmware/Secure Boot change)
-  recovery-add   Generate and print a one-time recovery key (store it offline)
+  recovery-add [<span class="f">--replace</span>]
+                 Generate and print a one-time recovery key (store it offline);
+                  <span class="f">--replace</span> removes the previous recovery key
   wipe-tpm       Remove the TPM2 token (revert to passphrase-only unlock)
   help           Show this help
 
@@ -44,9 +52,9 @@ Exit codes:
   0 Success   1 Runtime error   2 Usage error
 
 Examples:
-  <span class="w">w-crypt</span> status
-  sudo <span class="w">w-crypt</span> enroll-tpm
-  sudo <span class="w">w-crypt</span> recovery-add</code></pre>
+  sudo <span class="w">w-crypt</span> status
+  sudo <span class="w">w-crypt</span> enroll-tpm <span class="f">--pin</span>
+  sudo <span class="w">w-crypt</span> recovery-add <span class="f">--replace</span></code></pre>
 <p>This page is generated from the command's own help text (w-docs-refgen). The
 live version of the same text on a W machine: <code>w-crypt help</code>.</p>
 

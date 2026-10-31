@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# w-secureboot-stage — lay out the Secure Boot loaders on the ESP for the active mode.
+#
+# Helper, not a command: run by Limine's post.d/95-w-secureboot after every
+# limine.conf write (limine-update, limine-snapper-sync, w-kernel, the w-style axis),
+# by the pacman hook on limine/shim-signed upgrades, and by w-secureboot itself. Mode
+# lives in /var/lib/w/secureboot-mode, written only by w-secureboot; no mode file =
+# Secure Boot was never turned on here → nothing to do.
+#
+#   own  — sbctl's keys are in the firmware's db. limine-entry-tool already signs
+#          EFI/limine/limine_x64.efi (config hash enrolled); the removable fallback
+#          EFI/BOOT/BOOTX64.EFI becomes a byte copy of it. A hash-free fallback would
+#          be either unsigned (the firmware rejects it — a lost NVRAM entry means no
+#          boot) or signed, which is worse: it boots an edited limine.conf (the ESP is
+#          not encrypted) with the same signer in PCR7, so TPM2 hands out the disk key.
+#   shim — the firmware keeps its factory keys; sbctl's db cert sits in shim's MokList.
+#          Microsoft-signed shim (Fedora's, AUR shim-signed) loads grubx64.efi from its
+#          own directory, and shim refuses a second stage without a .sbat section —
+#          which upstream Limine does not carry. So grubx64.efi is Limine + .sbat + the
+#          enrolled config hash, signed with sbctl's db key. Laid out twice: EFI/W/
+#          (the firmware entry) and EFI/BOOT/ (the removable fallback, shim as
+#          BOOTX64.EFI). fbx64.efi is left out on purpose: without it shim boots
+#          grubx64.efi straight from the fallback path instead of re-creating entries.
+#
+# Never leaves a half-written loader: each file is built aside and moved into place,
+# and a loader that does not verify against sbctl's db key is not installed at all.
+
+set -euo pipefail
+
+MODE_FILE="/var/lib/w/secureboot-mode"
+SHIM_DIR="/usr/share/shim-signed"
+LIMINE_EFI="/usr/share/limine/BOOTX64.EFI"
+
+mode="$(cat "$MODE_FILE" 2>/dev/null || true)"
+[[ "$mode" == own || "$mode" == shim ]] || exit 0
+
+esp="/boot/efi"
+[[ -f /etc/default/limine ]] && esp="$(awk -F'"' '/^ESP_PATH=/{print $2}' /etc/default/limine)"
+esp="${esp:-/boot/efi}"
+conf="$esp/limine.conf"
+[[ -f "$conf" ]] || exit 0
+
+err() { echo "w-secureboot-stage: $*" >&2; }
+
+# $1 = built file, $2 = destination. Replace only when the content differs, via a
+# rename on the same filesystem so a power cut never leaves a truncated loader.
+put() {
+  cmp -s "$1" "$2" 2>/dev/null && return 0
+  mkdir -p "$(dirname "$2")"
+  cp "$1" "$2.w-new" && mv -f "$2.w-new" "$2"
+}
+
+# sbctl's signature check of one file, against its own db key. It exits 0 either way,
+# so the answer is the ✓ mark.
+signed() { sbctl verify "$1" 2>/dev/null | grep -q '✓'; }
+
+if [[ "$mode" == own ]]; then
+  src="$esp/EFI/limine/limine_x64.efi"
+  signed "$src" || { err "$src is not signed — fallback left as is"; exit 1; }
+  put "$src" "$esp/EFI/BOOT/BOOTX64.EFI"
+  exit 0
+fi
+
+# ── shim ──────────────────────────────────────────────────────────────────────
+[[ -f "$SHIM_DIR/shimx64.efi" && -f "$SHIM_DIR/mmx64.efi" ]] \
+  || { err "shim-signed is not installed ($SHIM_DIR)"; exit 1; }
+# Work on the ESP itself: sbctl sandboxes itself (landlock) away from /tmp, and the
+# final moves stay renames on one filesystem.
+work="$(mktemp -d -p "$esp" .w-stage.XXXXXX)"
+trap 'rm -rf "$work"' EXIT
+
+# Limine + .sbat (the recipe is shared with the install medium, see w-sbat-lib.sh).
+# shellcheck source=rootfs/usr/lib/w/w-sbat-lib.sh
+source /usr/lib/w/w-sbat-lib.sh
+ver="$(pacman -Q limine 2>/dev/null | awk '{print $2}' || true)"
+w_sbat_build "$LIMINE_EFI" "$work/grubx64.efi" "${ver:-unknown}" || { err "adding .sbat to Limine failed"; exit 1; }
+limine enroll-config "$work/grubx64.efi" "$(b2sum "$conf" | awk '{print $1}')" >/dev/null
+sbctl sign "$work/grubx64.efi" >/dev/null
+signed "$work/grubx64.efi" || { err "signing grubx64.efi failed"; exit 1; }
+
+for d in W BOOT; do
+  put "$work/grubx64.efi"     "$esp/EFI/$d/grubx64.efi"
+  put "$SHIM_DIR/mmx64.efi"   "$esp/EFI/$d/mmx64.efi"
+done
+put "$SHIM_DIR/shimx64.efi" "$esp/EFI/W/shimx64.efi"
+put "$SHIM_DIR/shimx64.efi" "$esp/EFI/BOOT/BOOTX64.EFI"
+sync -f "$esp/EFI/W/grubx64.efi"

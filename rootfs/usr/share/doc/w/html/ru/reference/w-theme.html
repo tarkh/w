@@ -53,12 +53,32 @@ Info: Переключение, создание и управление тем�
                             <span class="f">--seed-index</span> &lt;n&gt;          какой базовый цвет
                                                       изображения брать за основу
                                                       (0 = самый доминирующий)
+                            <span class="f">--tint</span> neutral|subtle|full
+                                                      сколько цвета у поверхностей
+                                                      и текста; neutral — графит/
+                                                      бумага с примесью тона, по
+                                                      умолчанию full
+                            <span class="f">--surface</span> &lt;тон&gt;           в какой цвет окрашены
+                                                      поверхности, акценты
+                                                      остаются своими: accent
+                                                      (по умолчанию), wallpaper
+                                                      (цвет, которым написана
+                                                      большая часть изображения),
+                                                      номер базового цвета или
+                                                      <span class="c">#rrggbb</span>
+                            <span class="f">--saturation</span> muted|balanced|vivid
+                                                      насколько красочны акценты,
+                                                      иконки и цвета терминала;
+                                                      фон сохраняет свою окраску;
+                                                      по умолчанию balanced
                             <span class="f">--scheme</span> &lt;тип matugen&gt;    по умолчанию: adaptive
                             <span class="f">--activate</span>                переключиться на неё сразу
                             <span class="f">--json</span>                    напечатать только матрицу
                                                       палитр, ничего не создавая:
                                                       каждый базовый цвет
-                                                      изображения × dark/light ×
+                                                      изображения × тон фона ×
+                                                      окраска × насыщенность ×
+                                                      dark/light ×
                                                       каждый уровень контраста
                                                       (превью для GUI; остальные
                                                       параметры тогда не важны,
@@ -96,7 +116,10 @@ Info: Переключение, создание и управление тем�
   <span class="w">w-theme</span> reset
   <span class="w">w-theme</span> new sunset <span class="f">--wallpaper</span> ~/Pictures/sunset.jpg <span class="f">--activate</span>
   <span class="w">w-theme</span> new garden <span class="f">--wallpaper</span> ~/Pictures/park.jpg <span class="f">--seed-index</span> 1 <span class="f">--contrast</span> low
+  <span class="w">w-theme</span> new dusk <span class="f">--wallpaper</span> ~/Pictures/dusk.jpg <span class="f">--tint</span> neutral
+  <span class="w">w-theme</span> new night <span class="f">--wallpaper</span> ~/Pictures/night.jpg <span class="f">--surface</span> wallpaper <span class="f">--tint</span> subtle
   sudo <span class="w">w-theme</span> new corporate <span class="f">--wallpaper</span> /srv/brand.png
+  <span class="w">w-theme</span> new amber <span class="f">--wallpaper</span> ~/Pictures/amber.jpg <span class="f">--saturation</span> vivid
   <span class="w">w-theme</span> edit sunset <span class="f">--contrast</span> low
   <span class="w">w-theme</span> rm sunset</code></pre>
 <p>Эта страница генерируется из собственной справки команды (w-docs-refgen). Живая

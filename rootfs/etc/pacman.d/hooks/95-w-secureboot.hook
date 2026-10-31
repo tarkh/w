@@ -1,0 +1,16 @@
+# Secure Boot loaders follow their packages: a new Limine (its pristine binary is
+# what grubx64.efi is built from) or a new shim (a fresh SBAT generation, a fix that
+# dbx may require) is laid out on the ESP right away instead of on the next
+# limine.conf write. Sorts after limine's own 80-limine-efi-deploy.hook. No Secure
+# Boot mode on this machine → the helper exits at once. See w-secureboot-stage.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = limine
+Target = shim-signed
+
+[Action]
+Description = Staging Secure Boot loaders (W)...
+When = PostTransaction
+Exec = /usr/lib/w/w-secureboot-stage

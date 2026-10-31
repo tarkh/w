@@ -3,10 +3,10 @@ title: Security
 section: guide
 category: system
 order: 3
-summary: What W enables out of the box — hardening, sudo-rs, firewall, encrypted DNS, keyring, firmware updates, fingerprint and Secure Boot controls.
+summary: What W enables out of the box — hardening, sudo-rs, firewall, encrypted DNS, keyring, firmware updates, fingerprint, disk encryption and Secure Boot.
 sources:
   - path: .claude/library/security.md
-    sha256: 3ec7c64f94e8053341ba52ded39be6b779d58ea1284c8db81f32c45f0697e12c
+    sha256: 85649ab384308d1c5a2bdf97aebd4dc077ea08025974c54bb7d939a270c2f0a5
 ---
 
 W enables a set of protections on every installation and gives you switches
@@ -55,12 +55,154 @@ mode wake`): the sensor lights up for a short window after locking, waking the
 machine or any activity while locked, then sleeps. The window is adjustable
 (10–300 s); the change applies from the next lock.
 
-## Secure Boot
+## Disk encryption and Secure Boot
 
-On encrypted installs W ships a two-phase Secure Boot setup: enroll the keys,
-reboot once, turn Secure Boot on in the firmware. **Hub → System → Security**
-walks through it (`w-secureboot` from a terminal). The installer does not turn
-it on automatically on purpose — the firmware requires steps outside the OS.
+The installer offers an encrypted disk first, and it is the recommended
+choice — especially on a laptop. The whole system partition is encrypted
+(LUKS2): a stolen laptop or a removed drive reveals nothing without the
+passphrase. Encryption does not protect a running, unlocked system — that is
+the job of the screen lock and the other layers on this page.
+
+**Why the passphrase is asked at every boot.** Until you choose otherwise,
+the passphrase is the only key. Automatic unlocking is only safe together with
+Secure Boot, so the installer turns it on only when Secure Boot is already on in
+the firmware, and only on a desktop (see *Installing with Secure Boot on*);
+everywhere else it stays your decision, made in the installed system.
+
+**Automatic unlock (Secure Boot + TPM2).** The TPM2 chip can hold the disk key
+and release it only to a boot chain it recognises. Without Secure Boot that
+check means nothing — the TPM would hand the key to any USB stick someone
+boots — so W enables the two in one order: Secure Boot first, then TPM2.
+
+**Secure Boot is switched on in two places.** The switch in the firmware setup
+(BIOS) alone does not make W boot: W first has to prepare its own chain — its
+key, and a signed boot loader that carries a fingerprint of its menu. The
+**Secure Boot** row in **Hub → System → Security** shows where the machine is
+and names the next step: prepare W, reboot, turn Secure Boot on in the firmware
+(the row can reboot straight into the firmware setup), finish. From a terminal
+it is `sudo w-secureboot enable`, run once before and once after the reboot.
+The way depends on the firmware:
+
+- **Factory keys (the usual case).** W boots through Microsoft-signed *shim*
+  and adds its own key with your confirmation: after the first step, reboot,
+  and the blue *Shim UEFI key management* menu opens by itself. Choose
+  **Enroll MOK → Continue → Yes**, type the one-time code the terminal printed
+  (it is not shown while you type), then **Reboot** — within 5 minutes, or the
+  firmware restarts the computer and the request is lost. Never choose
+  **Reset MOK**: it erases all enrolled keys. Windows started instead? Pick
+  **W** in the firmware's boot menu (F11/F12/Esc) and put it first in the
+  firmware's boot order. Afterwards turn Secure Boot on in the firmware if it
+  is not on yet, and finish enabling.
+  If the firmware does not trust Microsoft's third-party certificate (some
+  "Secured-core" laptops), W says so: turn on *Allow Microsoft 3rd-party UEFI
+  CA* in the firmware's Secure Boot settings.
+- **Firmware in Setup Mode** (you cleared its keys yourself). W enrolls its
+  own keys instead; reboot once, then finish.
+
+**Then automatic unlock, separately.** Turning Secure Boot on never adds
+automatic unlock by itself — that is the **Automatic unlock (TPM2)** row
+below it, locked until Secure Boot is on in W and in the firmware:
+
+- **TPM** — the disk opens without a question while the boot chain is W's.
+- **TPM + PIN** — the TPM still checks the boot chain, and asks for a short
+  PIN as well. The PIN prompt shows a keypad under the field. Forgot the PIN?
+  After three wrong ones the keypad turns into a lock: that prompt takes the
+  passphrase or the recovery key. The same lock appears straight away when the
+  boot chain changed. The passphrase typed into the keypad prompt counts as a
+  wrong PIN.
+- **Off** — the passphrase at every boot.
+
+Every choice asks for the current passphrase once, in a terminal. When the
+firmware or shim is updated — or Windows on the same computer installs
+Microsoft's Secure Boot updates, which it does only while Secure Boot is on —
+the TPM no longer recognises the chain: the disk asks for the passphrase once and the row offers **Re-seal**
+(`sudo w-crypt reenroll-tpm`). From a terminal: `sudo w-crypt enroll-tpm`
+(`--pin` for a PIN), `sudo w-crypt wipe-tpm` to turn it off.
+
+**Turning Secure Boot off** goes the other way round: the firmware first (with
+its factory keys W boots only through shim), then **Turn off in W** in the same
+row. It removes automatic unlock too — the passphrase is asked again.
+
+**Windows with BitLocker next to W.** The first way does not touch the
+firmware's keys, so Windows notices nothing. W's own keys change what
+BitLocker measures, and Windows asks for its recovery key once — have it at
+hand. Turning Secure Boot off in the firmware does the same.
+
+**The boot menu is sealed.** With Secure Boot on, the boot loader carries a
+fingerprint of its menu and refuses to start when the menu changes behind its
+back. W refreshes the fingerprint on its own changes and checks it again before
+every shutdown, reboot and hibernation, so even a hand edit is picked up. Only a
+power cut or a hard reset right after a change can leave it stale — the way
+back is in `RECOVERY.md` (*CHECKSUM MISMATCH FOR CONFIG FILE*).
+
+- **Worth it** on a desktop with a TPM2 chip: the disk stays unreadable once
+  removed from the machine, and you stop typing the passphrase.
+- **TPM + PIN** on a laptop you carry around: with TPM alone a stolen laptop
+  starts up to the login screen, and only the account password stands between
+  the thief and your files. With a PIN it stops before the disk opens, and the
+  TPM locks itself after a few wrong guesses — a short PIN is enough.
+- **Stay on the passphrase** when the machine has no TPM2, when you want the
+  key to exist only in your head, or when you often change firmware settings.
+
+Keep the passphrase even with automatic unlock: it is asked again whenever the
+firmware or Secure Boot changes. The **Recovery key** row (or
+`sudo w-crypt recovery-add`) adds a long printable key as a second spare: it is
+shown once, in the terminal, and **Replace** swaps it for a new one. It works
+wherever the passphrase does — typed into the lock prompt at boot, or to open
+the disk from a live USB stick — so it helps when the passphrase is forgotten,
+when the TPM no longer recognises the machine, or when the disk moves to another
+computer. Store both outside this computer.
+
+### Installing with Secure Boot on
+
+The W install medium starts with Secure Boot left on. It boots through
+Microsoft-signed *shim*, and shim trusts W's boot loader by its fingerprint,
+which you add once per downloaded image:
+
+1. Boot the medium. Shim does not know this image yet: `Verification failed`
+   appears, then a blue *Shim UEFI key management* screen. It waits only 10
+   seconds — press any key. Missed it: restart and try again.
+2. Choose **Enroll hash from disk**, the medium, then `EFI/BOOT/grubx64.efi`.
+   Before **Continue**, compare the hash MokManager shows with the *Secure Boot
+   hash* on the download page — that is what your firmware is about to trust.
+   Then **Continue → Yes → Reboot**. No password is needed.
+3. The medium now starts the installer. A newer image is a different file and
+   asks once more; an old fingerprint does no harm.
+
+With Secure Boot on, the whole medium is checked: an altered image stops before
+the installer starts. Firmware that trusts Windows only (some "Secured-core"
+laptops) refuses the medium outright — `Access Denied` or a Secure Boot violation
+screen. Turn on *Allow Microsoft 3rd-party UEFI CA* in its Secure Boot settings, or
+switch Secure Boot off for the installation; either way Windows with BitLocker asks
+for its recovery key once.
+
+With Secure Boot on, only the encrypted installation is offered, and the installer
+sets Secure Boot up for the installed system itself (the shim way above). One step
+is left for you, on the first boot after the installation:
+
+1. The last screen of the installer shows a one-time code. Reboot: the blue
+   *Shim UEFI key management* menu opens by itself.
+2. **Enroll MOK → Continue → Yes**, type the code (it is not shown while you
+   type). This adds the installed system's own key; without it W does not
+   start with Secure Boot on.
+3. **Delete MOK → Continue → Yes**, the same code. This removes the medium's
+   fingerprint you added to boot the installer: the installed W no longer needs
+   it, and leaving it would keep that public image trusted by your firmware. A
+   newer image has a different fingerprint anyway — the medium asks again if
+   you boot it later. If **Delete MOK** is not listed, skip this step.
+4. **Reboot.**
+
+Finish within 5 minutes — the firmware then restarts the computer and the
+request is lost. Never choose **Reset MOK**: it erases all enrolled keys. If
+the request was lost, the menu comes back after *Verification failed* with a
+10-second countdown — press any key, then **Enroll key from disk → EFI → W →
+W-MOK.cer → Continue → Yes → Reboot**, no code needed. The medium's
+fingerprint then stays; it does no harm.
+
+W then finishes the installation with Secure Boot on. On a desktop with a TPM2
+chip the disk unlocks by itself from then on; a laptop keeps asking for the
+passphrase — **Hub → System → Security → Automatic unlock** adds TPM + PIN (or
+TPM) if you want it there.
 
 ## Kernel controls
 

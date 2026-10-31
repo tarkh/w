@@ -8,7 +8,7 @@ sources:
   - path: .claude/library/w-ai.md
     sha256: baef962c84506c147b607eb1b4670ece3b3326ac7d5cecc7ca33ecdfd1e639f4
   - path: .claude/library/ai-integration.md
-    sha256: 171dd165f8bf454226de2d798cb878e0c53b5033332ed66060670941cd60d96d
+    sha256: d5e2664c74d2b979039f2f2cea12ff09d7fdbbe06f227477edc6f9fc80a1a086
   - path: .claude/library/pack-comfyui.md
     sha256: f155a4517e54b899507729281e67c65f19c043ec77355f42cc95e2b2ba32d804
   - path: .claude/library/pack-invokeai.md

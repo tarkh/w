@@ -1,0 +1,9 @@
+#!/bin/sh
+# W Linux — resuming from hibernation boots through Limine as well: a limine.conf that
+# no longer matches the hash enrolled into the Secure Boot loaders would halt that boot,
+# and the hibernated session with it. The same guard w-secureboot-guard.service runs at
+# shutdown; a no-op until w-secureboot turns Secure Boot on.
+[ "$1" = pre ] || exit 0
+case "$2" in hibernate|hybrid-sleep|suspend-then-hibernate) ;; *) exit 0 ;; esac
+[ -x /usr/bin/w-secureboot ] || exit 0
+exec /usr/bin/w-secureboot reenroll --if-stale

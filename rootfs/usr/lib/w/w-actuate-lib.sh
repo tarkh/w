@@ -292,6 +292,28 @@ w_actuate_main() {
       local kh="${1:-}"
       case "$kh" in on|off) CMD=(w-kernel harden "$kh") ;; *) die "hardening state must be on or off";; esac
       ;;
+    crypt-status)
+      # Read-only: the Hub's Security tab reads the disk-unlock factors (w-crypt status
+      # --porcelain — the LUKS header is root-only), once per tab entry, the same
+      # privileged read as snapshot-list.
+      (($#)) && die "crypt-status takes no arguments"
+      CMD=(w-crypt status --porcelain)
+      ;;
+    crypt)
+      # Disk-unlock factors (Hub System → Security). Everything but tpm-off asks for
+      # the LUKS passphrase (and a new PIN, or prints the recovery key) on a pty, so
+      # the Hub runs those inside w-term; tpm-off only wipes the token — runPrivileged.
+      local ca="${1:-}"
+      case "$ca" in
+        tpm-on)           CMD=(w-crypt enroll-tpm) ;;
+        tpm-pin)          CMD=(w-crypt enroll-tpm --pin) ;;
+        tpm-off)          CMD=(w-crypt wipe-tpm) ;;
+        tpm-reseal)       CMD=(w-crypt reenroll-tpm) ;;
+        recovery-add)     CMD=(w-crypt recovery-add) ;;
+        recovery-replace) CMD=(w-crypt recovery-add --replace) ;;
+        *) die "crypt action must be tpm-on, tpm-pin, tpm-off, tpm-reseal, recovery-add or recovery-replace" ;;
+      esac
+      ;;
     snapshot-list)
       # Read-only: the Hub's Rollback tab lists the snapshots it can roll back
       # to (w-rollback list --porcelain). Deliberately argument-less — starting

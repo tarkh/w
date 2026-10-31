@@ -135,16 +135,72 @@
     "ru": "Выбор диска"
   },
   "s_disk_prompt": {
-    "en": "Choose the installation target.\\n\\nALL DATA on the selected disk will be ERASED.",
-    "ru": "Выберите целевой диск установки.\\n\\nВСЕ ДАННЫЕ на выбранном диске будут УДАЛЕНЫ."
+    "en": "Choose the installation target.\\n\\nThe next step decides whether the disk is erased or W goes into its free space.",
+    "ru": "Выберите целевой диск установки.\\n\\nНа следующем шаге — стереть диск целиком или поставить W в свободное место."
+  },
+  "s_diskmode_title": {
+    "en": "Install Mode",
+    "ru": "Способ установки"
+  },
+  "s_diskmode_prompt": {
+    "en": "Free space keeps every existing partition (e.g. Windows) untouched; erasing destroys ALL DATA on the disk.\\n\\nNo free-space option? Shrink the Windows volume in Disk Management first: 40 GiB or more (40960 MB in the Shrink dialog). BitLocker: save the recovery key before installing.",
+    "ru": "Свободное место — все существующие разделы (например, Windows) остаются нетронутыми; стирание УДАЛИТ ВСЕ ДАННЫЕ на диске.\\n\\nНет пункта «свободное место»? Сначала сожмите том Windows в «Управлении дисками»: от 40 ГиБ (40960 МБ в окне «Сжать»). BitLocker: заранее сохраните ключ восстановления."
+  },
+  "s_diskmode_free": {
+    "en": "Into free space",
+    "ru": "В свободное место"
+  },
+  "s_diskmode_wipe": {
+    "en": "Erase the whole disk",
+    "ru": "Стереть весь диск"
+  },
+  "s_diskmode_free_for": {
+    "en": "for W, partitions kept",
+    "ru": "для W, разделы сохраняются"
+  },
+  "s_diskmode_wipe_for": {
+    "en": "for W, all data is erased",
+    "ru": "для W, все данные удаляются"
+  },
+  "disk_parts": {
+    "en": "partitions:",
+    "ru": "разделов:"
+  },
+  "disk_free": {
+    "en": "free",
+    "ru": "свободно"
+  },
+  "disk_empty": {
+    "en": "no partitions",
+    "ru": "без разделов"
+  },
+  "u_gib": {
+    "en": "GiB",
+    "ru": "ГиБ"
+  },
+  "u_mib": {
+    "en": "MiB",
+    "ru": "МиБ"
   },
   "s_encrypt_title": {
     "en": "Disk Encryption",
     "ru": "Шифрование диска"
   },
   "s_encrypt_prompt": {
-    "en": "Encrypt the disk with LUKS2 (Argon2id) and boot via Limine with snapshot support?\\n\\nNo  = standard install (GRUB, unencrypted).\\nYes = encrypted install (LUKS2 + Limine).",
-    "ru": "Зашифровать диск через LUKS2 (Argon2id) и загружаться через Limine со снапшот-загрузкой?\\n\\nНет = обычная установка (GRUB, без шифрования).\\nДа  = зашифрованная установка (LUKS2 + Limine)."
+    "en": "How should the disk be set up?\\n\\nEncrypted is recommended, especially on a laptop: without the passphrase the disk is unreadable. Unlocking without a passphrase (Secure Boot + TPM2) can be turned on later in Hub → Security.",
+    "ru": "Как подготовить диск?\\n\\nРекомендуется шифрование, особенно на ноутбуке: без пароль-фразы диск не прочитать. Разблокировку без пароля (Secure Boot + TPM2) можно включить позже в Хабе → Security."
+  },
+  "s_encrypt_yes": {
+    "en": "Encrypted — LUKS2 + Limine (recommended)",
+    "ru": "Зашифрованный — LUKS2 + Limine (рекомендуется)"
+  },
+  "s_encrypt_no": {
+    "en": "Unencrypted — GRUB (compatibility)",
+    "ru": "Без шифрования — GRUB (совместимость)"
+  },
+  "s_encrypt_yes_sb": {
+    "en": "Encrypted — LUKS2 + Limine (the only choice under Secure Boot)",
+    "ru": "Зашифрованный — LUKS2 + Limine (единственный при Secure Boot)"
   },
   "s_luks_title": {
     "en": "Disk Passphrase",
@@ -258,6 +314,10 @@
   "pass_mismatch": {
     "en": "Passwords do not match or are empty. Try again.",
     "ru": "Пароли не совпадают или пусты. Попробуйте снова."
+  },
+  "err_diskmode_free": {
+    "en": "Install into free space is impossible: the chosen disk has no free block of 40 GiB or more.",
+    "ru": "Установка в свободное место невозможна: на выбранном диске нет свободной области от 40 ГиБ."
   },
   "err_invalid": {
     "en": "Invalid value. Try again.",
@@ -381,16 +441,36 @@
     "ru": "Установка завершена."
   },
   "done_reboot": {
-    "en": "Remove the installation media, then reboot.\\n  The rest of the setup finishes automatically on first boot.",
-    "ru": "Извлеките установочный носитель, затем перезагрузитесь.\\n  Остальная настройка завершится автоматически при первой загрузке."
+    "en": "Remove the installation media, then reboot.\\n  The rest of the setup finishes by itself on first boot.",
+    "ru": "Извлеките установочный носитель, затем перезагрузитесь.\\n  Остальная настройка завершится сама при первой загрузке."
   },
   "done_luks_notice": {
-    "en": "Your disk is encrypted: on the next boot you will be asked to enter\\n  the decryption passphrase you set during installation before W can start.",
-    "ru": "Диск зашифрован: при следующей загрузке потребуется ввести пароль\\n  расшифровки диска, заданный при установке, — без него W не запустится."
+    "en": "Your disk is encrypted: the next boot asks for the passphrase\\n  you set during installation before W can start.",
+    "ru": "Диск зашифрован: при следующей загрузке нужно ввести пароль\\n  расшифровки, заданный при установке, — без него W\\n  не запустится."
   },
   "done_secureboot_notice": {
-    "en": "Secure Boot and TPM2 disk auto-unlock (booting without typing the\\n  passphrase) are turned on from Hub → Security once installed, in that order.",
-    "ru": "Secure Boot и авторазблокировку диска через TPM2 (загрузка без ввода\\n  пароля) включает Хаб → Security в установленной системе — в этом порядке."
+    "en": "Secure Boot and TPM2 disk auto-unlock (booting without typing\\n  the passphrase) are turned on from Hub → Security once\\n  installed, in that order.",
+    "ru": "Secure Boot и авторазблокировку диска через TPM2 (загрузка\\n  без ввода пароля) включает Хаб → Security в установленной\\n  системе — в этом порядке."
+  },
+  "done_mok_notice": {
+    "en": "Secure Boot is on. One step is left for you: on the next boot\\n  the blue \"Shim UEFI key management\" menu opens by itself. It\\n  adds W's key to the firmware (without it W does not start)\\n  and removes the installer's fingerprint, which is no longer\\n  needed. Both steps ask for the code below:\\n\\n    1. Enroll MOK → Continue → Yes → type the code\\n    2. Delete MOK → Continue → Yes → the same code (if listed)\\n    3. Reboot",
+    "ru": "Secure Boot включён. Остался один шаг: при следующей загрузке\\n  само откроется синее меню «Shim UEFI key management». Оно\\n  добавит в прошивку ключ W (без него W не запустится) и удалит\\n  отпечаток установщика — он больше не нужен. Оба шага\\n  спрашивают код ниже:\\n\\n    1. Enroll MOK → Continue → Yes → введите код\\n    2. Delete MOK → Continue → Yes → тот же код (если есть)\\n    3. Reboot"
+  },
+  "done_mok_code": {
+    "en": "One-time code:",
+    "ru": "Одноразовый код:"
+  },
+  "done_mok_fallback": {
+    "en": "The code is not shown as you type. Finish within 5 minutes,\\n  or the computer restarts and the request is lost. Never\\n  choose \"Reset MOK\" — it erases all keys.\\n\\n  Request lost? After \"Verification failed\" press any key\\n  within 10 s, then: Enroll key from disk → EFI → W →\\n  W-MOK.cer → Continue → Yes → Reboot (no code needed).",
+    "ru": "Код при вводе не отображается. Уложитесь в 5 минут, иначе\\n  компьютер перезагрузится и запрос пропадёт. Никогда не\\n  выбирайте «Reset MOK» — он стирает все ключи.\\n\\n  Запрос пропал? После «Verification failed» нажмите любую\\n  клавишу в течение 10 с, затем: Enroll key from disk → EFI →\\n  W → W-MOK.cer → Continue → Yes → Reboot (код не нужен)."
+  },
+  "done_sb_tpm_notice": {
+    "en": "After that the disk unlocks by itself (TPM2); the passphrase\\n  is asked only if the boot chain changes.",
+    "ru": "После этого диск открывается сам (TPM2); пароль понадобится,\\n  только если изменится цепочка загрузки."
+  },
+  "done_sb_luks_notice": {
+    "en": "The disk keeps asking for its passphrase at every boot. TPM2\\n  auto-unlock can be added later: sudo w-crypt enroll-tpm",
+    "ru": "Пароль диска по-прежнему спрашивается при каждой загрузке.\\n  Авторазблокировку через TPM2 можно добавить позже:\\n  sudo w-crypt enroll-tpm"
   },
   "reboot": {
     "en": "Reboot",

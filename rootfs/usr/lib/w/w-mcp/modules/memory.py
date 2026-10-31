@@ -9,11 +9,12 @@ import hashlib
 import json
 import re
 import sqlite3
+import threading
 import urllib.error
 import urllib.request
 from typing import Annotated, Literal
 
-from core import MEM_TYPES, MEMORY_DB, MEMORY_DIR, _ai_conf, tool
+from core import MEM_TYPES, MEMORY_DB, MEMORY_DIR, _ai_conf, serialized, tool
 from core import desc as pdesc
 
 DOMAIN = "shared"
@@ -29,6 +30,13 @@ _RRF_K = 60               # reciprocal-rank-fusion constant (score = Σ 1/(K+ran
 
 
 # ── Memory store internals ────────────────────────────────────────────────────
+# Every path that picks a slug and writes a fact file, and every index sync,
+# runs under one in-process lock: sync tools execute in SDK worker threads, and
+# two concurrent w_task_add with non-ASCII texts both claimed the free slug
+# `fact` and one task was lost. Re-entrant because the writers call _mem_sync.
+# Two *processes* (two hosts) still meet only at sqlite's WAL + busy_timeout.
+_STORE_LOCK = threading.RLock()
+
 def _slugify(text, fallback="fact"):
     s = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
     return s[:60].strip("-") or fallback
@@ -75,6 +83,7 @@ def _mem_conn():
     return conn
 
 
+@serialized(_STORE_LOCK)
 def _mem_sync(conn):
     """Reconcile the FTS index with memory/*.md on disk (files are the source of
     truth; this catches edits from any host or the user's own hand). Also drives
@@ -256,6 +265,7 @@ def _mem_resolve_slug(name, description):
     return _mem_unique_slug(_slugify(description), lambda fm: fm.get("description", "") == desc)
 
 
+@serialized(_STORE_LOCK)
 def _mem_write_fact(name, description, type_, body):
     """Write/overwrite a fact file (frontmatter + body) and reindex it."""
     slug = _mem_resolve_slug(name, description)
@@ -316,6 +326,7 @@ def _mem_unique_task_slug(description):
     )
 
 
+@serialized(_STORE_LOCK)
 def _mem_task_add(content, due=""):
     if not content.strip():
         return "(nothing to store: content is empty)"
@@ -359,6 +370,7 @@ def _mem_task_list(status="open"):
     return "\n".join(out)
 
 
+@serialized(_STORE_LOCK)
 def _mem_task_done(slug):
     slug = _slugify(slug)
     path = MEMORY_DIR / f"{slug}.md"
@@ -463,6 +475,7 @@ def _mem_list():
     return "\n".join(f"[{t}] {s}: {d}" for s, t, d in rows)
 
 
+@serialized(_STORE_LOCK)
 def _mem_rm(slug):
     path = MEMORY_DIR / f"{_slugify(slug)}.md"
     if not path.is_file():

@@ -78,7 +78,7 @@ W machine with `w-info`.
 - [`w-reset`](reference/w-reset.md) — Force-restore any W module's or bundle's config to its default.
 - [`w-rollback`](reference/w-rollback.md) — Roll the system back to a btrfs snapshot, on either boot path.
 - [`w-screenshot`](reference/w-screenshot.md) — Capture the screen — region/window/output, annotate/copy/save.
-- [`w-secureboot`](reference/w-secureboot.md) — Set up and manage Secure Boot (sbctl keys + Limine hash).
+- [`w-secureboot`](reference/w-secureboot.md) — Set up and manage Secure Boot (sbctl keys or shim + MOK, Limine hash).
 - [`w-session`](reference/w-session.md) — Remember and restore the graphical session (windows, workspaces, split layout).
 - [`w-ssh`](reference/w-ssh.md) — Choose the session's SSH agent and generate per-host key selectors from it.
 - [`w-style`](reference/w-style.md) — Render the active theme across all themed subsystems.

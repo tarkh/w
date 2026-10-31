@@ -25,13 +25,16 @@
 # A card says what is being waited for; clicking it (or a save dialog's Cancel
 # followed by that click) abandons the exit, and nothing is ever forced.
 #
-# Usage: w-session-exit <logout|reboot|shutdown>
+# `firmware` is a reboot into the firmware setup (Hub → System → Security: the Secure
+# Boot switch lives there) — the same graceful exit, only the last step differs.
+#
+# Usage: w-session-exit <logout|reboot|shutdown|firmware>
 set -uo pipefail
 
 action=${1:-}
 case "$action" in
-  logout|reboot|shutdown) ;;
-  *) echo "Usage: w-session-exit <logout|reboot|shutdown>" >&2; exit 2 ;;
+  logout|reboot|shutdown|firmware) ;;
+  *) echo "Usage: w-session-exit <logout|reboot|shutdown|firmware>" >&2; exit 2 ;;
 esac
 
 # Detached by construction, because the terminal this may have been typed in is
@@ -75,4 +78,5 @@ case "$action" in
   logout)   exec uwsm stop ;;
   reboot)   exec systemctl reboot ;;
   shutdown) exec systemctl poweroff ;;
+  firmware) exec systemctl reboot --firmware-setup ;;
 esac

@@ -24,7 +24,8 @@ mod_power() {
   # enable mirrors w-power-monitor: every login user's uwsm session raises
   # graphical-session.target and must get its own hypridle, not just the user active
   # during apply. The greeter's hypridle is a separate exec'd process in its own
-  # session (never raises graphical-session.target) -- untouched by this.
+  # session, which never raises graphical-session.target (HYPRLAND_NO_SD_TARGET in
+  # /etc/greetd/config.toml) -- untouched by this.
   systemctl --global enable hypridle.service 2>/dev/null || true
 
   # First apply detects the machine mode once (chassis / DMI / battery) and seeds the

@@ -10,6 +10,10 @@
 #      airootfs/root — the same payload mod_firstboot later copies onto the
 #      installed target, baked into the ISO itself this time since there is no
 #      virtiofs share on real hardware.
+# And one after it: scripts/iso-secureboot.sh swaps systemd-boot for the Secure
+# Boot chain (shim → Limine pinned by hashes → cms_verify of airootfs.sfs, see its
+# header). The CMS pair that chain ends in lives for this one build only: made
+# before mkarchiso, its key destroyed on exit, never printed.
 # Run as your normal user (yay must NOT be built as root); mkarchiso itself is
 # invoked with sudo only for its own step.
 #
@@ -86,6 +90,7 @@ source "$SCRIPT_DIR/install/lib/aurbuild.sh"
 [[ -d "$PROFILE" ]] || die "archiso profile not found at $PROFILE"
 command -v mkarchiso &>/dev/null || die "mkarchiso not found — pacman -S --needed archiso"
 command -v makepkg   &>/dev/null || die "makepkg not found — pacman -S --needed base-devel"
+command -v openssl   &>/dev/null || die "openssl not found — pacman -S --needed openssl"
 
 # ── 1. Pre-build AUR packages into w-repo ─────────────────────────────────────
 # This is NOT a general AUR cache — do NOT wire it up to packages/aur.txt (that
@@ -108,7 +113,12 @@ command -v makepkg   &>/dev/null || die "makepkg not found — pacman -S --neede
 #     NOTE: do NOT add limine-entry-tool — limine-mkinitcpio-hook already bundles
 #     it (provides+conflicts=limine-entry-tool); installing both would conflict.
 #     Cost: the two `!strip` binaries add ~60-120 MB to the ISO.
-PREBUILD_AUR_PKGS=(yay limine-mkinitcpio-hook limine-snapper-sync)
+#
+#   shim-signed   (encrypted/Limine path only)
+#     Fedora's Microsoft-signed shim, repackaged — no compile, it only unpacks an
+#     RPM. Prebuilt so Secure Boot on the firmware's factory keys (w-secureboot,
+#     w-secureboot-stage) needs no AUR round-trip on the target. ~2 MB.
+PREBUILD_AUR_PKGS=(yay limine-mkinitcpio-hook limine-snapper-sync shim-signed)
 
 rm -rf "$W_REPO_SRC"
 mkdir -p "$W_REPO_SRC"
@@ -139,7 +149,7 @@ stage_broadcom_wl() {
 for x in json.load(sys.stdin)["results"]:
     print("\t".join([x["repo"], "%s-%s" % (x["pkgver"], x["pkgrel"]), x["filename"]]))')" \
     || die "Could not ask archlinux.org for broadcom-wl-dkms (network?)."
-  [[ -n "$rows" ]] || die "broadcom-wl-dkms is in no repository any more — see COPYING/README."
+  [[ -n "$rows" ]] || die "broadcom-wl-dkms is in no repository any more — see INSTALL.md."
 
   while IFS=$'\t' read -r repo ver file; do
     [[ -n "$repo" ]] || continue
@@ -251,6 +261,24 @@ PY
   fi
 fi
 
+# The one-off CMS pair: mkarchiso signs airootfs.sfs with it and bakes the cert into
+# the initramfs as /codesign.crt (cms_verify=y). No key outlives the build, so no
+# key can leak — the next image simply carries another cert. profiledef.sh picks the
+# pair up from this fixed place (cert_list), so the mkarchiso command line — the one
+# ci/w-release-gate.sudoers grants — stays what it always was.
+CMS_DIR="$PROJECT_DIR/archiso/codesign"
+trap '[[ -f "$CMS_DIR/codesign.key" ]] && shred -u "$CMS_DIR/codesign.key"; rm -rf "$CMS_DIR"' EXIT
+rm -rf "$CMS_DIR"
+(umask 077; mkdir -p "$CMS_DIR"
+ openssl req -x509 -newkey rsa:3072 -nodes -days 7 -subj "/CN=W install medium (one build)" \
+   -keyout "$CMS_DIR/codesign.key" -out "$CMS_DIR/codesign.crt" 2>/dev/null) \
+  || die "Generating the one-off CMS code-signing pair failed."
+
 info "Building W Linux ISO..."
 $SUDO mkarchiso -v -w "$WORK" -o "$OUT" "$BUILD_PROFILE"
-info "ISO ready in $OUT"
+shred -u "$CMS_DIR/codesign.key"
+
+ISO="$(find "$OUT" -maxdepth 1 -name '*.iso' -newer "$CMS_DIR/codesign.crt" -print -quit)"
+[[ -n "$ISO" ]] || die "mkarchiso left no new ISO in $OUT"
+W_REPO_SRC="$W_REPO_SRC" bash "$SCRIPT_DIR/iso-secureboot.sh" "$ISO"
+info "ISO ready: $ISO"

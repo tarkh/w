@@ -10,7 +10,9 @@
 load helpers
 
 setup() {
-  # tui.sh reads steps.conf relative to its own dir — the real file.
+  # tui.sh reads steps.conf relative to its own dir — the real file. utils.sh
+  # carries sb_enforcing (preset_validate's Secure Boot rule).
+  source "$REPO/scripts/install/lib/utils.sh"
   source "$REPO/scripts/install/lib/tui.sh"
   die() { echo "die: $*" >&2; exit 1; }
 
@@ -24,6 +26,10 @@ setup() {
   # stub it host-agnostic/offline, like the shadows above; presence of a value
   # is already enforced by preset_validate's own required-field check.
   v_edge_repo() { [[ -n "$1" ]]; }
+  # v_disk_mode (install.sh) probes the disk's free space; /dev/roomy stands for a
+  # disk that has a big enough free block, anything else for one that does not.
+  v_disk_mode() { [[ "$1" == wipe || ( "$1" == free && "${ANSWERS[disk]}" == /dev/roomy ) ]]; }
+  FREE_MIN_GIB=40
   # steps.conf conditions reference live-ISO helpers; provide deterministic
   # stubs (no Wi-Fi step, packs step visible so its bundle check is exercised).
   net_has_wifi()    { return 1; }
@@ -31,7 +37,12 @@ setup() {
   SRC="$REPO"
 
   PRESET="$BATS_TEST_TMPDIR/preset.conf"
+  # Firmware seam: no SecureBoot variable = not enforcing, whatever the host runs.
+  export W_EFIVARS="$BATS_TEST_TMPDIR/efivars"; mkdir -p "$W_EFIVARS"
 }
+
+# The efivar as the firmware writes it: 4 attribute bytes, then the state byte.
+sb_firmware() { printf '\x06\x00\x00\x00\x0'"$1" > "$W_EFIVARS/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c"; }
 
 # Minimal complete answers for the plain (unencrypted) path.
 fill_valid_answers() {
@@ -124,6 +135,18 @@ fill_valid_answers() {
   [[ "$output" != *luks_pass* ]]
 }
 
+@test "preset_validate: encrypt=no is refused while Secure Boot enforces" {
+  fill_valid_answers
+  sb_firmware 1
+  run preset_validate
+  [[ "$status" -ne 0 ]]
+  [[ "$output" == *"encrypt: no is impossible while Secure Boot is enforcing"* ]]
+
+  sb_firmware 0
+  run preset_validate
+  [[ "$status" -eq 0 ]]
+}
+
 @test "preset_validate: bad enum values are rejected" {
   fill_valid_answers
   ANSWERS[mode]=edgy
@@ -169,4 +192,31 @@ fill_valid_answers() {
 
   W_UNATTENDED=1 answers_serialize "$PRESET"
   grep -q '^unattended=1$' "$PRESET"
+}
+
+@test "preset_validate: disk_mode is optional, wipe|free, free needs room" {
+  fill_valid_answers
+  run preset_validate; [[ "$status" -eq 0 ]]          # omitted → wipe
+
+  ANSWERS[disk_mode]=wipe
+  run preset_validate; [[ "$status" -eq 0 ]]
+
+  ANSWERS[disk_mode]=manual
+  run preset_validate
+  [[ "$status" -ne 0 && "$output" == *"disk_mode: 'manual' is not wipe|free"* ]]
+
+  ANSWERS[disk_mode]=free
+  run preset_validate
+  [[ "$status" -ne 0 && "$output" == *"disk_mode: free needs a GPT disk"* ]]
+
+  ANSWERS[disk]=/dev/roomy
+  run preset_validate; [[ "$status" -eq 0 ]]
+}
+
+@test "preset_validate: shipped dual-boot sample passes" {
+  answers_load "$REPO/vm/e2e/preset-dualboot.sample.conf"
+  ANSWERS[disk]=/dev/roomy        # the real sample names /dev/vda
+  run preset_validate
+  [[ "$status" -eq 0 ]]
+  [[ "${ANSWERS[disk_mode]}" == free && "${ANSWERS[encrypt]}" == yes ]]
 }

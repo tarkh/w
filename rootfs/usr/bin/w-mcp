@@ -8,7 +8,7 @@
 # that cannot read SKILL.md natively. One knowledge source, two channels.
 #
 # ARCHITECTURE — a hub, not a monolith. This file is a thin orchestrator (like
-# bin/w-style): it creates the FastMCP server, discovers every domain module under
+# bin/w-style): it creates the MCPServer server, discovers every domain module under
 # lib/w/w-mcp/modules/<domain>.py, and calls each module's register(mcp) to attach
 # its tools. The per-domain tool logic lives in those modules; the shared SDK
 # (command runner, actuation plumbing, the tool() registration wrapper) lives in
@@ -26,7 +26,9 @@
 #
 # Exit codes: 0 success · 1 runtime error · 2 usage error.
 
+import asyncio
 import importlib
+import importlib.metadata
 import os
 import sys
 from pathlib import Path
@@ -34,14 +36,41 @@ from pathlib import Path
 
 def _import_mcp():
     """python-mcp is needed only to SERVE; the CLI fronts (memory/task/skills/
-    instructions) run without it, so dev hosts and CI can exercise them."""
-    global FastMCP, FunctionResource
+    instructions) run without it, so dev hosts and CI can exercise them.
+
+    The gate is the API, not a version number: w-mcp needs the 2.x server package
+    (mcp.server.mcpserver) and refuses loudly without it, naming what IS
+    installed. No upper bound — a future major that keeps the API keeps serving;
+    one that breaks it fails the wire test (ai-protocol.bats) in the nightly
+    canary, which installs a fresh python-mcp, before it reaches a user."""
+    global MCPServer, FunctionResource
     try:
-        from mcp.server.fastmcp import FastMCP
-        from mcp.server.fastmcp.resources import FunctionResource
-    except ModuleNotFoundError:
-        sys.stderr.write("w-mcp: python-mcp is not installed (pacman -S python-mcp)\n")
+        from mcp.server.mcpserver import MCPServer
+        from mcp.server.mcpserver.resources import FunctionResource
+    except ImportError as e:
+        try:
+            have = f"python-mcp {importlib.metadata.version('mcp')} is installed"
+        except importlib.metadata.PackageNotFoundError:
+            have = "python-mcp is not installed"
+        sys.stderr.write(f"w-mcp: {have}, but w-mcp needs the python-mcp 2.x server API "
+                         f"({e}); fix: pacman -Syu python-mcp\n")
         sys.exit(1)
+
+
+def build_server(instructions):
+    """The MCPServer, with W's wire hygiene on the public surface: list_tools()
+    is what both tools/list and --selftest read, so stripping pydantic's schema
+    titles there (core.strip_titles) needs nothing private from the SDK.
+    `version` is the W release this rootfs carries (/etc/os-release
+    IMAGE_VERSION, stamped by publish.sh) — python-mcp ≥ 2 sends "" otherwise,
+    and the SDK's own version would tell the host nothing about the server."""
+    class WServer(MCPServer):
+        async def list_tools(self):
+            return [t.model_copy(update={"input_schema": core.strip_titles(t.input_schema)})
+                    for t in await super().list_tools()]
+
+    version = core.kv_file(os.environ.get("W_OS_RELEASE", "/etc/os-release"), "IMAGE_VERSION", "")
+    return WServer("w-mcp", version=version, instructions=instructions)
 
 # ── Module tree ───────────────────────────────────────────────────────────────
 # The SDK (core.py) and the domain modules live under this dir; W_MCP_LIB lets
@@ -54,10 +83,10 @@ import contract  # mechanical --selftest contract checks
 import core  # import after sys.path is set up
 
 # Created lazily in main(), once the session-start memory context (INSTRUCTIONS_HEADER
-# + modules.memory._mem_context()) is known — FastMCP needs it at construction time.
+# + modules.memory._mem_context()) is known — MCPServer needs it at construction time.
 mcp = None
 
-# The session-start block passed as FastMCP's `instructions` kwarg, which MCP
+# The session-start block passed as MCPServer's `instructions` kwarg, which MCP
 # hosts (Goose confirmed) fold into the session's system prompt — the
 # deterministic, cross-host delivery channel for everything that must be in
 # context before the first turn (ai-integration.md §1/§8). Three parts, stable
@@ -284,13 +313,14 @@ def main():
     _import_mcp()
     core.PROFILE = core.resolve_profile()   # decides how much surface modules expose
     global mcp
-    mcp = FastMCP("w-mcp", instructions=build_instructions(skills, memory))
+    mcp = build_server(build_instructions(skills, memory))
     modules = load_modules()
     resources = register_knowledge(skills)
     if arg == "--selftest":
-        tools = sorted(t.name for t in mcp._tool_manager.list_tools())
-        prompts = sorted(p.name for p in mcp._prompt_manager.list_prompts())
+        tools = sorted(t.name for t in asyncio.run(mcp.list_tools()))
+        prompts = sorted(p.name for p in asyncio.run(mcp.list_prompts()))
         print("w-mcp self-test OK")
+        print(f"server: {mcp.name} {mcp.version or '(no IMAGE_VERSION)'}")
         print(f"profile: {core.PROFILE} ({len(tools)}/{len(core.REGISTRY)} tools offered)")
         print(f"modules ({len(modules)}): {', '.join(modules)}")
         print(f"tools ({len(tools)}): {', '.join(tools)}")

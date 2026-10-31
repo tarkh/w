@@ -8,7 +8,7 @@ description: >-
   named layout — not for the systemd/uwsm session itself, which is w-desktop.
 sources:
   - path: .claude/library/w-session.md
-    sha256: cd55875724039e085711caf861e4f3cc1b43a65061e37116b0951c22d5d7d9b4
+    sha256: 952f714c6f49db4dd6afce9fc573a9f308a57ba8fae2c875c5089d20d042ea8a
   - path: .claude/library/quickshell-layouts.md
     sha256: e8c118db10147181f14e6e86a18ceff5e0ee77b268aae391825aadedb1cbbb4e
 tools:

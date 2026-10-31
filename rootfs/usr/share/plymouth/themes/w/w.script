@@ -219,9 +219,15 @@ prompt_line_spr.SetZ(11);
 prompt_line_spr.SetOpacity(0);
 prompt_line_spr.id = "prompt_line";
 
-# Flat lock glyph, centred under the line.
+# Flat glyph centred under the line: a lock for the disk passphrase, a keypad when
+# systemd asks for the TPM2 PIN instead (TPM2 + PIN unlock). The two prompts are
+# otherwise identical dots, and three wrong PINs or a changed boot chain fall back to
+# the passphrase — the glyph switching back to the lock is what says so. The choice is
+# made from systemd's English prompt text ("... TPM2 PIN ..."), never shown itself.
 lock_size = 26;
 lock_src  = Image("lock.png");
+pin_src   = Image("pin.png");
+glyph_src = lock_src;
 lock_spr  = Sprite();
 lock_spr.SetZ(11);
 lock_spr.SetOpacity(0);
@@ -345,7 +351,7 @@ fun relayout() {
   lock_size = Math.Int(safe_h * 0.03);
   if (lock_size < 26)
     lock_size = 26;
-  lock_spr.SetImage(lock_src.Scale(lock_size, lock_size));
+  lock_spr.SetImage(glyph_src.Scale(lock_size, lock_size));
   lock_spr.SetX(Math.Int(screen_half_w - lock_size / 2));
   lock_spr.SetY(Math.Int(prompt_line_y + lock_size * 0.7));
 
@@ -484,10 +490,26 @@ fun update_dots(count) {
 # Called whenever the boot needs a disk passphrase (and re-called on each keystroke and on
 # a wrong-password retry). `prompt` is the systemd message (unused — the design shows no
 # text); `bullets` is the current character count.
+# Lock or keypad, by whether the prompt asks for a PIN (see the glyph's declaration).
+# The counter is `k` for the same reason as in update_dots().
+fun pick_glyph(prompt) {
+  want = lock_src;
+  for (k = 0; k < 128; k++) {
+    if (prompt.SubString(k, k + 3) == "PIN")
+      want = pin_src;
+  }
+  if (want != glyph_src) {
+    glyph_src = want;
+    lock_spr.SetImage(glyph_src.Scale(lock_size, lock_size));
+  }
+}
+
 fun display_password_callback(prompt, bullets) {
   # Ignore any stray password events outside a real boot (e.g. shutdown).
   if (Plymouth.GetMode() != "boot")
     return;
+
+  pick_glyph(prompt);
 
   if (!password_active) {
     password_active = 1;

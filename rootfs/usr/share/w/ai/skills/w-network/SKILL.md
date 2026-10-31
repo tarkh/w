@@ -7,7 +7,7 @@ description: >-
   connections, DNS privacy, the firewall, or the network status indicator.
 sources:
   - path: .claude/library/security.md
-    sha256: 3ec7c64f94e8053341ba52ded39be6b779d58ea1284c8db81f32c45f0697e12c
+    sha256: 85649ab384308d1c5a2bdf97aebd4dc077ea08025974c54bb7d939a270c2f0a5
   - path: .claude/library/quickshell-bar.md
     sha256: a3f19c6d40c72a88088a144b1d2a179f809e1a8bc8027c52536053bf8d8b406e
 tools:

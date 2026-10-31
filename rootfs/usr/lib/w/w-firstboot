@@ -124,7 +124,26 @@ ui_logo >&"$W_TTY"
 # Unattended: an offline grace-period expiry returns 1 (no Wi-Fi picker to loop
 # on) — skip apply and take the failure path below.
 RC=0
-ensure_online_or_reconnect || RC=$?
+
+# Installed under an enforcing Secure Boot, the installer ran `w-secureboot enable`
+# phase 1 (shim); this boot already came through shim with W's key in MokList — the
+# clean boot phase 2 needs. Phase 2 reseals the TPM2 seal (if any) to PCR 7 through
+# w-crypt. Not finishing is no install failure: the Hub's Security → Finish does it.
+# mod_limine put both tools on the target at install, ahead of apply's rootfs.
+if [[ -f /var/lib/w/secureboot-mode ]]; then
+  W_SB_NONINTERACTIVE=1 w-secureboot enable \
+    || echo "WARN: Secure Boot phase 2 did not finish — run 'w-secureboot enable' (Hub → Security)."
+fi
+# The installer sealed TPM2 to no PCR (limine_enroll_tpm: the live medium's PCR 7 is
+# not this system's) and phase 2 above did not reseal it — bind it to PCR 7 of this,
+# the installed boot chain's first boot. A failure keeps the marker and fails
+# firstboot: an unbound seal hands the disk key to any boot chain.
+if [[ -f /var/lib/w/tpm-reseal-pending ]] && ! w-crypt reenroll-tpm; then
+  echo "CRITICAL: resealing TPM2 to PCR 7 failed — the disk key is bound to no PCR."
+  RC=1
+fi
+
+(( RC )) || ensure_online_or_reconnect || RC=$?
 
 if [[ $RC -eq 0 ]]; then
   progress_modules "$(t installing)" bash "$SRC/scripts/apply.sh" --all || RC=$?

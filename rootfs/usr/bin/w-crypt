@@ -8,6 +8,14 @@
 #   - a high-entropy recovery key (printed once — store it offline).
 # Re-enroll TPM2 after a firmware/Secure-Boot change (PCR mismatch → passphrase fallback).
 # Source-of-truth for the PCR set lives in /etc/w/crypt.conf. See package-limine.md.
+#
+# TPM2 is sealed to PCR7 — the Secure Boot state and the key that verified the loader.
+# With Secure Boot off that value is the same for W and for any USB stick, so the TPM
+# would hand the disk key to whatever boots: enroll-tpm refuses unless Secure Boot is
+# on in W and enforced by the firmware (--no-secureboot is the explicit way past it,
+# for an admin who sealed to other PCRs in crypt.conf). A portable machine is warned
+# that TPM-only unlock boots a stolen laptop up to the login screen; --pin (TPM2 + PIN)
+# is the middle ground there. The Hub (System → Security) drives the same commands.
 
 set -euo pipefail
 
@@ -46,10 +54,18 @@ Usage: w-crypt <command>
 Info: Manage disk-encryption factors — TPM2 auto-unlock and recovery keys.
 
 Commands:
-  status         Show LUKS device, key slots and enrolled tokens (TPM2/recovery)
-  enroll-tpm     Enroll TPM2 auto-unlock (PCRs: ${W_CRYPT_TPM2_PCRS}); asks for the passphrase once
+  status [--porcelain]
+                 Show LUKS device, key slots and enrolled tokens (TPM2/recovery);
+                  --porcelain: one TSV row luks/tpm_device/tpm2/pcrs/recovery/reseal
+  enroll-tpm [--pin] [--no-secureboot]
+                 Enroll TPM2 auto-unlock (PCRs: ${W_CRYPT_TPM2_PCRS}), replacing an existing
+                  one; asks for the passphrase once. --pin also asks for a PIN at
+                  every boot. Refused while Secure Boot is off: without it the TPM
+                  releases the key to any boot medium (--no-secureboot overrides)
   reenroll-tpm   Re-seal TPM2 to the current boot state (after firmware/Secure Boot change)
-  recovery-add   Generate and print a one-time recovery key (store it offline)
+  recovery-add [--replace]
+                 Generate and print a one-time recovery key (store it offline);
+                  --replace removes the previous recovery key
   wipe-tpm       Remove the TPM2 token (revert to passphrase-only unlock)
   help           Show this help
 
@@ -57,14 +73,90 @@ Exit codes:
   0 Success   1 Runtime error   2 Usage error
 
 Examples:
-  w-crypt status
-  sudo w-crypt enroll-tpm
-  sudo w-crypt recovery-add
+  sudo w-crypt status
+  sudo w-crypt enroll-tpm --pin
+  sudo w-crypt recovery-add --replace
 EOF
+}
+
+# The LUKS2 header as JSON (tokens, keyslots) — what status and reenroll read.
+luks_json() { cryptsetup luksDump --dump-json-metadata "$1"; }
+
+# The installer's seal is bound to no PCR (limine_enroll_tpm: the live medium's PCR 7
+# is not the installed system's) and marked by RESEAL_MARKER — that token itself
+# unlocks the volume here, so the first boot reseals without a passphrase. The marker
+# goes only on success: an unbound seal hands the disk key to any boot chain.
+RESEAL_MARKER="/var/lib/w/tpm-reseal-pending"
+
+# no | pending | stale | unknown — whether the TPM2 seal still matches this boot.
+# systemd-cryptenroll stores the policy digest it sealed to; it is recomputed here from
+# the live PCR values (PolicyPCR, then PolicyAuthValue for a PIN): a mismatch means the
+# firmware/shim/Secure Boot state moved and the disk fell back to the passphrase.
+# A seal bound to no PCR is the installer's (pending, with its marker) or one that
+# opens for any boot chain (stale — a reseal binds it). Signed or pcrlock policies are
+# not recomputed (unknown).
+tpm_reseal_state() {
+  [[ -f "$RESEAL_MARKER" ]] && { echo pending; return; }
+  python3 -c '
+import hashlib, json, sys
+tok = json.loads(sys.argv[1])
+pcrs, bank = sorted(tok.get("tpm2-pcrs") or []), tok.get("tpm2-pcr-bank", "sha256")
+if not pcrs: sys.exit(print("stale"))
+if tok.get("tpm2_pubkey_pcrs") or tok.get("tpm2_pcrlock") or bank not in ("sha256", "sha1"):
+    sys.exit(print("unknown"))
+try:
+    vals = b"".join(bytes.fromhex(open(f"/sys/class/tpm/tpm0/pcr-{bank}/{i}").read().strip()) for i in pcrs)
+except OSError:
+    sys.exit(print("unknown"))
+bitmap = bytearray(3)
+for i in pcrs: bitmap[i // 8] |= 1 << (i % 8)
+alg = 0x000B if bank == "sha256" else 0x0004
+sel = (1).to_bytes(4, "big") + alg.to_bytes(2, "big") + bytes([3]) + bitmap
+d = hashlib.sha256(bytes(32) + (0x17F).to_bytes(4, "big") + sel + hashlib.sha256(vals).digest()).digest()
+if tok.get("tpm2-pin"): d = hashlib.sha256(d + (0x16B).to_bytes(4, "big")).digest()
+print("no" if d.hex() == tok.get("tpm2-policy-hash") else "stale")
+' "$1"
+}
+
+# Machine-readable status for the Hub (pkexec … crypt-status) and w-secureboot:
+# header + one TSV row. tpm2 = none|tpm|pin, pcrs comma-joined ("-" without a seal).
+status_porcelain() {
+  local luks=no tpmdev=no tpm2=none pcrs=- rec=no reseal=no dev json tok
+  [[ -e /dev/tpmrm0 ]] && tpmdev=yes
+  if dev="$(luks_device 2>/dev/null)"; then
+    luks=yes
+    json="$(luks_json "$dev")"
+    tok="$(jq -c 'first(.tokens[] | select(.type == "systemd-tpm2")) // empty' <<<"$json")"
+    if [[ -n "$tok" ]]; then
+      tpm2="$(jq -r 'if ."tpm2-pin" then "pin" else "tpm" end' <<<"$tok")"
+      pcrs="$(jq -r '(."tpm2-pcrs" // []) | map(tostring) | join(",") | if . == "" then "-" else . end' <<<"$tok")"
+      reseal="$(tpm_reseal_state "$tok")"
+    fi
+    jq -e 'any(.tokens[]; .type == "systemd-recovery")' <<<"$json" >/dev/null && rec=yes
+  fi
+  printf 'luks\ttpm_device\ttpm2\tpcrs\trecovery\treseal\n%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$luks" "$tpmdev" "$tpm2" "$pcrs" "$rec" "$reseal"
+}
+
+# Secure Boot on in W (a mode, phase 2 done) AND enforced by the firmware — the only
+# state in which PCR7 tells W's boot chain from anyone else's.
+secureboot_enforced() {
+  command -v w-secureboot &>/dev/null || return 1
+  w-secureboot status --porcelain 2>/dev/null \
+    | awk -F'\t' 'NR == 2 && $1 == "on" && $2 == "yes" && $4 == "no" {ok = 1} END {exit !ok}'
+}
+
+portable_chassis() {
+  [[ "$(hostnamectl chassis 2>/dev/null)" =~ ^(laptop|convertible|tablet|handset)$ ]]
 }
 
 cmd_status() {
   need_root
+  case "${1:-}" in
+    "")          ;;
+    --porcelain) status_porcelain; return ;;
+    *)           usage; exit 2 ;;
+  esac
   local dev; dev="$(luks_device)"
   echo "LUKS device : $dev"
   echo "Mapping     : /dev/mapper/$LUKS_NAME"
@@ -76,27 +168,81 @@ cmd_status() {
     cryptsetup luksDump "$dev" | awk '/Keyslots:/{p=1} p' | sed 's/^/  /'
 }
 
+# Replaces an existing seal (--wipe-slot=tpm2 goes after the new enrollment), so
+# switching between TPM and TPM + PIN is one call.
 cmd_enroll_tpm() {
   need_root
+  local pin=no force=no a
+  for a in "$@"; do
+    case "$a" in
+      --pin)           pin=yes ;;
+      --no-secureboot) force=yes ;;
+      *)               usage; exit 2 ;;
+    esac
+  done
+  if [[ $force == no ]] && ! secureboot_enforced; then
+    err "Secure Boot is not on (in W and in the firmware). Without it PCR7 is the same"
+    err "for W and for any USB stick, so the TPM would release the disk key to whatever"
+    err "boots. Turn on Secure Boot first (Hub → System → Security, or 'w-secureboot"
+    err "enable'), or pass --no-secureboot if this machine seals to other PCRs."
+    exit 1
+  fi
   local dev; dev="$(luks_device)"
+  if [[ $pin == no ]] && portable_chassis; then
+    echo "Note: this looks like a laptop. With TPM-only unlock a stolen laptop starts up"
+    echo "to the login screen, and only the account password protects your files."
+    echo "'w-crypt enroll-tpm --pin' asks for a short PIN at boot instead."
+    echo
+  fi
   echo "Enrolling TPM2 auto-unlock (PCRs ${W_CRYPT_TPM2_PCRS}). Enter the existing passphrase when asked."
-  systemd-cryptenroll "$dev" --tpm2-device=auto --tpm2-pcrs="$W_CRYPT_TPM2_PCRS"
-  echo "w-crypt: TPM2 enrolled. The disk now unlocks automatically while the boot chain is unchanged."
+  [[ $pin == yes ]] && echo "Then choose the PIN to type at every boot (asked twice)."
+  systemd-cryptenroll "$dev" --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs="$W_CRYPT_TPM2_PCRS" \
+    --tpm2-with-pin="$pin"
+  rm -f "$RESEAL_MARKER"
+  if [[ $pin == yes ]]; then
+    echo "w-crypt: TPM2 + PIN enrolled. Boot asks for the PIN; after three wrong PINs it asks"
+    echo "for the passphrase (or the recovery key) instead."
+  else
+    echo "w-crypt: TPM2 enrolled. The disk now unlocks automatically while the boot chain is unchanged."
+  fi
 }
 
+# A TPM2 + PIN seal stays one: the new PIN is asked on the terminal, so with no
+# terminal (firstboot, w-secureboot's non-interactive phase 2) it is refused.
 cmd_reenroll_tpm() {
   need_root
   local dev; dev="$(luks_device)"
+  local -a unlock=()
+  [[ -f "$RESEAL_MARKER" ]] && unlock=(--unlock-tpm2-device=auto)
+  local pin=no
+  luks_json "$dev" | jq -e 'any(.tokens[]; .type == "systemd-tpm2" and ."tpm2-pin" == true)' >/dev/null && pin=yes
+  if [[ $pin == yes && ! -t 0 ]]; then
+    err "the TPM2 seal has a PIN, and re-sealing asks for a new one — run this in a terminal."
+    exit 1
+  fi
   echo "Re-sealing TPM2 to the current boot state..."
-  systemd-cryptenroll "$dev" --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs="$W_CRYPT_TPM2_PCRS"
+  [[ $pin == yes ]] && echo "Enter the passphrase, then the boot PIN (asked twice)."
+  systemd-cryptenroll "$dev" "${unlock[@]}" --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs="$W_CRYPT_TPM2_PCRS" \
+    --tpm2-with-pin="$pin"
+  rm -f "$RESEAL_MARKER"
   echo "w-crypt: TPM2 re-enrolled against the current PCRs."
 }
 
+# The key exists only on this terminal: systemd-cryptenroll prints it once, and nothing
+# here logs it (w-hub-actuate journals the capability and exit code, never output).
 cmd_recovery_add() {
   need_root
+  local -a wipe=()
+  case "${1:-}" in
+    "")        ;;
+    --replace) wipe=(--wipe-slot=recovery) ;;
+    *)         usage; exit 2 ;;
+  esac
   local dev; dev="$(luks_device)"
   echo "Generating a recovery key. Enter an existing passphrase when asked, then STORE the key offline:"
-  systemd-cryptenroll "$dev" --recovery-key
+  systemd-cryptenroll "$dev" --recovery-key "${wipe[@]}"
+  echo
+  echo "w-crypt: write the key down or save it outside this computer, then close this window."
 }
 
 cmd_wipe_tpm() {
@@ -107,10 +253,10 @@ cmd_wipe_tpm() {
 }
 
 case "${1:-}" in
-  status)         cmd_status        ;;
-  enroll-tpm)     cmd_enroll_tpm    ;;
+  status)         shift; cmd_status "$@" ;;
+  enroll-tpm)     shift; cmd_enroll_tpm "$@" ;;
   reenroll-tpm)   cmd_reenroll_tpm  ;;
-  recovery-add)   cmd_recovery_add  ;;
+  recovery-add)   shift; cmd_recovery_add "$@" ;;
   wipe-tpm)       cmd_wipe_tpm      ;;
   help|-h|--help) usage             ;;
   "")             usage; exit 2     ;;

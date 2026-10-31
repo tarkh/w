@@ -33,10 +33,18 @@
 Info: Управление факторами шифрования диска — авторазблокировка TPM2 и ключи восстановления.
 
 Команды:
-  status         Показать LUKS-устройство, слоты ключей и токены (TPM2/восстановление)
-  enroll-tpm     Занести авторазблокировку TPM2 (PCR: ${W_CRYPT_TPM2_PCRS}); раз спросит пароль
+  status [<span class="f">--porcelain</span>]
+                 Показать LUKS-устройство, слоты ключей и токены (TPM2/восстановление);
+                  <span class="f">--porcelain</span>: одна TSV-строка luks/tpm_device/tpm2/pcrs/recovery/reseal
+  enroll-tpm [<span class="f">--pin</span>] [<span class="f">--no-secureboot</span>]
+                 Занести авторазблокировку TPM2 (PCR: ${W_CRYPT_TPM2_PCRS}) взамен прежней;
+                  раз спросит пароль. <span class="f">--pin</span> — ещё и PIN при каждой загрузке.
+                  Отказ, пока Secure Boot выключен: без него TPM отдаёт ключ
+                  любому загрузочному носителю (<span class="f">--no-secureboot</span> — обойти)
   reenroll-tpm   Переустановить TPM2 под текущую загрузку (после смены прошивки/Secure Boot)
-  recovery-add   Создать и напечатать одноразовый ключ восстановления (хранить офлайн)
+  recovery-add [<span class="f">--replace</span>]
+                 Создать и напечатать одноразовый ключ восстановления (хранить офлайн);
+                  <span class="f">--replace</span> удаляет прежний ключ восстановления
   wipe-tpm       Убрать токен TPM2 (вернуться к разблокировке только паролем)
   help           Показать эту справку
 
@@ -44,9 +52,9 @@ Info: Управление факторами шифрования диска �
   0 Успех   1 Ошибка выполнения   2 Ошибка вызова
 
 Примеры:
-  <span class="w">w-crypt</span> status
-  sudo <span class="w">w-crypt</span> enroll-tpm
-  sudo <span class="w">w-crypt</span> recovery-add</code></pre>
+  sudo <span class="w">w-crypt</span> status
+  sudo <span class="w">w-crypt</span> enroll-tpm <span class="f">--pin</span>
+  sudo <span class="w">w-crypt</span> recovery-add <span class="f">--replace</span></code></pre>
 <p>Эта страница генерируется из собственной справки команды (w-docs-refgen). Живая
 версия того же текста на машине с W: <code>w-crypt help</code>.</p>
 

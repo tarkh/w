@@ -57,6 +57,20 @@ virtiofsd                    # redundant w/ qemu-desktop (virt) — repo share a
 swtpm                        # the ONLY additive package: emulated TPM 2.0,
                             # required for --encrypted (Limine + TPM2 autounlock
                             # e2e coverage). Not in `virt` by design.
+ntfsprogs                    # mkntfs for vm/fake-windows.sh — the NTFS volume of
+                            # the fake "Windows" the dual-boot e2e installs next to
+                            # (e2e.sh --dualboot). Local-only scenario: the CI
+                            # e2e-reference above deliberately does not carry it.
+edk2-shell                   # UEFI shell for the dual-boot e2e's S0: one boot that
+                            # writes the fake Windows' NVRAM entry (bcfg), the
+                            # entry W's boot menus are built from. Same local-only
+                            # scope as ntfsprogs.
+virt-firmware                # virt-fw-vars for the Secure Boot e2e (--secureboot):
+                            # OVMF vars with Microsoft's keys enrolled (the shim
+                            # path) and the guest's MOK cert pre-seeded in MokList,
+                            # so no MokManager screen has to be driven headless.
+mtools                       # mcopy: reads that MOK cert off the guest's FAT ESP
+                            # (unencrypted) without mounting the image as root.
 
 # ── ISO build (scripts/build-iso.sh) ──────────────────────────────────────────
 # w-repo bootstrap builds three AUR packages before mkarchiso runs (yay, then

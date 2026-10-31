@@ -20,7 +20,8 @@
 #                    a final collect-logs bundle is pulled for the record.
 #
 # Usage:
-#   bash vm/e2e.sh [--iso PATH] [--encrypted] [--fault-mirror]
+#   bash vm/e2e.sh [--iso PATH] [--encrypted] [--dualboot] [--fault-mirror]
+#                  [--secureboot own|shim] [--iso-sb]
 #                                              # default ISO: newest archiso/out/*.iso
 #
 # --fault-mirror runs the Ф.4 scenario (installer.md §5): a local endpoint that
@@ -34,12 +35,65 @@
 # matching versioned sample on first run — edit the working copy to vary a run):
 #   default      plain btrfs + GRUB        preset-plain.conf     ← preset-plain.sample.conf
 #   --encrypted  LUKS2 + Limine + TPM2     preset-encrypted.conf ← preset-encrypted.sample.conf
+#   --dualboot   plain, installed into the free space next to a fake "Windows"
+#                (vm/fake-windows.sh)   preset-dualboot-plain.conf ← preset-dualboot-plain.sample.conf
+#   --dualboot --encrypted   the same next to Windows, encrypted stack
+#                                        preset-dualboot.conf  ← preset-dualboot.sample.conf
 # The selected working copy is installed as vm/e2e/preset.conf — the machine-
-# written "active slot" the ISO's .zlogin looks for — before S1. --encrypted
+# written "active slot" the ISO's .zlogin looks for — before S1, and removed on
+# exit (it would turn any later manual ISO boot into a disk wipe). --encrypted
 # also attaches a swtpm TPM (start.sh --tpm) to every stage: the installer
 # auto-enrolls TPM2 unlock in S1 (limine_enroll_tpm), and S2/S3 boots rely on
 # it — without a TPM the headless LUKS unlock would hang at the passphrase
 # prompt. Logs and the firstboot status marker land in vm/logs/ as usual.
+#
+# --dualboot keeps every assertion of its stack (plain or --encrypted) and replaces
+# the blank disk with fake-windows.sh's layout before S1: Windows ESP + MSR + NTFS +
+# ~42 GiB free, the installer runs with disk_mode=free. S0 then boots the UEFI shell
+# once to give that Windows its firmware boot entry ("Windows Boot Manager", the way
+# a real Windows install leaves it) — the entry W's boot menus are built from. S3
+# adds what the mode promises: the foreign partitions hash exactly as they did before
+# S1, none of them is mounted, W runs off its own ESP with its own NVRAM entry, and
+# the boot menu offers Windows and is shown. Every other run asserts the opposite —
+# no Windows entry, the menu stays hidden.
+# Local-only by design (not in the CI canary) — run it when lib/disk.sh, the
+# disk_mode step or the bootloader modules change (scripts/test.sh --dualboot).
+#
+# --secureboot own|shim (with --encrypted) keeps the whole run and then turns Secure
+# Boot on in the installed system the way a user does — `w-secureboot enable`, both
+# phases — on a Secure Boot firmware: `own` on the Setup-Mode varstore (start.sh
+# --secureboot), `shim` on a factory-like one with Microsoft's keys (--secureboot=ms,
+# virt-fw-vars from virt-firmware). Three more boots:
+#   S4  SB not enforcing yet → `enable` phase 1 (own: keys into the firmware; shim:
+#       shim chain + MOK request). MokManager cannot be driven headless, so for shim
+#       the harness takes W's public cert off the ESP, drops the queued request, and
+#       pre-seeds MokList itself (virt-fw-vars --add-mok) while switching enforcing on.
+#   S5  Secure Boot enforcing → the boot chain is the mode's; `enable` phase 2 seals
+#       TPM2 to PCR7; the loaders follow a limine-update; W's NVRAM entry is deleted.
+#   S6  headless boot through the removable fallback path under Secure Boot — the
+#       disk unlocking with no passphrase proves both the signed fallback and the
+#       PCR7 seal at once (a broken one hangs at the prompt → SSH timeout).
+# Before S4 the S1 TPM2 seal is replaced by one bound to no PCR at all (test seam:
+# the passphrase prompt cannot be answered headless while PCR7 is in flux); phase 2
+# replaces it with the real PCR7 seal, which S6 then depends on. Local-only, like
+# --dualboot (scripts/test.sh --secureboot).
+#
+# --iso-sb (with --encrypted) boots the install medium itself under Secure Boot, on
+# Microsoft's keys (start.sh --secureboot=ms), the way a user meets it: shim, then
+# Limine trusted only by its hash in MokList (scripts/iso-secureboot.sh). The hash
+# is recomputed from the ISO here, not taken from the build's word for it. Before S1,
+# three short boots that must FAIL, each read off the serial console:
+#   SB0  no hash in MokList → shim refuses Limine ("Verification failed") → MokManager;
+#   SB1  Secured-core db (Windows CA 2023 only) → the firmware refuses shim itself;
+#   SB2  hash enrolled, airootfs.sfs tampered in a copy of the ISO → cms_verify stops
+#        the initramfs in its rescue shell (a probe typed there through the QEMU
+#        monitor answers on ttyS0 — only where /init exists and the medium is found).
+# Then S1 installs encrypted from that firmware with the hash enrolled; the install
+# log must say secure_boot=on, and the installer has run `w-secureboot enable` phase 1
+# (shim) itself. MokManager cannot be driven headless, so the harness puts W's public
+# cert (mirrored to the share by the installer) into MokList. S2 (firstboot: phase 2,
+# the TPM2 seal on PCR7) and S3 run under Secure Boot, then S5/S6 as for --secureboot
+# shim, minus the enable calls — the installer and firstboot made them.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -62,16 +116,30 @@ info() { echo -e "\033[1;35m==>\033[0m $*"; }
 # ── Arguments / preconditions ─────────────────────────────────────────────────
 ISO=""
 ENCRYPTED=0
+DUALBOOT=0
 FAULT=0
+SB_MODE=""
+ISO_SB=0
 while (($#)); do
   case "$1" in
     --iso) ISO="${2:-}"; [[ -n "$ISO" ]] || die "--iso needs a path"; shift ;;
     --encrypted) ENCRYPTED=1 ;;
+    --dualboot) DUALBOOT=1 ;;
     --fault-mirror) FAULT=1 ;;
-    *) die "unknown option: $1 (usage: e2e.sh [--iso PATH] [--encrypted] [--fault-mirror])" ;;
+    --secureboot) SB_MODE="${2:-}"; shift ;;
+    --iso-sb) ISO_SB=1 ;;
+    *) die "unknown option: $1 (usage: e2e.sh [--iso PATH] [--encrypted] [--dualboot] [--fault-mirror] [--secureboot own|shim] [--iso-sb])" ;;
   esac
   shift
 done
+if [[ -n "$SB_MODE" ]]; then
+  [[ "$SB_MODE" == own || "$SB_MODE" == shim ]] || die "--secureboot takes own or shim"
+  (( ENCRYPTED )) || die "--secureboot needs --encrypted (Secure Boot exists on the Limine stack only)"
+fi
+if (( ISO_SB )); then
+  (( ENCRYPTED )) || die "--iso-sb needs --encrypted (Secure Boot exists on the Limine stack only)"
+  [[ -z "$SB_MODE" ]] && (( ! DUALBOOT )) || die "--iso-sb runs on its own, not with --secureboot or --dualboot"
+fi
 
 # ── Mirror fault scenario (installer.md §5 Ф.4) ───────────────────────────────
 # Opt-in, and opt-in twice over: the scenario file below is what makes the
@@ -93,6 +161,15 @@ if (( ENCRYPTED )); then
   # start.sh --tpm would catch this too, but only after the disk reset — die early.
   command -v swtpm &>/dev/null || die "--encrypted needs swtpm on the host (sudo pacman -S swtpm)."
 fi
+if [[ "$SB_MODE" == shim ]]; then
+  command -v virt-fw-vars &>/dev/null || die "--secureboot shim needs virt-fw-vars (w-pack install w-dev → virt-firmware)."
+fi
+if (( ISO_SB )); then
+  for c in virt-fw-vars xorriso mcopy python3; do
+    command -v "$c" &>/dev/null || die "--iso-sb needs $c on the host (w-pack install w-dev)."
+  done
+  python3 -I -c 'import pefile' 2>/dev/null || die "--iso-sb needs python-pefile on the host."
+fi
 
 if [[ -z "$ISO" ]]; then
   ISO="$(ls -t "$PROJECT_DIR"/archiso/out/*.iso 2>/dev/null | head -1 || true)"
@@ -102,7 +179,24 @@ fi
 info "ISO: $ISO"
 
 # ── Scenario → working preset → active slot + SSH key ─────────────────────────
-if (( ENCRYPTED )); then
+S1_EXTRA=()
+if (( DUALBOOT )); then
+  # The dual copies inherit edge_repo from their stack's regular copy.
+  if (( ENCRYPTED )); then
+    SAMPLE="$E2E_DIR/preset-dualboot.sample.conf"
+    WORK="$E2E_DIR/preset-dualboot.conf"
+    PARENT="$E2E_DIR/preset-encrypted.conf"
+    START_EXTRA=(--tpm)
+  else
+    SAMPLE="$E2E_DIR/preset-dualboot-plain.sample.conf"
+    WORK="$E2E_DIR/preset-dualboot-plain.conf"
+    PARENT="$E2E_DIR/preset-plain.conf"
+    START_EXTRA=()
+  fi
+  # --force-iso: the disk is not blank any more, so make the ISO the first boot
+  # device explicitly instead of relying on OVMF finding nothing bootable on it.
+  S1_EXTRA=(--force-iso)
+elif (( ENCRYPTED )); then
   SAMPLE="$E2E_DIR/preset-encrypted.sample.conf"
   WORK="$E2E_DIR/preset-encrypted.conf"
   START_EXTRA=(--tpm)
@@ -120,6 +214,13 @@ fi
 if [[ ! -f "$WORK" ]]; then
   info "Creating working preset $(basename "$WORK") from $(basename "$SAMPLE")..."
   cp "$SAMPLE" "$WORK"
+  # A dual-boot copy inherits its stack's edge_repo (dev-edge + its credentials,
+  # when set up) — otherwise a first --dualboot run would silently install the
+  # public release instead of what the other phases test.
+  if (( DUALBOOT )) && grep -q '^edge_repo=' "$PARENT" 2>/dev/null; then
+    sed -i '/^edge_repo=/d' "$WORK"
+    grep '^edge_repo=' "$PARENT" >> "$WORK"
+  fi
 fi
 if ! grep -q '^ssh_authorized_key=' "$WORK"; then
   printf 'ssh_authorized_key=%q\n' "$(cat "$KEY.pub")" >> "$WORK"
@@ -140,8 +241,11 @@ SSH=(ssh -p 2222 -i "$KEY" -o IdentitiesOnly=yes -o IdentityAgent=none
 # Kill a stage's leftover QEMU if we bail out mid-run. start.sh runs QEMU as a
 # child (no exec — it keeps a trap of its own), so take out the children too.
 QPID=""
+TAMPERED="$E2E_DIR/iso-sb-tampered.iso"
 cleanup() {
+  rm -f "$TAMPERED" "$E2E_DIR"/iso-sb-*.mon "$E2E_DIR"/iso-sb-*.vars "$E2E_DIR/.s1-start"
   if [[ -n "$QPID" ]]; then
+    kill -- -"$QPID" 2>/dev/null || true   # start.sh runs in a session of its own
     pkill -P "$QPID" 2>/dev/null || true
     kill "$QPID" 2>/dev/null || true
   fi
@@ -149,6 +253,9 @@ cleanup() {
   # would silently arm the fault on the NEXT run, whose relay is not even running.
   rm -f "$FAULT_CONF"
   [[ -n "$FAULT_PID" ]] && kill "$FAULT_PID" 2>/dev/null || true
+  # Same for the active preset, only worse: any later ISO boot on this host's QEMU
+  # (start.sh --install) finds it on the share and wipes the VM disk unattended.
+  rm -f "$PRESET"
 }
 trap cleanup EXIT
 
@@ -173,23 +280,235 @@ if (( FAULT )); then
   } > "$FAULT_CONF"
 fi
 
+# ── S0 (--dualboot): the fake Windows' firmware boot entry ────────────────────
+# A real Windows leaves "Windows Boot Manager" in NVRAM, pointing at bootmgfw.efi on
+# its ESP; W's menus are built from that entry (w-boot-otheros). The image alone
+# cannot carry it — NVRAM lives in OVMF_VARS — so one short boot of the UEFI shell
+# (edk2-shell) writes it with bcfg, exactly as an OS installer would, and powers off.
+# The shell and its startup.nsh sit on a throwaway read-only vvfat disk, not on the
+# Windows ESP, which stays byte for byte what fake-windows.sh hashed. The disk is
+# attached first, as in start.sh, so the entry's device path matches later boots.
+seed_windows_nvram() {
+  local shell=/usr/share/edk2-shell/x64/Shell.efi dir
+  [[ -f "$shell" ]] || die "S0: no UEFI shell at $shell (w-pack install w-dev → edk2-shell)."
+  # shellcheck source=vm/arch-iso.conf
+  source "$SCRIPT_DIR/arch-iso.conf"
+  dir="$(mktemp -d)"
+  mkdir -p "$dir/EFI/BOOT"
+  cp "$shell" "$dir/EFI/BOOT/BOOTX64.EFI"
+  printf '%s\r\n' '@echo -off' 'for %a in fs0 fs1 fs2 fs3' \
+    '  if exist %a:\EFI\Microsoft\Boot\bootmgfw.efi then' \
+    '    bcfg boot add 0 %a:\EFI\Microsoft\Boot\bootmgfw.efi "Windows Boot Manager"' \
+    '  endif' 'endfor' 'reset -s' > "$dir/startup.nsh"
+  info "S0: writing the Windows NVRAM entry (UEFI shell, bcfg)..."
+  timeout --foreground 180 qemu-system-x86_64 -enable-kvm -cpu host -m 1G \
+    -global isa-fdc.fdtypeA=none \
+    -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+    -drive if=pflash,format=raw,file="$SCRIPT_DIR/OVMF_VARS.fd" \
+    -drive file="$SCRIPT_DIR/w-base.qcow2",format=qcow2,if=none,id=hd0 \
+    -device virtio-blk-pci,drive=hd0,bootindex=1 \
+    -drive file="fat:$dir",format=raw,if=none,id=sh0,readonly=on \
+    -device virtio-blk-pci,drive=sh0,bootindex=0 \
+    -display none -no-reboot -net none > "$LOGS_DIR/e2e-s0.log" 2>&1 \
+    || { rm -rf "$dir"; die "S0: the UEFI shell did not power off (see $LOGS_DIR/e2e-s0.log)."; }
+  rm -rf "$dir"
+}
+
+# ── SB0–SB2 (--iso-sb): the install medium under Secure Boot must refuse ──────
+# The firmware for these boots is built here, from the pristine template, each time:
+# Microsoft's keys and enforcing, plus virt-fw-vars arguments of the caller's.
+sb_vars() {  # <out> [virt-fw-vars args...]
+  local out="$1"; shift
+  # shellcheck source=vm/arch-iso.conf
+  source "$SCRIPT_DIR/arch-iso.conf"
+  virt-fw-vars --input "$OVMF_VARS" --output "$out" --enroll-redhat --secure-boot "$@" &>/dev/null \
+    || die "virt-fw-vars could not build the Secure Boot varstore $(basename "$out")."
+}
+# A bare medium-only boot with the serial console and the QEMU monitor on files —
+# no disk, no share, no TPM: nothing here gets far enough to want them. No
+# -no-reboot either: OVMF may reset once on the first start of a fresh varstore
+# (memory-type buckets), and the harness ends these boots itself.
+sb_iso_boot() {  # <name> <vars> <iso>
+  # shellcheck source=vm/arch-iso.conf
+  source "$SCRIPT_DIR/arch-iso.conf"
+  SB_SERIAL="$LOGS_DIR/e2e-iso-sb-$1.serial" SB_MON="$E2E_DIR/iso-sb-$1.mon"
+  rm -f "$SB_SERIAL" "$SB_MON"
+  qemu-system-x86_64 -enable-kvm -cpu host -m 3G -machine q35,smm=on \
+    -global driver=cfi.pflash01,property=secure,value=on \
+    -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE_SECBOOT" \
+    -drive if=pflash,format=raw,file="$2" -cdrom "$3" -display none -vga std -net none \
+    -serial file:"$SB_SERIAL" -monitor unix:"$SB_MON",server,nowait &>/dev/null &
+  QPID=$!
+}
+sb_iso_down() { kill "$QPID" 2>/dev/null || true; wait "$QPID" 2>/dev/null || true; QPID=""; }
+# Through the QEMU monitor: $1 typed on the guest's keyboard, one sendkey per
+# character — or, with --cmd, $2 sent as a monitor command as is.
+sb_type() {
+  python3 -I - "$SB_MON" "$@" 2>/dev/null <<'EOF'
+import socket, sys, time
+keys = {' ': 'spc', '-': 'minus', '_': 'shift-minus', '/': 'slash', '.': 'dot',
+        '>': 'shift-dot', '&': 'shift-7', '\n': 'ret'}
+s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); time.sleep(0.3); s.recv(65536)
+if sys.argv[2] == '--cmd':
+    s.sendall((sys.argv[3] + '\n').encode()); time.sleep(1)
+    sys.exit()
+for c in sys.argv[2]:
+    k = keys.get(c) or ('shift-' + c.lower() if c.isupper() else c)
+    s.sendall(('sendkey %s\n' % k).encode()); time.sleep(0.05)
+EOF
+}
+# Waits up to $2 s for the fixed string $1 on the serial console; $3, when given, is
+# typed again every 10 s meanwhile (a probe whose answer is what $1 looks for) — only
+# from the 45th second on: earlier, its letters would land in Limine's menu (`s` opens
+# the firmware setup). On a miss, says why and leaves the guest's screen next to the
+# serial log.
+sb_expect() {
+  local start=$SECONDS deadline=$((SECONDS + $2))
+  until grep -aqF -- "$1" "$SB_SERIAL" 2>/dev/null; do
+    if ! kill -0 "$QPID" 2>/dev/null; then
+      echo "QEMU exited after $((SECONDS - start)) s" >&2; return 1
+    fi
+    if (( SECONDS >= deadline )); then
+      sb_type --cmd "screendump ${SB_SERIAL%.serial}.ppm" || true
+      # Seen twice in three runs: the guest's serial output reaches the file only
+      # when a monitor client connects (here, the screendump) — the screen already
+      # showed the expected refusal, the serial was byte-identical to a passing run.
+      # The assertion is about what the firmware says, not how fast QEMU flushes it.
+      if grep -aqF -- "$1" "$SB_SERIAL" 2>/dev/null; then
+        echo "  (serial arrived only after the monitor poke at $2 s)" >&2; return 0
+      fi
+      echo "nothing after $2 s; screen: ${SB_SERIAL%.serial}.ppm" >&2; return 1
+    fi
+    [[ -z "${3:-}" ]] || (( SECONDS - start < 45 )) || sb_type "$3" || true
+    sleep 10
+  done
+}
+
+if (( ISO_SB )); then
+  # The hash a user's MokManager records from the medium's own grubx64.efi, read off
+  # the ISO's EFI partition (appended partition 2) — and held against the build's.
+  read -r esp_start _ < <(xorriso -no_rc -indev "$ISO" -report_system_area plain 2>/dev/null \
+    | awk '$1=="MBR" && $2=="partition" && $6=="0xef" {print $7, $8; exit}')
+  [[ -n "${esp_start:-}" ]] || die "SB: no EFI partition in $ISO."
+  sbdir="$(mktemp -d)"
+  mcopy -i "$ISO@@$((esp_start * 512))" ::/EFI/BOOT/grubx64.efi "$sbdir/" 2>/dev/null \
+    || { rm -rf "$sbdir"; die "SB: no EFI/BOOT/grubx64.efi on the ISO's EFI partition — not a Secure Boot medium."; }
+  MOK_HASH="$(python3 -I "$PROJECT_DIR/scripts/pe-authenticode.py" "$sbdir/grubx64.efi")"
+  rm -rf "$sbdir"
+  if [[ -f "$ISO.mok-sha256" ]]; then
+    [[ "$(awk '{print $1}' "$ISO.mok-sha256")" == "$MOK_HASH" ]] \
+      || die "SB: $(basename "$ISO").mok-sha256 does not match the ISO's grubx64.efi ($MOK_HASH)."
+  fi
+  info "SB: MokList hash of the medium: $MOK_HASH"
+  SB_GUID=605dab50-e046-4300-abb6-3dd810dd8b23  # shim's vendor GUID, MokList's owner
+
+  info "SB0: no hash in MokList — shim must refuse Limine..."
+  sb_vars "$E2E_DIR/iso-sb-nohash.vars"
+  sb_iso_boot nohash "$E2E_DIR/iso-sb-nohash.vars" "$ISO"
+  sb_expect "Verification failed: (0x1A) Security Violation" 120 \
+    || die "SB0: shim did not refuse the unenrolled second stage — see $SB_SERIAL"
+  sb_iso_down
+
+  info "SB1: Secured-core firmware (no 3rd-party CA) — the firmware must refuse shim..."
+  sb_vars "$E2E_DIR/iso-sb-win23.vars" --microsoft-db win23
+  sb_iso_boot win23 "$E2E_DIR/iso-sb-win23.vars" "$ISO"
+  sb_expect "Access Denied" 120 || die "SB1: the firmware did not refuse shim — see $SB_SERIAL"
+  sb_iso_down
+
+  # The tamper sits mid-file in airootfs.sfs: kernel, initramfs and the EFI partition
+  # stay byte for byte, so everything up to cms_verify passes as in the real boot.
+  info "SB2: hash enrolled, airootfs.sfs tampered — cms_verify must stop the boot..."
+  sb_vars "$E2E_DIR/iso-sb-hash.vars" --add-mok-hash "$SB_GUID" "$MOK_HASH"
+  cp --reflink=auto "$ISO" "$TAMPERED"
+  read -r sfs_lba sfs_blocks < <(xorriso -no_rc -indev "$TAMPERED" -find /w/x86_64/airootfs.sfs \
+    -exec report_lba 2>/dev/null | awk -F, '/airootfs.sfs/ {print $2 + 0, $3 + 0}')
+  [[ -n "${sfs_blocks:-}" ]] || die "SB2: airootfs.sfs not found on the ISO."
+  dd if=/dev/urandom of="$TAMPERED" bs=2048 seek=$((sfs_lba + sfs_blocks / 2)) count=32 \
+    conv=notrunc status=none
+  sb_iso_boot cms "$E2E_DIR/iso-sb-hash.vars" "$TAMPERED"
+  # /init exists only in the initramfs, the signature file only where the medium was
+  # found and mounted: the answer means "stopped at verification", nothing else.
+  # The leading Enter: a boot slow enough to still sit in Limine's menu at 45 s takes
+  # it as "boot the default entry" — without it the probe's `s` opens Firmware Setup.
+  sb_expect "w-cms-rejected" 240 \
+    $'\ntest -e /init -a -e /run/archiso/bootmnt/w/x86_64/airootfs.sfs.cms.sig && echo w-cms-rejected >/dev/ttyS0\n' \
+    || die "SB2: no rescue shell after a tampered airootfs.sfs — cms_verify did not stop the boot (see $SB_SERIAL)."
+  sb_iso_down
+  rm -f "$TAMPERED"
+
+  S1_EXTRA+=(--secureboot=ms)
+  info "SB: refusals OK — S1 installs from the medium under Secure Boot."
+fi
+
+# ── A stage's VM under a deadline ─────────────────────────────────────────────
+# start.sh in a session of its own: on a timeout the whole process group goes —
+# QEMU, and the swtpm/virtiofsd it started — not just the wrapper (a QEMU left
+# alive holds swtpm and fails every later stage). First a screendump through the
+# monitor: a silent hang leaves nothing else to look at.
+run_vm() {  # <stage> <seconds> <start.sh args...>
+  local stage="$1" deadline=$((SECONDS + $2)) rc=0; shift 2
+  local mon="$E2E_DIR/$stage.mon"
+  rm -f "$mon"
+  setsid bash "$SCRIPT_DIR/start.sh" --monitor="$mon" "$@" &
+  QPID=$!
+  while kill -0 "$QPID" 2>/dev/null; do
+    if (( SECONDS >= deadline )); then
+      SB_MON="$mon" sb_type --cmd "screendump $LOGS_DIR/e2e-$stage-timeout.ppm" || true
+      echo "$stage: out of time; screen: $LOGS_DIR/e2e-$stage-timeout.ppm" >&2
+      kill -- -"$QPID" 2>/dev/null || true
+      wait "$QPID" 2>/dev/null || true
+      QPID=""; rm -f "$mon"
+      return 124
+    fi
+    sleep 5
+  done
+  wait "$QPID" || rc=$?
+  QPID=""; rm -f "$mon"
+  return "$rc"
+}
+
 # ── S1: ISO boot → unattended install ─────────────────────────────────────────
-rm -f "$STATUS_FILE"
+rm -f "$STATUS_FILE" "$LOGS_DIR/w-install-mok.cer"
 info "S1: resetting disk..."
 bash "$SCRIPT_DIR/reset-disk.sh"
+if (( DUALBOOT )); then
+  info "S1: laying the fake Windows onto the disk..."
+  bash "$SCRIPT_DIR/fake-windows.sh"
+  seed_windows_nvram
+fi
+# S1's firmware under --iso-sb: start.sh --secureboot=ms reads this varstore. Written
+# only now — reset-disk.sh above deletes the Secure Boot varstores.
+(( ISO_SB )) && sb_vars "$SCRIPT_DIR/OVMF_VARS.secboot-ms.fd" --add-mok-hash "$SB_GUID" "$MOK_HASH"
+S1_START="$E2E_DIR/.s1-start"; touch "$S1_START"
 info "S1: booting ISO (headless, unattended install — up to $((T_S1 / 60)) min)..."
-timeout --foreground "$T_S1" \
-  bash "$SCRIPT_DIR/start.sh" --install --headless --no-reboot --iso="$ISO" "${START_EXTRA[@]}" \
+run_vm S1 "$T_S1" --install --headless --no-reboot --iso="$ISO" "${START_EXTRA[@]}" "${S1_EXTRA[@]}" \
   || die "S1: QEMU did not exit cleanly (timeout = install never rebooted; see $LOGS_DIR)."
 
 # The installer mirrors its log through the share; its last line confirms S1
 # actually finished (a wedged installer would have hit the timeout instead, but
-# an early exit back to the live shell would not).
-S1_LOG="$(ls -t "$LOGS_DIR"/w-install-*.log 2>/dev/null | head -1 || true)"
-[[ -n "$S1_LOG" ]] || die "S1: no mirrored install log in $LOGS_DIR."
+# an early exit back to the live shell would not). Only a log this S1 wrote counts:
+# an older run's log would answer for an install that never happened.
+S1_LOG="$(find "$LOGS_DIR" -maxdepth 1 -name 'w-install-*.log' -newer "$S1_START" -printf '%T@ %p\n' \
+  | sort -rn | head -1 | cut -d' ' -f2-)"
+rm -f "$S1_START"
+[[ -n "$S1_LOG" ]] || die "S1: no install log mirrored by this run in $LOGS_DIR."
 grep -q "Unattended install complete" "$S1_LOG" \
   || die "S1: install did not reach its finish line — see $S1_LOG"
 info "S1 OK ($(basename "$S1_LOG"))."
+
+if (( ISO_SB )); then
+  grep -q "^firmware: secure_boot=on$" "$S1_LOG" \
+    || die "S1: the install log does not record an enforcing Secure Boot — see $S1_LOG"
+  [[ -s "$LOGS_DIR/w-install-mok.cer" ]] \
+    || die "S1: the installer left no W-MOK.cer — Secure Boot phase 1 did not run (see $S1_LOG)."
+  # What a user does in MokManager on the next boot ("Enroll key from disk").
+  MS_VARS="$SCRIPT_DIR/OVMF_VARS.secboot-ms.fd"
+  { virt-fw-vars --input "$MS_VARS" --output "$MS_VARS.new" \
+      --add-mok "$SB_GUID" "$LOGS_DIR/w-install-mok.cer" &>/dev/null \
+    && mv -f "$MS_VARS.new" "$MS_VARS"; } || die "S1: could not put W's key into MokList."
+  START_EXTRA+=(--secureboot=ms)
+  info "S1: W's key in MokList — the installed system boots under Secure Boot from here."
+fi
 
 # ── S1 fault assertions (installer.md §5 Ф.4) ─────────────────────────────────
 # POSITIVE assertions, and that is the whole point. A survived flake deliberately
@@ -236,8 +555,7 @@ fi
 
 # ── S2: first boot → w-firstboot (apply --all) ────────────────────────────────
 info "S2: booting installed disk (firstboot apply --all — up to $((T_S2 / 60)) min)..."
-timeout --foreground "$T_S2" \
-  bash "$SCRIPT_DIR/start.sh" --headless --no-reboot "${START_EXTRA[@]}" \
+run_vm S2 "$T_S2" --headless --no-reboot "${START_EXTRA[@]}" \
   || die "S2: QEMU did not exit cleanly (timeout = firstboot hung; see $LOGS_DIR)."
 
 [[ -f "$STATUS_FILE" ]] || die "S2: no firstboot status marker — w-firstboot never finished."
@@ -247,16 +565,27 @@ info "S2 OK (firstboot status: $STATUS)."
 
 # ── S3: clean boot → assertions over SSH ──────────────────────────────────────
 info "S3: booting final system..."
-bash "$SCRIPT_DIR/start.sh" --headless "${START_EXTRA[@]}" &
+setsid bash "$SCRIPT_DIR/start.sh" --headless "${START_EXTRA[@]}" &
 QPID=$!
 
-info "S3: waiting for SSH..."
-deadline=$((SECONDS + T_S3))
-until "${SSH[@]}" true 2>/dev/null; do
-  (( SECONDS < deadline )) || die "S3: SSH never came up within $((T_S3 / 60)) min."
-  kill -0 "$QPID" 2>/dev/null || die "S3: QEMU exited before SSH came up."
-  sleep 5
-done
+# SSH up, then the boot barrier below. $1 = stage label. A function because the
+# Secure Boot stages (S4–S6) boot the same system three more times.
+wait_booted() {
+  local stage="$1" deadline=$((SECONDS + T_S3))
+  info "$stage: waiting for SSH..."
+  until "${SSH[@]}" true 2>/dev/null; do
+    (( SECONDS < deadline )) || die "$stage: SSH never came up within $((T_S3 / 60)) min."
+    kill -0 "$QPID" 2>/dev/null || die "$stage: QEMU exited before SSH came up."
+    sleep 5
+  done
+  info "$stage: waiting for the boot to finish..."
+  until [[ "$(boot_state)" =~ ^(running|degraded)$ ]]; do
+    (( SECONDS < deadline )) || die "$stage: the system never left 'starting' within $((T_S3 / 60)) min.
+$("${SSH[@]}" 'systemctl is-system-running; systemctl list-jobs' 2>&1 || true)"
+    kill -0 "$QPID" 2>/dev/null || die "$stage: QEMU exited while the boot was still coming up."
+    sleep 3
+  done
+}
 
 # ── The boot barrier ──────────────────────────────────────────────────────────
 # "SSH answers" is not "the system booted", and asserting through that gap makes
@@ -291,13 +620,7 @@ boot_state() {
                systemctl is-system-running' 2>/dev/null | tail -1
 }
 
-info "S3: waiting for the boot to finish..."
-until [[ "$(boot_state)" =~ ^(running|degraded)$ ]]; do
-  (( SECONDS < deadline )) || die "S3: the system never left 'starting' within $((T_S3 / 60)) min.
-$("${SSH[@]}" 'systemctl is-system-running; systemctl list-jobs' 2>&1 || true)"
-  kill -0 "$QPID" 2>/dev/null || die "S3: QEMU exited while the boot was still coming up."
-  sleep 3
-done
+wait_booted S3
 
 FAILED=0
 assert() {
@@ -453,6 +776,59 @@ assert "the desktop user can see which kernel boots (the Hub's kernel row)" \
   'cd /; runuser -u plain -- w-kernel list --porcelain |
      awk -F"\t" "NR>1 && \$5==\"yes\" {n++} END {exit !(n==1)}"'
 
+if (( DUALBOOT )); then
+  # What disk_mode=free promises, measured on the result. The reference hashes were
+  # taken from the image before S1 (fake-windows.sh): the Windows ESP, MSR and NTFS
+  # must read back identical — no format, no fsck, no mount-time write, no resize.
+  SUMS="$LOGS_DIR/e2e-dualboot.sha256"
+  [[ -s "$SUMS" ]] || die "S3: no dual-boot reference hashes ($SUMS)."
+  sum_cmd=""
+  while read -r n h; do
+    sum_cmd+="[[ \"\$(sha256sum /dev/vda$n | cut -d\" \" -f1)\" == $h ]] || { echo \"vda$n changed\"; rc=1; }; "
+  done < "$SUMS"
+  assert "the foreign partitions are byte for byte what they were before S1" "rc=0; $sum_cmd exit \$rc"
+  assert "no foreign partition is mounted" \
+    '! findmnt -rno SOURCE | grep -E "^/dev/vda[123]$"'
+  assert "W runs off its own ESP (not the Windows one)" \
+    'esp=$(findmnt -no SOURCE /boot/efi); [[ "$esp" != /dev/vda1 && "$(lsblk -no PARTLABEL "$esp")" == "W EFI" ]] || { echo "ESP: $esp"; exit 1; }'
+  # Limine registers "W (Limine)"; GRUB's non-removable grub-install, "W".
+  if (( ENCRYPTED )); then label='W \(Limine\)'; else label='W'; fi
+  assert "NVRAM carries the W entry for that ESP" \
+    'n=$(cat /sys/class/block/$(basename "$(findmnt -no SOURCE /boot/efi)")/partition)
+     efibootmgr | grep -qE "^Boot[0-9A-F]{4}\*? '"$label"'[[:space:]]+HD\($n,GPT" || { efibootmgr; exit 1; }'
+  assert "the firmware has the Windows entry S0 wrote, and W detects it" \
+    '/usr/lib/w/w-boot-otheros | grep -qP "^[0-9A-F]{4}\tWindows Boot Manager$" || { efibootmgr; exit 1; }'
+fi
+
+# The boot menu next to Windows: an entry that reboots into the firmware's Windows
+# entry (never a chainload — BitLocker), and the menu shown. Without Windows the
+# opposite, and that half runs on every e2e: the menu stays hidden, no foreign entry.
+if (( ENCRYPTED )); then
+  if (( DUALBOOT )); then
+    assert "Limine menu offers Windows via its firmware entry, and is shown" \
+      'c=/boot/efi/limine.conf
+       grep -qx "/Windows Boot Manager" $c && grep -qx "    protocol: efi_boot_entry" $c &&
+       grep -qx "    entry: Windows Boot Manager" $c && grep -qx "quiet: no" $c &&
+       grep -qx "timeout: 5" $c || { cat $c; exit 1; }'
+  else
+    assert "Limine menu stays quiet, no foreign entry" \
+      'c=/boot/efi/limine.conf
+       grep -qx "quiet: yes" $c && ! grep -q efi_boot_entry $c || { cat $c; exit 1; }'
+  fi
+else
+  if (( DUALBOOT )); then
+    assert "GRUB menu offers Windows via BootNext, and is shown" \
+      'c=/boot/grub/grub.cfg
+       grep -q "^menuentry .Windows Boot Manager. .*w-bootnext-" $c &&
+       grep -qx "set timeout_style=menu" $c && ! grep -q chainloader $c || { cat $c; exit 1; }'
+  else
+    assert "GRUB menu stays hidden, no foreign entry" \
+      'c=/boot/grub/grub.cfg
+       ! grep -q -e w-bootnext -e efi-bootnext -e "^set timeout_style=menu" $c &&
+       grep -q "set timeout_style=hidden" $c || { cat $c; exit 1; }'
+  fi
+fi
+
 if (( ENCRYPTED )); then
   # The very fact S2/S3 booted headless already proves the TPM2 unlock worked —
   # these pin the stack's identity: root on the LUKS mapping, the tpm2 token in
@@ -460,7 +836,21 @@ if (( ENCRYPTED )); then
   assert "root LUKS mapping active" 'cryptsetup status cryptroot | grep -q "is active"'
   assert "TPM2 unlock token enrolled" \
     'cryptsetup luksDump "$(cryptsetup status cryptroot | awk "/device:/ {print \$2}")" | grep -q systemd-tpm2'
+  # The install seals to no PCR (its live PCR 7 is the medium's); firstboot rebinds
+  # the seal to PCR 7 of this boot chain — S3 unlocking headless proves it matches.
+  assert "firstboot resealed TPM2 to PCR 7, nothing left pending" \
+    '! test -e /var/lib/w/tpm-reseal-pending &&
+     cryptsetup luksDump --dump-json-metadata "$(cryptsetup status cryptroot | awk "/device:/ {print \$2}")" |
+       jq -e "[.tokens[] | select(.type == \"systemd-tpm2\") | .\"tpm2-pcrs\"] == [[7]]"'
   assert "Limine deployed" 'test -f /etc/default/limine && test -f /boot/efi/EFI/limine/limine_x64.efi'
+  # w-boot-otheros reads Windows out of efibootmgr's text — this pins that text on the
+  # one entry every encrypted install has, so a format change upstream fails the
+  # nightly canary rather than silently emptying the menus of dual-boot machines.
+  # Installed under Secure Boot, W's entry is shim's "W" (Limine's own was dropped).
+  nv_label='W \(Limine\)'
+  if (( ISO_SB )); then nv_label='W'; fi
+  assert "efibootmgr still prints what w-boot-otheros parses" \
+    'efibootmgr | grep -qP "^Boot[0-9A-F]{4}\*? '"$nv_label"'\t(\S*/)?HD\([0-9]+,GPT,[0-9a-fA-F-]{36}," || { efibootmgr; exit 1; }'
   # ── The ESP staging path (the encrypted stack's single point of failure) ──────
   # Limine cannot read the LUKS root, so /boot is not what it boots — the ESP copy
   # is, and only limine-mkinitcpio-hook keeps that copy current. When its AUR build
@@ -488,11 +878,13 @@ if (( ENCRYPTED )); then
      [[ -n "$k" && -n "$i" ]] || { echo "limine.conf names no managed kernel entry"; exit 1; }
      ih=${i#*#}; k=${k%%#*}; i=${i%%#*}
      test -s "/boot/efi$k" && test -s "/boot/efi$i"
-     cmp -s "/boot/efi$k" /boot/vmlinuz-linux-zen \
-       || { echo "ESP kernel differs from the installed /boot/vmlinuz-linux-zen"; exit 1; }
      kver=$(lsinitcpio --nocolor -a "/boot/efi$i" | sed -n "s/.*Kernel: *//p" | head -1)
      test -n "$kver" && test -d "/usr/lib/modules/$kver" \
        || { echo "ESP initramfs was built for ${kver:-?}, not for the installed kernel"; exit 1; }
+     # Against the package image limine-mkinitcpio copies, not /boot/vmlinuz-*: once
+     # sbctl holds keys, its mkinitcpio post hook signs the /boot copy (nothing boots it).
+     cmp -s "/boot/efi$k" "/usr/lib/modules/$kver/vmlinuz" \
+       || { echo "ESP kernel differs from the installed /usr/lib/modules/$kver/vmlinuz"; exit 1; }
      [[ "$(b2sum "/boot/efi$i" | cut -d" " -f1)" == "$ih" ]] \
        || { echo "limine.conf carries a stale BLAKE2B for the staged initramfs"; exit 1; }'
   # The encrypted preset is also the EDGE preset, so this is the only scenario where
@@ -619,9 +1011,145 @@ info "S3: removing the multi-user fixture..."
 info "S3: collecting final diag bundle (best-effort)..."
 "${SSH[@]}" 'bash /var/lib/w/src/scripts/collect-logs.sh' &>/dev/null || true
 
+if [[ -n "$SB_MODE" ]]; then
+  # The test seam (see the header): TPM2 bound to no PCR, so S4/S5 unlock headless
+  # while the Secure Boot state moves under PCR7. The passphrase comes from the preset.
+  eval "$(grep '^luks_pass=' "$WORK" | tail -1)"
+  LUKS_PW="$(printf %q "${luks_pass:-}")"
+  "${SSH[@]}" "PASSWORD=$LUKS_PW"' systemd-cryptenroll "$(cryptsetup status cryptroot | awk "/device:/ {print \$2}")" --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs=' >/dev/null \
+    || die "S3: could not re-bind TPM2 to no PCR for the Secure Boot stages."
+fi
+
 "${SSH[@]}" 'systemctl poweroff' 2>/dev/null || true
 wait "$QPID" 2>/dev/null || true
 QPID=""
+
+# ── S4–S6 (--secureboot): Secure Boot turned on in the installed system ───────
+# --iso-sb comes in at S5: the installer ran phase 1, firstboot phase 2, and the
+# firmware (S1's varstore, W's key added) has been enforcing since S1.
+SB_ISO_PHASES=0
+if (( ISO_SB )); then SB_MODE=shim; SB_ISO_PHASES=1; fi
+if [[ -n "$SB_MODE" ]] && (( FAILED == 0 )); then
+  # Firmware: own → start.sh's Setup-Mode varstore (seeded from the plain one, so the
+  # boot entries come along); shim → Microsoft's keys, NOT enforcing yet: a user turns
+  # Secure Boot on after the shim chain is in place, never before. The enroll
+  # shortcut itself turns SecureBootEnable on, hence the explicit --set-false.
+  MS_VARS="$SCRIPT_DIR/OVMF_VARS.secboot-ms.fd"
+  if (( SB_ISO_PHASES )); then
+    SB_START=(--secureboot=ms --tpm)
+  elif [[ "$SB_MODE" == shim ]]; then
+    SB_START=(--secureboot=ms --tpm)
+    virt-fw-vars --input "$SCRIPT_DIR/OVMF_VARS.fd" --output "$MS_VARS" --enroll-redhat \
+      --set-false SecureBootEnable &>/dev/null \
+      || die "S4: virt-fw-vars could not build the Microsoft-keyed varstore."
+  else
+    SB_START=(--secureboot --tpm)
+  fi
+  sb_boot() { setsid bash "$SCRIPT_DIR/start.sh" --headless "${SB_START[@]}" & QPID=$!; wait_booted "$1"; }
+  sb_down() { "${SSH[@]}" 'systemctl poweroff' 2>/dev/null || true; wait "$QPID" 2>/dev/null || true; QPID=""; }
+  # Remote prelude: `cur` prints the firmware entry BootCurrent points at.
+  CURRENT='cur() { local c; c=$(efibootmgr | sed -n "s/^BootCurrent: *//p"); efibootmgr | grep "^Boot$c"; }; '
+  # shim: W's entry first, Limine's own (the firmware rejects it) — if any — last of the
+  # boot entries; the firmware's built-in apps (FvVol) are left out, OVMF moves them.
+  SHIM_ORDER='fv=",$(efibootmgr | grep FvVol | sed -n "s/^Boot\([0-9A-F]*\).*/\1/p" | paste -sd,),"
+    o=$(efibootmgr | sed -n "s/^BootOrder: *//p" | tr , "\n" | while read -r b; do [[ $fv == *,$b,* ]] || echo $b; done | paste -sd,)
+    num() { efibootmgr | grep -i "$1" | sed -n "s/^Boot\([0-9A-F]*\).*/\1/p"; }
+    w=$(num "EFI.W.shimx64.efi"); l=$(num "EFI.limine.limine_x64.efi")
+    [[ -n $w && $o == $w,* ]] && { [[ -z $l ]] || [[ $o == *,$l ]]; } || { efibootmgr; exit 1; }'
+  # The 6th column of `status --porcelain`: does the config hash in the loaders match?
+  hash_is() { echo 'w-secureboot status --porcelain | awk -F"\t" "NR==2 && \$6==\"'"$1"'\" {ok=1} END {exit !ok}"'; }
+
+  if (( ! SB_ISO_PHASES )); then
+    info "S4: Secure Boot firmware ($SB_MODE), not enforcing yet — enable, phase 1..."
+    sb_boot S4
+    "${SSH[@]}" 'w-secureboot enable' > "$LOGS_DIR/e2e-sb-phase1.log" 2>&1 \
+      || die "S4: w-secureboot enable (phase 1) failed — see $LOGS_DIR/e2e-sb-phase1.log"
+    assert "enable picked the $SB_MODE mode from the firmware, and asks for a reboot" \
+      'w-secureboot status --porcelain | awk -F"\t" "NR==2 && \$4==\"reboot_needed\" && \$5==\"'"$SB_MODE"'\" {ok=1} END {exit !ok}"'
+    if [[ "$SB_MODE" == shim ]]; then
+      assert "the firmware boots W's shim entry first, Limine's own entry last" "$SHIM_ORDER"
+      "${SSH[@]}" 'cat /boot/efi/EFI/W/W-MOK.cer' > "$LOGS_DIR/e2e-sb-mok.cer" \
+        || die "S4: no W-MOK.cer on the ESP."
+      "${SSH[@]}" 'mokutil --revoke-import' &>/dev/null || true
+    fi
+    sb_down
+    (( FAILED == 0 )) || die "Secure Boot phase 1 assertions failed."
+    if [[ "$SB_MODE" == shim ]]; then
+      # 605dab50-… is shim's vendor GUID — the owner mokutil records for its imports.
+      { virt-fw-vars --input "$MS_VARS" --output "$MS_VARS.new" --secure-boot \
+          --add-mok 605dab50-e046-4300-abb6-3dd810dd8b23 "$LOGS_DIR/e2e-sb-mok.cer" &>/dev/null \
+        && mv -f "$MS_VARS.new" "$MS_VARS"; } || die "S4: could not pre-seed MokList / turn Secure Boot on."
+    fi
+  fi
+
+  info "S5: Secure Boot enforcing — the mode's boot chain, enable phase 2..."
+  sb_boot S5
+  assert "Secure Boot is enforcing" 'mokutil --sb-state | grep -qx "SecureBoot enabled"'
+  if [[ "$SB_MODE" == shim ]]; then
+    assert "booted through W's shim entry, with W's key in MokList" \
+      "$CURRENT"'cur | grep -qi "EFI.W.shimx64.efi" &&
+       test -e /sys/firmware/efi/efivars/MokListRT-605dab50-e046-4300-abb6-3dd810dd8b23 &&
+       mokutil --test-key /boot/efi/EFI/W/W-MOK.cer | grep -q "already enrolled" || { efibootmgr; exit 1; }'
+    assert "the boot order survived the reboot: shim entry first, Limine's own last" "$SHIM_ORDER"
+  else
+    assert "the firmware runs W's own keys, booting W's Limine entry" \
+       "$CURRENT"'sbctl status | grep -q "Setup Mode:.*Disabled" && cur | grep -qi "EFI.limine.limine_x64.efi" || { efibootmgr; exit 1; }'
+  fi
+  if (( SB_ISO_PHASES )); then
+    assert "the medium's hash stays in MokList (unattended queues no MokManager step)" \
+      '! test -e /sys/firmware/efi/efivars/MokNew-605dab50-e046-4300-abb6-3dd810dd8b23 &&
+       ! test -e /sys/firmware/efi/efivars/MokDel-605dab50-e046-4300-abb6-3dd810dd8b23'
+  else
+    "${SSH[@]}" "PASSWORD=$LUKS_PW w-secureboot enable" > "$LOGS_DIR/e2e-sb-phase2.log" 2>&1 \
+      || die "S5: w-secureboot enable (phase 2) failed — see $LOGS_DIR/e2e-sb-phase2.log"
+  fi
+  assert "phase 2 finished: on, no reseal pending, mode reported" \
+    'w-secureboot status --porcelain | awk -F"\t" "NR==2 && \$1==\"on\" && \$4==\"no\" && \$5==\"'"$SB_MODE"'\" {ok=1} END {exit !ok}"'
+  assert "TPM2 is sealed to PCR7" \
+    'cryptsetup luksDump --dump-json-metadata "$(cryptsetup status cryptroot | awk "/device:/ {print \$2}")" |
+       jq -e "[.tokens[] | select(.type == \"systemd-tpm2\") | .\"tpm2-pcrs\"] == [[7]]"'
+  # A regeneration (what every kernel update or snapshot does) must leave the mode's
+  # loaders consistent with the config Limine will read.
+  if [[ "$SB_MODE" == shim ]]; then
+    assert "after limine-update, both grubx64.efi carry .sbat, the current config hash, a signature" \
+      'limine-update &>/dev/null; e=/boot/efi; h=$(b2sum $e/limine.conf | cut -c1-128)
+       for d in W BOOT; do g=$e/EFI/$d/grubx64.efi
+         strings -n 128 $g | grep -q "$h" || { echo "$g: stale config hash"; exit 1; }
+         sbctl verify $g | grep -q "✓" || { echo "$g: not signed"; exit 1; }
+         objdump -h $g | grep -q " \.sbat " || { echo "$g: no .sbat"; exit 1; }
+       done
+       cmp -s $e/EFI/BOOT/BOOTX64.EFI /usr/share/shim-signed/shimx64.efi || { echo "the fallback is not shim"; exit 1; }'
+    entry='EFI.W.shimx64.efi'
+  else
+    assert "after limine-update, the fallback is the signed, hash-enrolled Limine" \
+      'limine-update &>/dev/null; e=/boot/efi
+       cmp -s $e/EFI/BOOT/BOOTX64.EFI $e/EFI/limine/limine_x64.efi || { echo "the fallback differs from limine_x64.efi"; exit 1; }
+       sbctl verify $e/EFI/BOOT/BOOTX64.EFI | grep -q "✓" || { echo "the fallback is not signed"; exit 1; }'
+    entry='EFI.limine.limine_x64.efi'
+  fi
+  assert "status reports the config hash current" "$(hash_is ok)"
+  # The guard: an edit past limine-entry-tool leaves the enrolled hash behind, and
+  # Limine would halt S6 on CHECKSUM MISMATCH unless w-secureboot-guard re-enrolls at
+  # this poweroff. S6 booting at all is the rest of this assertion.
+  assert "an edit past limine-entry-tool is reported stale, the shutdown guard is armed" \
+    'echo "# e2e: edited past limine-entry-tool" >> /boot/efi/limine.conf; '"$(hash_is stale)"' &&
+     systemctl is-active -q w-secureboot-guard.service'
+  # S6 has to reach the system through the removable path: drop W's own entry.
+  "${SSH[@]}" 'for n in $(efibootmgr | grep -i "'"$entry"'" | sed -n "s/^Boot\([0-9A-F]*\).*/\1/p"); do efibootmgr -b $n -B >/dev/null; done'
+  sb_down
+  (( FAILED == 0 )) || die "Secure Boot phase 2 assertions failed."
+
+  # Reaching SSH at all is the main assertion here: nobody types a passphrase in a
+  # headless boot, so the disk was unlocked by the PCR7 seal of phase 2, and the
+  # loader that started was the removable fallback under an enforcing firmware.
+  info "S6: Secure Boot, fallback path only — must unlock and boot headless..."
+  sb_boot S6
+  assert "booted from the removable fallback path, Secure Boot enforcing" \
+     "$CURRENT"'mokutil --sb-state | grep -qx "SecureBoot enabled" && ! cur | grep -qiE "EFI.(W|limine)." || { efibootmgr; exit 1; }'
+  assert "the shutdown guard re-enrolled the edited limine.conf, the hash is current" \
+    'journalctl -b -1 -u w-secureboot-guard.service | grep -q "re-enrolling" && '"$(hash_is ok)"
+  sb_down
+fi
 
 if [[ $FAILED -eq 0 ]]; then
   info "E2E PASS — full pipeline: ISO → install → firstboot → clean boot."

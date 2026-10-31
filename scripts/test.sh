@@ -11,7 +11,15 @@
 #   1. iso     scripts/build-iso.sh          fresh W ISO (e2e installs from it)
 #   2. plain   vm/e2e.sh                      unattended install: btrfs + GRUB
 #   3. crypt   vm/e2e.sh --encrypted          unattended install: LUKS2+Limine+TPM2
-#   4. logscan journal-err of each phase's diag bundle (review, not a gate)
+#   4. dual-plain  vm/e2e.sh --dualboot       opt-in (--dualboot): each stack into the
+#   5. dual-crypt  vm/e2e.sh --dualboot --encrypted   free space next to a fake Windows
+#   6. sb-iso   vm/e2e.sh --encrypted --iso-sb            opt-in (--secureboot): the
+#               install medium under Secure Boot — refusals, then the install sets
+#               up shim itself and the system runs under Secure Boot (S1–S6)
+#   7. sb-own   vm/e2e.sh --encrypted --secureboot own    crypt install, then Secure
+#   8. sb-shim  vm/e2e.sh --encrypted --secureboot shim   Boot on through w-secureboot —
+#               own keys / factory keys + shim + MOK
+#   9. logscan journal-err of each phase's diag bundle (review, not a gate)
 #
 # Static is cross-platform and always runs. The e2e phases need Arch + KVM; on
 # any other host they are recorded SKIP (not FAIL) so `--lint-only`-class use
@@ -26,6 +34,17 @@
 #   bash scripts/test.sh --plain-only    # static → iso → plain   (skip encrypted)
 #   bash scripts/test.sh --encrypted-only# static → iso → crypt   (skip plain)
 #   bash scripts/test.sh --fault-mirror  # + the Ф.4 stalled-mirror scenario in e2e
+#   bash scripts/test.sh --dualboot      # + phases dual-plain/dual-crypt — run them when
+#                                        #   lib/disk.sh, the disk_mode step or the bootloader
+#                                        #   modules change (--plain-only/--encrypted-only
+#                                        #   narrow the dual phases the same way)
+#   bash scripts/test.sh --dual-only     # static → iso → the dual phases only — for
+#                                        #   iterating on dual code; the full gate still
+#                                        #   owes the wipe/no-Windows runs before a commit
+#   bash scripts/test.sh --secureboot    # + phases sb-iso/sb-own/sb-shim — run them when
+#                                        #   w-secureboot, w-secureboot-stage, w-sbat-lib.sh,
+#                                        #   iso-secureboot.sh or the Limine module change
+#                                        #   (needs the encrypted stack)
 #
 # Exit: 0 only if every executed gate phase passed. Log-scan findings never fail
 # the run — they surface known-benign install-time races for a human/AI to judge.
@@ -45,7 +64,7 @@ bad()  { echo -e "${RED}FAIL${NC} $*"; }
 die()  { bad "$*"; exit 2; }
 
 # ── Arguments ─────────────────────────────────────────────────────────────────
-DO_ISO=1; DO_PLAIN=1; DO_CRYPT=1; LINT_ONLY=0
+DO_ISO=1; DO_PLAIN=1; DO_CRYPT=1; DO_DUAL=0; DUAL_ONLY=0; LINT_ONLY=0; DO_SB=0
 E2E_EXTRA=()
 for arg in "$@"; do
   case "$arg" in
@@ -54,13 +73,21 @@ for arg in "$@"; do
     --no-iso)         DO_ISO=0 ;;
     --plain-only)     DO_CRYPT=0 ;;
     --encrypted-only) DO_PLAIN=0 ;;
+    --dualboot)       DO_DUAL=1 ;;
+    --dual-only)      DO_DUAL=1; DUAL_ONLY=1 ;;
+    --secureboot)     DO_SB=1 ;;
     -h|--help)
-      sed -n '2,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,49p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) die "unknown argument: $arg (see --help)" ;;
   esac
 done
-if (( LINT_ONLY )); then DO_ISO=0; DO_PLAIN=0; DO_CRYPT=0; fi
+if (( LINT_ONLY )); then DO_ISO=0; DO_PLAIN=0; DO_CRYPT=0; DO_DUAL=0; DO_SB=0; fi
+# Secure Boot exists on the encrypted stack only; --plain-only drops it.
+DO_SB=$(( DO_SB && DO_CRYPT ))
+# The dual phases follow the stack selection; --dual-only then drops the regular ones.
+DUAL_PLAIN=$(( DO_DUAL && DO_PLAIN )); DUAL_CRYPT=$(( DO_DUAL && DO_CRYPT ))
+if (( DUAL_ONLY )); then DO_PLAIN=0; DO_CRYPT=0; DO_SB=0; fi
 
 # ── Run directory + summary ───────────────────────────────────────────────────
 TS="$(date +%Y%m%d-%H%M%S)"
@@ -151,25 +178,27 @@ scan_logs() {
 run_phase static "$RUN_DIR/static.log" bash "$SRC/scripts/check.sh"
 if [[ "${ST[static]}" == FAIL ]]; then
   info "static gate failed — stopping before the expensive phases."
-  DO_ISO=0; DO_PLAIN=0; DO_CRYPT=0
+  DO_ISO=0; DO_PLAIN=0; DO_CRYPT=0; DO_DUAL=0; DUAL_PLAIN=0; DUAL_CRYPT=0; DO_SB=0
 fi
 
 # ── Guard: e2e phases require Arch + KVM ──────────────────────────────────────
-if (( DO_PLAIN || DO_CRYPT )) && (( ! kvm_ready )); then
+if (( DO_PLAIN || DO_CRYPT || DO_DUAL )) && (( ! kvm_ready )); then
   warn "e2e phases skipped: $kvm_why (Arch + KVM host required)."
   (( DO_PLAIN )) && set_state plain SKIP
   (( DO_CRYPT )) && set_state crypt SKIP
-  DO_PLAIN=0; DO_CRYPT=0
+  (( DUAL_PLAIN )) && set_state dual-plain SKIP
+  (( DUAL_CRYPT )) && set_state dual-crypt SKIP
+  DO_PLAIN=0; DO_CRYPT=0; DO_DUAL=0; DUAL_PLAIN=0; DUAL_CRYPT=0; DO_SB=0
 fi
 
 # ── Phase 1: build ISO ────────────────────────────────────────────────────────
-if (( DO_ISO )) && (( DO_PLAIN || DO_CRYPT )); then
+if (( DO_ISO )) && (( DO_PLAIN || DO_CRYPT || DO_DUAL )); then
   run_phase iso "$RUN_DIR/iso.log" bash "$SRC/scripts/build-iso.sh"
   if [[ "${ST[iso]}" == FAIL ]]; then
     info "ISO build failed — cannot run e2e against a stale/absent ISO."
-    DO_PLAIN=0; DO_CRYPT=0
+    DO_PLAIN=0; DO_CRYPT=0; DO_DUAL=0; DUAL_PLAIN=0; DUAL_CRYPT=0; DO_SB=0
   fi
-elif (( ! DO_ISO )) && (( DO_PLAIN || DO_CRYPT )); then
+elif (( ! DO_ISO )) && (( DO_PLAIN || DO_CRYPT || DO_DUAL )); then
   warn "iso build skipped (--no-iso) — reusing newest archiso/out/*.iso."
   set_state iso SKIP
 fi
@@ -192,6 +221,39 @@ if (( DO_CRYPT )); then
     archive_diags crypt "$SENT"; scan_logs crypt
   fi
 fi
+
+# ── Phases 4–5: e2e dual-boot (opt-in; each stack into free space) ────────────
+dual_phase() {  # <phase> [e2e args...]
+  local name="$1"; shift
+  if ! command -v mkntfs &>/dev/null || [[ ! -f /usr/share/edk2-shell/x64/Shell.efi ]] \
+     || { [[ "$name" == dual-crypt ]] && ! command -v swtpm &>/dev/null; }; then
+    warn "$name phase skipped: needs mkntfs + edk2-shell (+ swtpm) (w-pack install w-dev)."
+    set_state "$name" SKIP
+    return
+  fi
+  SENT="$RUN_DIR/.sentinel-$name"; touch "$SENT"
+  run_phase "$name" "$RUN_DIR/$name.log" bash "$SRC/vm/e2e.sh" --dualboot "$@" "${E2E_EXTRA[@]}"
+  archive_diags "$name" "$SENT"; scan_logs "$name"
+}
+(( DUAL_PLAIN )) && dual_phase dual-plain
+(( DUAL_CRYPT )) && dual_phase dual-crypt --encrypted
+
+# ── Phases 6–8: e2e Secure Boot (opt-in; the medium, then w-secureboot) ───────
+sb_phase() {  # <phase> <iso|own|shim>
+  local name="$1" mode="$2" args=(--secureboot "$2")
+  [[ "$mode" == iso ]] && args=(--iso-sb)
+  if ! command -v swtpm &>/dev/null || { [[ "$mode" != own ]] && ! command -v virt-fw-vars &>/dev/null; }; then
+    warn "$name phase skipped: needs swtpm (+ virt-firmware for shim) (w-pack install w-dev)."
+    set_state "$name" SKIP
+    return
+  fi
+  SENT="$RUN_DIR/.sentinel-$name"; touch "$SENT"
+  run_phase "$name" "$RUN_DIR/$name.log" bash "$SRC/vm/e2e.sh" --encrypted "${args[@]}" "${E2E_EXTRA[@]}"
+  archive_diags "$name" "$SENT"; scan_logs "$name"
+}
+(( DO_SB )) && sb_phase sb-iso iso
+(( DO_SB )) && sb_phase sb-own own
+(( DO_SB )) && sb_phase sb-shim shim
 
 # ── Summary + verdict ─────────────────────────────────────────────────────────
 VERDICT=PASS

@@ -49,6 +49,9 @@ def register(mcp):
         appearance: Literal["dark", "light"] = "dark",
         contrast: Annotated[Literal["low", "medium", "high"], desc("medium = calibrated default, low = soft pastel (tinted canvas), high = crisp; none lowers legibility")] = "medium",
         seed_index: Annotated[int, desc("which dominant colour to build around, 0 = most dominant")] = 0,
+        tint: Annotated[Literal["neutral", "subtle", "full"], desc("colour of surfaces/text: neutral = graphite/paper (a trace of the tone) with coloured accents, full = default")] = "full",
+        surface: Annotated[str, desc("tone the surfaces wear: accent (default), wallpaper (the image's ground colour), a base-colour number, or #rrggbb")] = "accent",
+        saturation: Annotated[Literal["muted", "balanced", "vivid"], desc("how colourful accents, icons and terminal colours are: balanced = calibrated default, muted = calmer, vivid = most colourful; background unaffected")] = "balanced",
     ) -> str:
         """Build a personal theme from an image (Tier 1: writes only
         ~/.config/w/themes). Undo with w_theme_rm; a SYSTEM theme needs root and is
@@ -59,7 +62,8 @@ def register(mcp):
             return "(seed_index counts from 0, the most dominant colour)"
         return run(
             ["w-theme", "new", name, "--wallpaper", wallpaper, "--appearance", appearance,
-             "--contrast", contrast, "--seed-index", str(seed_index)],
+             "--contrast", contrast, "--seed-index", str(seed_index),
+             "--tint", tint, "--surface", surface.strip() or "accent", "--saturation", saturation],
             timeout=180,
         )
 

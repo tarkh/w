@@ -57,25 +57,59 @@ Item {
     property string appearance: "dark"
     property string contrast: "medium"
     property int seedIndex: 0
+    // The surfaces' own colour, split from the accents': which tone they wear
+    // ("accent" = the base colour's, else a wallpaper tone's hex) and how much of
+    // it (neutral = graphite/paper). The defaults are the single-hue theme.
+    property string surface: "accent"
+    property string tint: "full"
+    // How colourful the accents, icons and ANSI colours are; balanced = calibrated.
+    property string saturation: "balanced"
     property bool busy: false
     property string error: ""
 
     // The whole preview matrix from one CLI run: every base colour the image
-    // offers, dark and light, at every contrast level. Every control on this
-    // screen is then a lookup rather than another extraction — the difference
-    // between a preview that reacts and one that stalls on every click.
+    // offers × surface tone × tint, dark and light, at every contrast level. Every
+    // control on this screen is then a lookup rather than another extraction —
+    // the difference between a preview that reacts and one that stalls on every
+    // click.
     property var seeds: []
+    property bool mono: false
     readonly property var activeSeed: (root.seedIndex >= 0 && root.seedIndex < root.seeds.length)
                                       ? root.seeds[root.seedIndex] : null
+    // The tone row: the base colour's own tone first, then the wallpaper's.
+    readonly property var toneChoices: root.activeSeed
+        ? [{ id: "accent", swatch: root.activeSeed.source }].concat(root.activeSeed.tones || []) : []
+    readonly property bool showTones: !root.mono && root.toneChoices.length > 1
+    // A base colour offers its own tone list; a tone picked under another one
+    // falls back to the accent rather than pointing at a palette that is not there.
+    onToneChoicesChanged: if (!root.toneChoices.some(t => t.id === root.surface)) root.surface = "accent"
+
+    // The matrix cell the current choices select: the accent tone at full tint is
+    // the plain `appearance` matrix, every other pair lives under `tinted`.
+    readonly property var activeMatrix: {
+        const s = root.activeSeed;
+        if (!s) return null;
+        if (root.surface === "accent" && root.tint === "full") return s.appearance;
+        return ((s.tinted || {})[root.surface] || {})[root.tint] || null;
+    }
+
+    // Another saturation changes only the chromatic slots; the matrix carries the
+    // ones the palette row shows apart (`saturated`), laid over the cell above.
+    readonly property var saturatedSlots: {
+        const s = root.activeSeed;
+        if (!s || root.saturation === "balanced") return {};
+        const bySat = (((s.saturated || {})[root.surface] || {})[root.tint] || {})[root.saturation] || {};
+        return (bySat[root.appearance] || {})[root.contrast] || {};
+    }
 
     // The pigments shown as the palette row, in the order a theme reads: two
     // surfaces, the accent pair, the secondary accent, text, danger.
     readonly property var swatchRoles: ["SURFACE_1", "SURFACE_3", "ACCENT_CONTAINER", "ACCENT",
                                         "VIVID", "TEXT", "DANGER"]
     readonly property var swatches: {
-        if (!root.activeSeed) return [];
-        const byLevel = root.activeSeed.appearance[root.appearance] || {};
-        const p = byLevel[root.contrast] || {};
+        if (!root.activeMatrix) return [];
+        const byLevel = root.activeMatrix[root.appearance] || {};
+        const p = Object.assign({}, byLevel[root.contrast] || {}, root.saturatedSlots);
         return root.swatchRoles.map(k => p[k]).filter(c => !!c);
     }
 
@@ -86,7 +120,9 @@ Item {
     // ── Keyboard roving-focus (flat, heterogeneous list inside a Flickable) ────────
     // Name field, choose-file button, 2 appearance segments, 3 contrast segments
     // (only once a preview exists), a variable Repeater of seed swatches (only
-    // once the image offers more than one), then submit/cancel — a mix no single
+    // once the image offers more than one), 3 saturation and 3 tint segments (not for a greyscale
+    // image), a variable Repeater of tone swatches (only when the image offers a
+    // tone apart from the base colour), then submit/cancel — a mix no single
     // fixed id array or single Repeater could describe on its own, so this follows
     // DisplaysPanel's flat-descriptor idiom (`buildContent()`/`contentIndexOf`,
     // quickshell-hub.md's Ф-Keyboard checklist item 2, second variant) rather than
@@ -101,6 +137,12 @@ Item {
                      { kind: "contrast", idx: 2, key: "contrast:2" });
         if (root.seeds.length > 1)
             for (let i = 0; i < root.seeds.length; i++) arr.push({ kind: "seed", idx: i, key: "seed:" + i });
+        if (root.seeds.length > 0 && !root.mono) {
+            for (let i = 0; i < 3; i++) arr.push({ kind: "saturation", idx: i, key: "saturation:" + i });
+            for (let i = 0; i < 3; i++) arr.push({ kind: "tint", idx: i, key: "tint:" + i });
+        }
+        if (root.showTones)
+            for (let i = 0; i < root.toneChoices.length; i++) arr.push({ kind: "tone", idx: i, key: "tone:" + i });
         arr.push({ kind: "button", ref: "submit", key: "submit" }, { kind: "button", ref: "cancel", key: "cancel" });
         return arr;
     }
@@ -133,6 +175,9 @@ Item {
         case "appr": return apprRepeater.itemAt(d.idx);
         case "contrast": return contrastRepeater.itemAt(d.idx);
         case "seed": return seedRepeater.itemAt(d.idx);
+        case "saturation": return saturationRepeater.itemAt(d.idx);
+        case "tint": return tintRepeater.itemAt(d.idx);
+        case "tone": return toneRepeater.itemAt(d.idx);
         }
         return null;
     }
@@ -256,6 +301,7 @@ Item {
             }
             try {
                 const d = JSON.parse(previewOut.text || "{}");
+                root.mono = !!d.mono;
                 root.seeds = d.seeds || [];
                 // An existing theme opens on the settings it was built with —
                 // present only when editing, and the run happens once, so there
@@ -264,8 +310,13 @@ Item {
                     root.appearance = d.current.appearance || "dark";
                     root.contrast = d.current.contrast || "medium";
                     root.seedIndex = d.current.seed_index || 0;
+                    root.tint = d.current.tint || "full";
+                    root.saturation = d.current.saturation || "balanced";
                 }
                 if (root.seedIndex >= root.seeds.length) root.seedIndex = 0;
+                // Last: the tone list follows the base colour, so the tone is only
+                // valid once the seed it belongs to is selected.
+                if (d.current) root.surface = d.current.surface || "accent";
             } catch (e) {
                 // An empty form with no explanation is the worst outcome here: say
                 // so rather than leaving every control hidden with no reason given.
@@ -280,13 +331,13 @@ Item {
         if (!root.canSubmit) return;
         root.busy = true;
         root.error = "";
+        const palette = ["--appearance", root.appearance, "--contrast", root.contrast,
+                         "--seed-index", String(root.seedIndex),
+                         "--surface", root.surface, "--tint", root.tint,
+                         "--saturation", root.saturation];
         createProc.command = root.editing
-            ? ["w-theme", "edit", root.editTheme, "--rename", root.themeName,
-               "--appearance", root.appearance, "--contrast", root.contrast,
-               "--seed-index", String(root.seedIndex)]
-            : ["w-theme", "new", root.themeName,
-               "--wallpaper", root.wallpaper, "--appearance", root.appearance,
-               "--contrast", root.contrast, "--seed-index", String(root.seedIndex)];
+            ? ["w-theme", "edit", root.editTheme, "--rename", root.themeName].concat(palette)
+            : ["w-theme", "new", root.themeName, "--wallpaper", root.wallpaper].concat(palette);
         createProc.running = true;
     }
 
@@ -309,6 +360,34 @@ Item {
     // The shared pill (core/WPill.qml) with the Hub's outline width; `active` is
     // the filled current segment. Was a file-local copy of the same Rectangle.
     component Segment: WPill { borderWidth: HubConfig.border }
+
+    // A clickable colour swatch (base colour, surface tone).
+    component Swatch: Rectangle {
+        id: swatch
+        property bool on: false
+        property bool focused: false
+        // Same "give a bare Item the SelectRow/HubRow `activated()` contract" fix
+        // as quickshell-hub.md's Ф-Keyboard gotcha #10, so the panel's
+        // confirm-dispatcher can drive it uniformly.
+        signal activated()
+        width: 34; height: 34
+        radius: Geometry.radiusSm
+        // The selected swatch is marked by its ring, not by a tick: a glyph would
+        // have to be legible on an arbitrary colour. Keyboard focus reuses the same
+        // ring as selection (mirrors AppearancePanel.ThemeTile's `current ||
+        // focused` merge) — PLUS a scale lift (WPill's own focused idiom): a thin
+        // ring alone can vanish against a swatch close to the accent's own hue, the
+        // size change reads regardless of colour.
+        scale: swatch.focused ? 1.15 : 1
+        Behavior on scale { NumberAnimation { duration: Motion.fast; easing.type: Easing.OutCubic } }
+        border.width: (swatch.on || swatch.focused) ? 3 : 1
+        border.color: (swatch.on || swatch.focused) ? Colors.accentInk : Colors.border
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: swatch.activated()
+        }
+    }
 
     // ── Layout (scrolls; same bleed/scroll contract as PowerPanel/InputPanel —
     // quickshell-hub.md's Ф-Keyboard checklist item 7, NOT Flickable.topMargin/
@@ -490,38 +569,118 @@ Item {
                     Repeater {
                         id: seedRepeater
                         model: root.seeds
-                        delegate: Rectangle {
+                        delegate: Swatch {
                             id: seedCell
                             required property int index
                             required property var modelData
-                            readonly property bool on: root.seedIndex === seedCell.index
-                            readonly property bool focused: root.contentIndexOf["seed:" + seedCell.index] === root.focusIndex
-                            // Same "give a bare Item the SelectRow/HubRow `activated()`
-                            // contract" fix as quickshell-hub.md's Ф-Keyboard gotcha #10,
-                            // so the panel's confirm-dispatcher can drive it uniformly.
-                            signal activated()
+                            on: root.seedIndex === seedCell.index
+                            focused: root.contentIndexOf["seed:" + seedCell.index] === root.focusIndex
                             onActivated: root.seedIndex = seedCell.index
-                            width: 34; height: 34
-                            radius: Geometry.radiusSm
                             color: modelData.source
-                            // The selected swatch is marked by its ring, not by a tick:
-                            // a glyph would have to be legible on an arbitrary colour.
-                            // Keyboard focus reuses the same ring as selection (mirrors
-                            // AppearancePanel.ThemeTile's `current || focused` merge) —
-                            // PLUS a scale lift (WPill's own focused idiom): a thin ring
-                            // alone can vanish against a swatch close to the accent's own
-                            // hue, the size change reads regardless of colour.
-                            scale: seedCell.focused ? 1.15 : 1
-                            Behavior on scale { NumberAnimation { duration: Motion.fast; easing.type: Easing.OutCubic } }
-                            border.width: (seedCell.on || seedCell.focused) ? 3 : 1
-                            border.color: (seedCell.on || seedCell.focused) ? Colors.accentInk : Colors.border
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: seedCell.activated()
-                            }
                         }
                     }
+                }
+            }
+
+            // Saturation. How colourful the accents, icons and terminal colours are —
+            // muted, the calibrated balance, or vivid. The background keeps its tint;
+            // a greyscale image has no colour to saturate.
+            Row {
+                spacing: 8
+                visible: root.seeds.length > 0 && !root.mono
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: Strings.t("appear.saturation")
+                    color: Colors.text
+                    font.family: Fonts.family
+                    font.pixelSize: 13
+                }
+                Repeater {
+                    id: saturationRepeater
+                    model: [{ key: "muted", label: Strings.t("appear.saturation.muted") },
+                            { key: "balanced", label: Strings.t("appear.saturation.balanced") },
+                            { key: "vivid", label: Strings.t("appear.saturation.vivid") }]
+                    delegate: Segment {
+                        id: saturationCell
+                        required property var modelData
+                        required property int index
+                        label: modelData.label
+                        active: root.saturation === modelData.key
+                        focused: root.contentIndexOf["saturation:" + saturationCell.index] === root.focusIndex
+                        onClicked: root.saturation = modelData.key
+                    }
+                }
+            }
+
+            // Surface tint. How much colour the canvas, cards and text wear —
+            // neutral is graphite (or paper) with a trace of the tone, under the base
+            // colour's accents. A greyscale image is neutral already, so it offers
+            // no choice.
+            Row {
+                spacing: 8
+                visible: root.seeds.length > 0 && !root.mono
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: Strings.t("appear.tint")
+                    color: Colors.text
+                    font.family: Fonts.family
+                    font.pixelSize: 13
+                }
+                Repeater {
+                    id: tintRepeater
+                    model: [{ key: "neutral", label: Strings.t("appear.tint.neutral") },
+                            { key: "subtle", label: Strings.t("appear.tint.subtle") },
+                            { key: "full", label: Strings.t("appear.tint.full") }]
+                    delegate: Segment {
+                        id: tintCell
+                        required property var modelData
+                        required property int index
+                        label: modelData.label
+                        active: root.tint === modelData.key
+                        focused: root.contentIndexOf["tint:" + tintCell.index] === root.focusIndex
+                        onClicked: root.tint = modelData.key
+                    }
+                }
+            }
+
+            // Surface tone. Which colour that tint is: the base colour's own, or one
+            // the wallpaper is painted in — the ground of a dark picture with one
+            // bright spot, the sky of a garden whose accents are its gold (at the
+            // neutral tint: warm or cool graphite). Hidden when the image offers no
+            // tone apart from the base colour.
+            Column {
+                width: parent.width
+                spacing: 6
+                visible: root.showTones
+                Text {
+                    text: Strings.t("appear.surfaceTone")
+                    color: Colors.text
+                    font.family: Fonts.family
+                    font.pixelSize: 13
+                }
+                Row {
+                    spacing: 6
+                    Repeater {
+                        id: toneRepeater
+                        model: root.toneChoices
+                        delegate: Swatch {
+                            id: toneCell
+                            required property int index
+                            required property var modelData
+                            on: root.surface === modelData.id
+                            focused: root.contentIndexOf["tone:" + toneCell.index] === root.focusIndex
+                            onActivated: root.surface = modelData.id
+                            color: modelData.swatch
+                        }
+                    }
+                }
+                Text {
+                    width: parent.width
+                    text: Strings.t("appear.surfaceToneHint")
+                    color: Colors.muted
+                    font.family: Fonts.family
+                    font.pixelSize: 11
+                    wrapMode: Text.WordWrap
                 }
             }
 

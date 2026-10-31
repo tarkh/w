@@ -6,7 +6,7 @@ order: 2
 summary: Switching themes, creating a theme from a wallpaper, wallpaper sets, and the Appearance panel.
 sources:
   - path: .claude/library/w-theme.md
-    sha256: af639f1f32d207f1c340875e6a62780b6c7a0439d700ccc48b8caea95e023844
+    sha256: 9a8ce83e71f135534e6f1ef53949acb809a2fc8f0d233d1f764b41029506f118
   - path: .claude/library/w-wallpaper.md
     sha256: 2499a3c31263d765ac650f83ea6e84264c64424627e28df47631e425f9740f41
 ---
@@ -34,14 +34,27 @@ of an image:
 2. W extracts the dominant colors from the image and builds an accessible
    palette around the base color you pick — contrast is checked automatically
    so text stays readable in both modes.
-3. Choose an intensity (low/medium/high) for the palette ramp and confirm.
+3. Choose a contrast (Soft/Medium/Crisp) for the palette ramp, and a
+   **Saturation**: how colorful the accents, icons and terminal colors are.
+   **Balanced** is the default. **Muted** gives a calmer desktop, and **Vivid**
+   is the most colorful one, which helps when the accent looks washed out
+   (khaki on amber wallpaper, for example). The background keeps its tint,
+   and text stays readable at every step. The effect is gentler on amber,
+   yellow and teal wallpapers than on purple or blue ones.
+4. Optionally give the background its own color, separate from the accents:
+   **Surface tint** sets how much color the surfaces and text carry. **Full**
+   is the default single-color theme. **Neutral** is graphite (or paper) with
+   only a trace of color, and the accents keep the base color. **Surface tone**
+   picks that color: the base color, or one the wallpaper is painted in (for
+   example the slate of a dark night with one amber moon). It appears only when
+   the image has such a color. Confirm.
 
 Light themes get special care: ink colors are recalculated against the light
 surfaces, so buttons and icons keep their contrast.
 
 The same screen, opened with the pencil badge on one of **your** generated
 themes, rebuilds that theme from its own wallpaper (new base color, new
-contrast) — the wallpaper itself does not change.
+contrast, saturation, new background) — the wallpaper itself does not change.
 
 Wallpapers are per-resolution images in a small set of size tiers; a theme
 ships what it ships and the system falls back to the nearest size. See

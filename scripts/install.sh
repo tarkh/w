@@ -5,7 +5,8 @@
 #
 # --preset FILE: unattended install (audit P2). FILE is an install.conf-format
 # answers file (see lib/tui.sh answers_load / vm/e2e/preset-plain.sample.conf). The
-# whole interactive phase is skipped — the disk is wiped WITHOUT confirmation —
+# whole interactive phase is skipped — the disk is partitioned WITHOUT confirmation
+# (wiped, or W added into its free space with disk_mode=free) —
 # and every blocking dialog downstream (offline retry loops, the final reboot
 # screen, firstboot's dialogs) is replaced by a non-interactive branch. Drives
 # both the headless E2E test (vm/e2e.sh) and fleet deployment.
@@ -48,6 +49,9 @@ unset _f _mod_files
 
 # ── Config consumed by the work phases (mapped from ANSWERS after the wizard) ──
 CONF_DISK=""
+CONF_DISK_MODE="wipe"     # wipe (whole disk) | free (next to what is there)
+CONF_ESP_PART=""
+CONF_ROOT_PART=""
 CONF_HOSTNAME=""
 CONF_TZ="Europe/Moscow"
 CONF_ROOT_PASS=""
@@ -64,7 +68,7 @@ EDGE_SRC_DIR=""           # validated edge clone, reused by mod_firstboot
 # The public W repository, pre-filled into the edge step so a beta install is one
 # Enter. Users may replace it with their own fork — the field stays editable. Kept
 # as ONE constant here because the same URL also appears in rootfs/etc/os-release
-# and README.md; `scripts/publish.sh check` prints every occurrence so the three
+# and README.md/INSTALL.md; `scripts/publish.sh check` prints every occurrence so they
 # never drift apart.
 W_PUBLIC_EDGE_REPO="https://github.com/tarkh/w"
 
@@ -116,6 +120,45 @@ computer_type_list() {
   else
     printf '%s\t%s\n' desktop "$(t s_computer_desktop)" laptop "$(t s_computer_laptop)"
   fi
+}
+
+# Boot stack. Encrypted (LUKS2 + Limine) leads, so it is the highlighted default;
+# plain GRUB stays a fully supported compatibility path. Tags stay yes|no — that is
+# the install.conf/preset contract (CONF_ENCRYPT, luks_pass condition).
+# Under an enforcing Secure Boot only the encrypted stack can boot (GRUB is not
+# signed; Limine goes in through shim, see package-limine.md) — the one row says so.
+encrypt_list() {
+  if sb_enforcing; then
+    printf '%s\t%s\n' yes "$(t s_encrypt_yes_sb)"
+  else
+    printf '%s\t%s\n' yes "$(t s_encrypt_yes)" no "$(t s_encrypt_no)"
+  fi
+}
+
+# How W goes onto the chosen disk. `free` (W's own ESP + root in the largest free
+# block, everything already there untouched) is offered only when the disk can take
+# it — GPT with a contiguous free block of FREE_MIN_GIB or more — and then it LEADS,
+# so the highlighted default never erases an OS that is already installed. `wipe` is
+# always there. The interactive wizard seeds no answer for this step on purpose:
+# the first row is the default. Presets default to wipe (seeded in main).
+# Each row says how much room W gets (its ESP included), in the same units as the
+# disk list — so the two choices can be compared at a glance.
+disk_mode_list() {
+  local disk="${ANSWERS[disk]}"
+  if disk_free_ok "$disk"; then
+    printf '%s\t%s — %s %s\n' free "$(t s_diskmode_free)" \
+      "$(disk_size_fmt "$(disk_free_bytes "$disk")")" "$(t s_diskmode_free_for)"
+  fi
+  printf '%s\t%s — %s %s\n' wipe "$(t s_diskmode_wipe)" \
+    "$(disk_size_fmt "$(disk_bytes "$disk")")" "$(t s_diskmode_wipe_for)"
+}
+
+v_disk_mode() {
+  case "$1" in
+    wipe) return 0 ;;
+    free) disk_free_ok "${ANSWERS[disk]}" ;;
+    *)    return 1 ;;
+  esac
 }
 
 V_EDGE_MSG=""             # custom error surfaced by render_step for v_edge_repo
@@ -223,6 +266,10 @@ select_language() {
 # ── Map wizard answers onto the CONF_* the work phases read ───────────────────
 map_answers() {
   CONF_DISK="${ANSWERS[disk]}"
+  CONF_DISK_MODE="${ANSWERS[disk_mode]:-wipe}"
+  # Re-checked here, not only in the step: the review hub can change the disk after
+  # disk_mode was answered, and free on a disk without room must never fall through.
+  v_disk_mode "$CONF_DISK_MODE" || die "$(t err_diskmode_free)"
   CONF_HOSTNAME="${ANSWERS[hostname]}"
   CONF_TZ="${ANSWERS[timezone]}"
   CONF_ROOT_PASS="${ANSWERS[root_pass]}"
@@ -234,25 +281,41 @@ map_answers() {
   CONF_LUKS_PASS="${ANSWERS[luks_pass]:-}"
   CONF_MODE="${ANSWERS[mode]:-stable}"
   CONF_EDGE_REPO="${ANSWERS[edge_repo]:-}"
+  disk_plan
 }
 
 # ── Summary + final confirm ───────────────────────────────────────────────────
 confirm_install() {
-  local p1; p1="$(part "$CONF_DISK" 1)"
-  local p2; p2="$(part "$CONF_DISK" 2)"
-  local esp_size root_line boot_line
+  local esp_size root_line boot_line disk_note="" kept="" box_h=23 line
+  local esp_b room_b root_size
+  # Sizes in the units the wizard used: the ESP, and root = the room W gets minus
+  # the ESP (the whole disk less GPT/alignment overhead, or the free block).
+  esp_b=$(( $(disk_esp_mib) * 1048576 ))
+  if [[ "$CONF_DISK_MODE" == free ]]; then
+    room_b=$(( (FREE_LAST - FREE_FIRST + 1) * FREE_SS ))
+  else
+    room_b=$(( $(disk_bytes "$CONF_DISK") - 2 * 1048576 ))
+  fi
+  esp_size="$(disk_size_fmt "$esp_b")"; root_size="$(disk_size_fmt $(( room_b - esp_b )))"
   if [[ "$CONF_ENCRYPT" == true ]]; then
-    esp_size="2G "
-    root_line="$p2   rest   LUKS2   → btrfs (cryptroot)"
+    root_line="$CONF_ROOT_PART   $root_size   LUKS2   → btrfs (cryptroot)"
     boot_line="Limine + limine-snapper-sync"
   else
-    esp_size="512M"
-    root_line="$p2   rest   btrfs   /"
+    root_line="$CONF_ROOT_PART   $root_size   btrfs   /"
     boot_line="GRUB + grub-btrfs"
+  fi
+  # Free mode owes the user the whole truth: what is created and what stays as is.
+  if [[ "$CONF_DISK_MODE" == free ]]; then
+    disk_note="   (free space)"
+    kept=$'\n\n'"  Untouched  :"; box_h=25
+    local node bytes fs label
+    while IFS=$'\x1f' read -r node bytes fs label; do
+      kept+=$'\n'"    $node   $(disk_size_fmt "$bytes")   $fs   $label"; box_h=$((box_h + 1))
+    done < <(disk_kept_parts "$CONF_DISK")
   fi
   dialog "${DIALOG_COMMON[@]}" --colors --title " $(t summary_title) " --msgbox \
 "
-  Disk       : $CONF_DISK
+  Disk       : $CONF_DISK   $(disk_size_fmt "$(disk_bytes "$CONF_DISK")")$disk_note
   Hostname   : $CONF_HOSTNAME
   Timezone   : $CONF_TZ
   Locale     : $CONF_LOCALE
@@ -261,14 +324,14 @@ confirm_install() {
   Channel    : $CONF_MODE
 
   Partitions :
-    $p1   ${esp_size}   FAT32   /boot/efi
-    $root_line
+    $CONF_ESP_PART   ${esp_size}   FAT32   /boot/efi
+    $root_line$kept
 
   Subvolumes : @  @home  @home_snapshots  @snapshots  @var_log  @var_cache
   Swap       : zram
   Snapshots  : snapper (root + home) + snap-pac
   Bootloader : $boot_line
-" 23 66
+" "$box_h" 66
 
   ui_yesno "$(t confirm_title)" "$(t confirm_prompt)" || die "$(t quit)"
 }
@@ -290,6 +353,8 @@ init_logging() {
   {
     echo "=== W Linux install log — $ts ==="
     echo "lang=$LANG_CODE disk=$CONF_DISK host=$CONF_HOSTNAME tz=$CONF_TZ user=$CONF_USER encrypt=$CONF_ENCRYPT"
+    # e2e --iso-sb asserts this line.
+    echo "firmware: secure_boot=$(sb_state)"
     echo "==================================================================="
   } > "$W_LOG"
   exec {W_TRACE_FD}>>"$W_LOG"
@@ -313,10 +378,13 @@ finalize_logging() {
   # share itself; the explicit /w-src path covers an E2E run from the ISO's
   # baked copy (there $SRC=/root/w is tmpfs — the log would die with the live
   # session), where .zlogin mounted the virtiofs share separately.
+  # W's public MOK certificate (Secure Boot installs) goes along: the headless
+  # harness puts it into MokList itself — MokManager cannot be driven headless.
   local share_logs
   for share_logs in "$SRC/vm/logs" /w-src/vm/logs; do
     if [[ -d "${share_logs%/logs}" ]] && mkdir -p "$share_logs" 2>/dev/null; then
       cp "$W_LOG" "$share_logs/$(basename "$W_LOG")" 2>/dev/null || true
+      cp "$MNT/boot/efi/EFI/W/W-MOK.cer" "$share_logs/w-install-mok.cer" 2>/dev/null || true
     fi
   done
 }
@@ -351,18 +419,35 @@ show_done() {
   fi
   # Stay inside the TUI instead of dropping to the console: a single "Reboot"
   # button (dialog's screen goes to $W_TTY, like every other work-phase dialog).
-  local extra="" box_h=20
-  if [[ "$CONF_ENCRYPT" == true ]]; then
+  local extra="" text
+  if [[ -f "$MNT/var/lib/w/secureboot-mode" ]]; then
+    # Secure Boot came on with the install: the one step left is the MokManager visit
+    # on the next boot. The code is not traced (the log is copied to the disk).
+    { set +x; } 2>/dev/null
+    extra="\n\n  $(t done_mok_notice)"
+    if [[ -n "$MOK_CODE" ]]; then
+      extra+="\n\n      \Zb$(t done_mok_code) $MOK_CODE\Zn"
+    fi
+    extra+="\n\n  $(t done_mok_fallback)"
+    if [[ -e "$MNT/var/lib/w/tpm-reseal-pending" ]]; then
+      extra+="\n\n  $(t done_sb_tpm_notice)"
+    else
+      extra+="\n\n  $(t done_sb_luks_notice)"
+    fi
+  elif [[ "$CONF_ENCRYPT" == true ]]; then
     # Two facts the encrypted path owes the user before the first boot: the
     # passphrase prompt is coming, and the two things that eventually remove it
     # (Secure Boot, then the TPM2 seal) live in the Hub — the installer cannot do
     # either, both need firmware steps outside the OS. See package-limine.md.
     extra="\n\n  $(t done_luks_notice)\n\n  $(t done_secureboot_notice)"
-    box_h=27
   fi
+  # The strings are wrapped by hand (i18n, ≤ 64 columns) so dialog never reflows
+  # them; the height follows the line count: borders and the button row take 4 more.
+  text="\n\Zb\Z5  ██╗    ██╗\n  ██║    ██║\n  ██║ █╗ ██║\n  ╚███╔███╔╝\n   ╚══╝╚══╝\Zn\n\n  $(t done_reboot)$extra\n"
+  local rows="${text//\\n/$'\n'}"
   dialog "${DIALOG_COMMON[@]}" --ok-label "$(t reboot)" --title " $(t done_title) " --msgbox \
-"\n\Zb\Z5  ██╗    ██╗\n  ██║    ██║\n  ██║ █╗ ██║\n  ╚███╔███╔╝\n   ╚══╝╚══╝\Zn\n\n  $(t done_reboot)$extra\n" \
-  "$box_h" 64 1>&"${W_TTY:-1}"
+    "$text" "$(( $(wc -l <<<"$rows") + 4 ))" 72 1>&"${W_TTY:-1}"
+  [[ -n "${W_TRACE_FD:-}" ]] && set -x || true
   finish_and_reboot
 }
 
@@ -383,6 +468,7 @@ main() {
     ANSWERS[timezone]="Europe/Moscow"
     ANSWERS[mode]="edge"
     ANSWERS[edge_repo]="$W_PUBLIC_EDGE_REPO"
+    ANSWERS[disk_mode]="wipe"
     answers_load "$PRESET_FILE"
     i18n_load "${lang:-en}"
     nav_init
@@ -422,10 +508,14 @@ main() {
   ensure_network
 
   # Phase 1: Disk
-  disk_partition "$CONF_DISK"
-  [[ "$CONF_ENCRYPT" == true ]] && disk_encrypt "$CONF_DISK"
-  disk_format    "$CONF_DISK"
-  disk_mount     "$CONF_DISK"
+  if [[ "$CONF_DISK_MODE" == free ]]; then
+    disk_partition_free "$CONF_DISK"
+  else
+    disk_partition "$CONF_DISK"
+  fi
+  [[ "$CONF_ENCRYPT" == true ]] && disk_encrypt
+  disk_format
+  disk_mount
 
   # Phase 2: Base packages (real progress bar)
   mod_base
@@ -455,9 +545,13 @@ main() {
   mod_plymouth
   if [[ "$CONF_ENCRYPT" == true ]]; then
     mod_limine
-    # Headless: nobody can type the LUKS passphrase on the coming boots — enroll
-    # TPM2 auto-unlock now. Interactive installs keep this a post-boot w-crypt step.
-    [[ -n "$W_UNATTENDED" ]] && limine_enroll_tpm
+    # TPM2 auto-unlock now when nobody can type the passphrase on the coming boots
+    # (headless), or Secure Boot already enforces on a desktop (a laptop keeps the
+    # passphrase). Otherwise it stays a post-boot step, after Secure Boot.
+    if [[ -n "$W_UNATTENDED" ]] || { sb_enforcing && [[ "${ANSWERS[computer_type]:-}" != laptop ]]; }; then
+      limine_enroll_tpm
+    fi
+    if sb_enforcing; then limine_secureboot; fi
   else
     mod_bootloader
     mod_grub

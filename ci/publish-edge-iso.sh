@@ -41,6 +41,10 @@ ISO="${ISOS[0]}"
 ISO_NAME="$(basename "$ISO")"
 ISO_SIZE="$(du -h "$ISO" | cut -f1)"
 ISO_SHA="$(sha256sum "$ISO" | cut -d' ' -f1)"
+# The hash MokManager shows when the image is enrolled under Secure Boot
+# (scripts/iso-secureboot.sh writes it next to the image).
+MOK_SHA="$(awk '{print $1; exit}' "$ISO.mok-sha256" 2>/dev/null || true)"
+[[ "$MOK_SHA" =~ ^[0-9a-f]{64}$ ]] || die "no $ISO_NAME.mok-sha256 — the image was not made Secure Boot capable"
 
 # GitHub refuses release assets over 2 GiB. At 1.5 GB there is room, but the
 # margin is what shrinks as W grows, so fail loudly here rather than at upload.
@@ -94,6 +98,7 @@ per-version download.
 | **From commit** | [\`${SHA:0:8}\`](https://github.com/$REPO/commit/$SHA) |
 | **Size** | $ISO_SIZE |
 | **SHA-256** | \`$ISO_SHA\` |
+| **Secure Boot hash** | \`$MOK_SHA\` |
 
 W is a rolling distribution, so the release number and the build date say two
 different things: \`$RELEASE\` is which version of W's own configuration this is,
@@ -118,6 +123,11 @@ gh attestation verify $ISO_NAME --repo $REPO
 git -c gpg.ssh.allowedSignersFile=rootfs/usr/share/w/update/w-release.allowed_signers \\
   verify-commit ${SHA:0:12}
 \`\`\`
+
+With Secure Boot on, the image boots after one visit to MokManager (the blue
+screen that appears on its own): *Enroll hash from disk* → the W medium →
+\`EFI/BOOT/grubx64.efi\`. Before confirming, check that the hash MokManager shows
+is the **Secure Boot hash** above — it is what your firmware will trust.
 EOF
 gh release edit "$TAG" --repo "$REPO" --notes-file "$NOTES" >/dev/null
 info "Published: https://github.com/$REPO/releases/tag/$TAG"

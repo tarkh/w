@@ -8,6 +8,79 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.25.0
+
+- **Update your packages too, not only W, and in this order.** Arch moved to
+  Hyprland 0.57 and python-mcp 2. On a machine whose packages were already updated
+  on v0.24.1, the W assistant had lost all its tools (w-mcp exited at start) and
+  the login screen came up with an emergency-mode banner. This release fixes both,
+  but it needs the new packages, and `w-sync` installs none:
+
+      w-update        # packages first; if it offers a reboot, decline for now
+      w-sync update   # then W itself
+      reboot
+
+  After the reboot the login screen no longer starts a second desktop session
+  (idle daemon, portals, audio, wallpaper) for its own `greeter` user, and in a
+  virtual machine translucent panels and notifications no longer render solid
+  black.
+- **The first update takes longer than usual.** It touches the shared installer
+  code, so `w-sync` runs a full apply instead of a few modules.
+- **Install next to Windows or another OS.** If the chosen GPT disk has a
+  contiguous free block of 40 GiB or more, the installer offers "Into free space
+  — keep existing partitions" first. W gets its own EFI partition and root in
+  that block; existing partitions are never written or mounted, and the summary
+  lists what stays untouched. Disk sizes everywhere in the wizard are in GiB.
+- **Windows in the boot menu.** When the firmware has a Windows boot entry, the
+  boot menu gets a Windows item and is shown for 5 seconds. Choosing it reboots
+  straight into Windows' own entry (no chainloading), so BitLocker does not ask
+  for its recovery key. Machines already installed next to Windows get the item
+  with this update.
+- **Encryption is the default.** "Encrypted — LUKS2 + Limine" is now the first,
+  recommended choice in the installer; unencrypted GRUB stays for compatibility.
+- **Secure Boot without replacing the firmware's keys.** On a machine with the
+  factory keys (the usual case next to Windows), `w-secureboot enable` and Hub →
+  Security now go through Microsoft-signed shim: W's key is added to shim's key
+  list (one confirmation in MokManager with a one-time code) and the firmware's
+  keys stay as they are. Windows sees no change and BitLocker does not ask for
+  its recovery key. The mode is picked automatically; a machine in Setup Mode
+  still gets W's own keys. Also:
+  - Before every shutdown, reboot and hibernation, W checks that the boot menu
+    still matches what Secure Boot was told to trust and fixes it if needed, so
+    editing the boot entries no longer leaves the machine unbootable under
+    Secure Boot.
+  - In own-keys mode the fallback boot loader is now signed too. Before, losing
+    the firmware's boot entry meant no boot under Secure Boot.
+  - With Windows on the machine, turning Secure Boot on warns that Windows
+    updates its Secure Boot state on its next boots, so your disk will ask for
+    the passphrase once and the TPM2 unlock must be re-sealed afterwards.
+- **The install image boots with Secure Boot on.** The first boot asks you to
+  enroll the image's hash in MokManager; the hash to compare against is printed
+  in the `edge` release notes ("Secure Boot hash"). Installing with Secure Boot
+  enforced uses the encrypted stack, sets Secure Boot up for the installed system
+  (the one-time MokManager code is shown on the installer's last screen) and
+  finishes on the first boot. On desktops the disk then unlocks through TPM2
+  bound to Secure Boot; laptops keep the passphrase.
+- **Hub → Security, reworked.** Secure Boot is a step-by-step row: it shows W's
+  state and the firmware's, names the next step and can reboot straight into the
+  firmware setup. Automatic disk unlock (off / TPM / TPM + PIN / re-seal) and the
+  recovery key (create / replace) have rows of their own. At boot, three wrong
+  PINs fall back to the passphrase or recovery key prompt. `w-crypt enroll-tpm`
+  now refuses while Secure Boot is not enforced (TPM2 without Secure Boot would
+  unlock the disk for any USB stick); `--no-secureboot` overrides it, and
+  `--pin` adds a PIN.
+- **Themes: surface tone and saturation.** `w-theme new` and `w-theme edit`
+  accept `--surface` and `--tint neutral|subtle|full`, which colour the canvas,
+  cards and text separately from the accent (graphite with amber, say), and
+  `--saturation muted|balanced|vivid` for the accents, icons and terminal colours.
+  The Hub's theme form and the assistant have the same options. Existing themes
+  look exactly as before.
+- **The assistant's machine profile** shows the hostname again instead of
+  "command not found".
+- **Documentation.** The README is now a short landing page; installation lives
+  in `INSTALL.md`. The offline guide, FAQ and `RECOVERY.md` cover Secure Boot,
+  TPM2, recovery and installing next to Windows.
+
 ## v0.24.1
 
 - **The nightly install image builds again.** The image build for v0.24.0 stopped

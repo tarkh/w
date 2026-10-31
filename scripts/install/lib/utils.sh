@@ -16,6 +16,16 @@ require_uefi() {
   [[ -d /sys/firmware/efi ]] || die "UEFI boot not detected. W Linux requires UEFI."
 }
 
+# Secure Boot as the firmware enforces it: the data byte after the 4 attribute bytes
+# of the efivar — on | off | unknown. (The kernel's own "Secure boot" line is no
+# witness: Limine does not hand the state over.) W_EFIVARS is a test seam.
+sb_state() {
+  case "$(od -An -tu1 -j4 -N1 "${W_EFIVARS:-/sys/firmware/efi/efivars}/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c" 2>/dev/null | tr -d ' ')" in
+    1) echo on ;; 0) echo off ;; *) echo unknown ;;
+  esac
+}
+sb_enforcing() { [[ "$(sb_state)" == on ]]; }
+
 # Run a command inside the target chroot
 chroot_run() {
   arch-chroot "$MNT" "$@"
