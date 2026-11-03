@@ -8,6 +8,36 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.26.0
+
+- **The clock stays right next to Windows.** Windows keeps the computer's hardware
+  clock in local time and W kept it in UTC, so after every switch between them the
+  time was off by your time zone. W now keeps the hardware clock in local time while
+  the firmware has a Windows boot entry, and in UTC otherwise — the update switches
+  an existing dual-boot machine over by itself. To choose yourself: **Hub → System →
+  Date & Time → Hardware clock** (Auto / UTC / Local time), or
+  `sudo w-time rtc auto|utc|local`. Prefer UTC on both sides? Set
+  `RealTimeIsUniversal` in Windows and pick UTC here — the FAQ has the command.
+- **Secure Boot install on firmware that refuses the key request.** Some boards
+  (AMI Aptio IV, e.g. ASUS X99-DELUXE) reject shim's key enrollment request from a
+  running system, and the installer stopped with the disk already written. It now
+  finishes, and its last screen shows how to enroll W's key from the disk in the
+  blue MokManager screen ("Enroll key from disk" → the `W_EFI` volume).
+  `w-secureboot` on an installed system does the same.
+- **Reinstalling keeps a working W boot entry.** A firmware entry left by an earlier
+  W install on a partition that no longer exists is now removed: it stopped the new
+  entry from being created, and some firmware hid it, so W booted only through the
+  fallback path.
+- **Installer:** the first-boot setup screens show Russian in Cyrillic (they came out
+  as Latin look-alikes), and the "Installing base system" bar now moves during the
+  download — megabytes, then packages — instead of sitting at 0% and jumping at the
+  end.
+- **Writing the ISO to a USB stick** is now a step of INSTALL.md: `dd`, Rufus or
+  balenaEtcher. Ventoy and file-copy media are not supported — Secure Boot needs an
+  exact copy.
+- **The update takes longer than usual:** it touches the shared installer code, so
+  `w-sync` runs a full apply.
+
 ## v0.25.1
 
 - **Black screen on older Intel graphics with Hyprland 0.57.** On Intel GPUs up to

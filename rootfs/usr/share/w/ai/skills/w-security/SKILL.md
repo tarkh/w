@@ -16,7 +16,7 @@ sources:
   - path: .claude/library/w-ssh.md
     sha256: b1a094a3801dad4efdd25e9e56439883f0e2a3d71cde53a717ca77597bb8ca2b
   - path: .claude/library/package-limine.md
-    sha256: eb9176cd75feeaf2a089a2f4c379557f16dabd78e8002c5580763f98ee2ccb70
+    sha256: 2acfee9e62d4c73216008833895c914e161af7a708d707a458253034aa403230
 tools:
   - w_fwupd_refresh
 ---
@@ -264,13 +264,18 @@ fallback, with **Limine** as the bootloader and snapshot-boot support. Two tools
   it (`Verification failed`) and opens MokManager: any key within 10 s → Enroll hash from
   disk → the medium → `EFI/BOOT/grubx64.efi` → Continue → Yes → Reboot (no password).
   `Access Denied` = a Secured-core firmware: allow the 3rd-party UEFI CA or switch Secure
-  Boot off.
+  Boot off. The stick must be a byte-for-byte copy of the ISO: `dd` (Linux/macOS), Rufus
+  (forces DD mode for this image by itself) or balenaEtcher; Ventoy or copying the files
+  onto a FAT stick is not supported.
 - **Installed with Secure Boot enforcing, W sets it up itself** (shim mode): only the
   encrypted stack is offered; the installer's last screen shows a one-time code, and on the
   next boot MokManager wants **Enroll MOK** (and **Delete MOK** — the medium's hash, same
   code; it drops the public image's trust, which the installed W does not need) → Reboot;
   request lost → after `Verification failed` any key within 10 s → Enroll key from disk →
-  `EFI/W/W-MOK.cer`. Firstboot finishes
+  volume `W_EFI` → `EFI/W/W-MOK.cer`. Some firmware (older AMI, e.g. ASUS X99) refuses to
+  create shim's variables from the OS (`mokutil` → `Failed to enroll new keys`): then
+  there is no code at all — the installer's last screen and `w-secureboot enable` give
+  only those from-disk steps, and the medium's hash stays in MokList. Firstboot finishes
   phase 2. TPM2 auto-unlock comes with it on a desktop; a laptop keeps the passphrase (a
   stolen laptop with TPM-only boots to the login screen) — Hub → Security → Automatic unlock
   (`sudo w-crypt enroll-tpm --pin`) adds it.

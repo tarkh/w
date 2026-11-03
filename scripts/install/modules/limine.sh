@@ -88,8 +88,11 @@ limine_enroll_tpm() {
 # chosen here (MOK_CODE, shown by show_done — kept out of the trace log), and the
 # medium's own hash is queued for deletion in the same MokManager visit. Unattended:
 # nothing is queued — shim, refusing the unknown Limine, opens MokManager by itself,
-# and "Enroll key from disk" needs no code. w-firstboot runs phase 2.
+# and "Enroll key from disk" needs no code. Firmware that refuses the request (no
+# MokNew after phase 1 — see w-secureboot mok_queue) ends the same way: MOK_FROM_DISK,
+# and show_done gives those steps instead of the code. w-firstboot runs phase 2.
 MOK_CODE=""
+MOK_FROM_DISK=""
 limine_secureboot() {
   ui_info "Secure Boot is enforcing — setting up shim and this machine's key..."
   # shim-signed is AUR: prebuilt in the medium's w-repo (build-iso.sh).
@@ -112,7 +115,15 @@ limine_secureboot() {
   chroot_run env "${env[@]}" w-secureboot enable --mode shim || rc=$?
   rm -f "$codefile"
   (( rc == 0 )) || die "Secure Boot setup (w-secureboot enable, phase 1) failed (rc=$rc)."
-  [[ -n "$W_UNATTENDED" ]] || limine_mok_drop_medium "$hashfile"
+  if [[ -z "$W_UNATTENDED" ]]; then
+    if [[ -e "${W_EFIVARS:-/sys/firmware/efi/efivars}/MokNew-605dab50-e046-4300-abb6-3dd810dd8b23" ]]; then
+      limine_mok_drop_medium "$hashfile"
+    else
+      # Nothing queued — the same refusal would meet --delete-hash; the medium's
+      # hash stays in MokList (harmless).
+      MOK_CODE=""; MOK_FROM_DISK=1
+    fi
+  fi
   rm -f "$hashfile"
 }
 

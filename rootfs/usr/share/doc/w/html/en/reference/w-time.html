@@ -41,7 +41,10 @@ Commands:
   set-time &lt;<span class="s">&quot;Y-m-d H:M:S&quot;</span>&gt;
                          Set the clock manually (root; requires NTP off)
   servers &lt;name&gt;         Switch the NTP server set from the catalog (root)
+  rtc [auto|utc|local]   Show/set the hardware clock mode (setting: root); auto =
+                         local time when Windows is on this machine, else UTC
   apply                  Re-render the timesyncd drop-in from $CONF (after editing)
+                         and apply the hardware clock mode
   help                   Show this help
 
 Catalog &amp; selection: $CONF   Rendered (generated): $DROPIN
@@ -54,7 +57,8 @@ Examples:
   sudo <span class="w">w-time</span> set-zone Europe/Moscow
   sudo <span class="w">w-time</span> ntp off
   sudo <span class="w">w-time</span> set-time <span class="s">&quot;2026-07-23 14:30:00&quot;</span>
-  sudo <span class="w">w-time</span> servers cloudflare</code></pre>
+  sudo <span class="w">w-time</span> servers cloudflare
+  sudo <span class="w">w-time</span> rtc utc</code></pre>
 <p>This page is generated from the command's own help text (w-docs-refgen). The
 live version of the same text on a W machine: <code>w-time help</code>.</p>
 

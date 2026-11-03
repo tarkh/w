@@ -54,9 +54,12 @@ BitLocker sees a normal Windows boot and does not ask for the key each time. The
 entry follows the firmware: if Windows is removed, the entry and the visible menu
 go away with the next kernel update; if the firmware lost the Windows entry (after
 a firmware reset), start Windows once from the firmware's boot menu (the key shown
-at power-on, often F12, F8 or Esc) — Windows restores it. Windows keeps the hardware clock in local time and W in
-UTC — if the clock is off by your time zone after switching, run
-`timedatectl set-local-rtc 1` in W.
+at power-on, often F12, F8 or Esc) — Windows restores it. Windows keeps the hardware clock in local time, so while a Windows
+is installed, W keeps it in local time too and the clock stays right when you
+switch. Prefer UTC on both sides? In Windows, run as administrator
+`reg add "HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation" /v RealTimeIsUniversal /t REG_DWORD /d 1 /f`
+and restart Windows, then in W choose **Hub → System → Date & Time → Hardware clock →
+UTC** (or `sudo w-time rtc utc`).
 
 ## Updates and recovery
 

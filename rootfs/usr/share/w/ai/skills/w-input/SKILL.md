@@ -21,7 +21,7 @@ sources:
   - path: .claude/library/w-langpack.md
     sha256: b7bf4920d29434899f30e19e604026f7fd7a7df02da828a93a52f73238d2f6d7
   - path: .claude/library/config-i18n.md
-    sha256: 48a0c29ef79886e2a0892da82b6b818c6f2d1190b65c74a50cc3e1ea258a53b1
+    sha256: 489f1cb9864bc7871536168aad00fcebdb74e18959d014310e6f632d45f09efa
   - path: .claude/library/w-pointer.md
     sha256: 6305ddbe5a3269ba4a9d36d27bb1b1a2c2001ee5d387cfa9ff6ca0d525152067
 tools:

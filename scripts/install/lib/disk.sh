@@ -238,7 +238,7 @@ disk_encrypt() {
 
 disk_format() {
   ui_info "Formatting partitions..."
-  mkfs.fat -F32 "$CONF_ESP_PART" &>/dev/null
+  mkfs.fat -F32 -n W_EFI "$CONF_ESP_PART" &>/dev/null   # MokManager lists volumes by label
   mkfs.btrfs -f -L wroot "$(root_device)" &>/dev/null
 }
 

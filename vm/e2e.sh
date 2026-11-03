@@ -800,6 +800,12 @@ if (( DUALBOOT )); then
     '/usr/lib/w/w-boot-otheros | grep -qP "^[0-9A-F]{4}\tWindows Boot Manager$" || { efibootmgr; exit 1; }'
 fi
 
+# Windows keeps the RTC in local time: RTC=auto follows it (firstboot's mod_time),
+# and every other run keeps UTC.
+if (( DUALBOOT )); then rtc=yes rtc_desc=local; else rtc=no rtc_desc=UTC; fi
+assert "hardware clock in $rtc_desc time (RTC=auto)" \
+  '[[ "$(timedatectl show -p LocalRTC --value)" == '"$rtc"' ]] || { w-time status; exit 1; }'
+
 # The boot menu next to Windows: an entry that reboots into the firmware's Windows
 # entry (never a chainload — BitLocker), and the menu shown. Without Windows the
 # opposite, and that half runs on every e2e: the menu stays hidden, no foreign entry.

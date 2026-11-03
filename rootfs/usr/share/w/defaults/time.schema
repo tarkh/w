@@ -9,3 +9,4 @@ FALLBACK	system
 # family at once, so a new entry is never silently unconstrained (a user file
 # redefining NTP_google would otherwise redirect the machine's time source).
 NTP_*	system
+RTC	system

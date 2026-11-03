@@ -424,11 +424,16 @@ show_done() {
     # Secure Boot came on with the install: the one step left is the MokManager visit
     # on the next boot. The code is not traced (the log is copied to the disk).
     { set +x; } 2>/dev/null
-    extra="\n\n  $(t done_mok_notice)"
-    if [[ -n "$MOK_CODE" ]]; then
-      extra+="\n\n      \Zb$(t done_mok_code) $MOK_CODE\Zn"
+    if [[ -n "$MOK_FROM_DISK" ]]; then
+      # The firmware refused the queued request: the key goes in from disk, no code.
+      extra="\n\n  $(t done_mok_disk)"
+    else
+      extra="\n\n  $(t done_mok_notice)"
+      if [[ -n "$MOK_CODE" ]]; then
+        extra+="\n\n      \Zb$(t done_mok_code) $MOK_CODE\Zn"
+      fi
+      extra+="\n\n  $(t done_mok_fallback)"
     fi
-    extra+="\n\n  $(t done_mok_fallback)"
     if [[ -e "$MNT/var/lib/w/tpm-reseal-pending" ]]; then
       extra+="\n\n  $(t done_sb_tpm_notice)"
     else

@@ -193,9 +193,16 @@ you boot it later. If <strong>Delete MOK</strong> is not listed, skip this step.
 <p>Finish within 5 minutes — the firmware then restarts the computer and the
 request is lost. Never choose <strong>Reset MOK</strong>: it erases all enrolled keys. If
 the request was lost, the menu comes back after <em>Verification failed</em> with a
-10-second countdown — press any key, then <strong>Enroll key from disk → EFI → W →
-W-MOK.cer → Continue → Yes → Reboot</strong>, no code needed. The medium's
-fingerprint then stays; it does no harm.</p>
+10-second countdown — press any key, then <strong>Enroll key from disk → W_EFI (the
+system disk) → EFI → W → W-MOK.cer → Continue → Yes → Reboot</strong>, no code needed.
+The medium's fingerprint then stays; it does no harm.</p>
+<p>Some firmware does not accept the request at all — it refuses new variables
+from a running system and takes them only from the blue screen at boot (seen on
+older AMI boards, such as the ASUS X99 series). The installer notices and its
+last screen shows no code, only these steps: reboot, press any key when the
+menu appears after <em>Verification failed</em>, then <strong>Enroll key from disk → W_EFI →
+EFI → W → W-MOK.cer → Continue → Yes → Reboot</strong>. The medium's fingerprint stays
+in that case too — removing it would need the same refused request.</p>
 <p>W then finishes the installation with Secure Boot on. On a desktop with a TPM2
 chip the disk unlocks by itself from then on; a laptop keeps asking for the
 passphrase — <strong>Hub → System → Security → Automatic unlock</strong> adds TPM + PIN (or

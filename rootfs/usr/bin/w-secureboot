@@ -416,14 +416,31 @@ esp_location() {
   echo "/dev/$(lsblk -no PKNAME "/dev/$name" | head -1) $(cat "/sys/class/block/$name/partition")"
 }
 
+# "<BootNNNN> <partuuid>" per \EFI\W\shimx64.efi entry (partuuid empty: no GPT node).
+shim_nvram_list() {
+  efibootmgr 2>/dev/null | awk 'tolower($0) ~ /\\efi\\w\\shimx64\.efi/ {
+    u = match($0, /GPT,[0-9A-Fa-f-]+/) ? substr($0, RSTART + 4, RLENGTH - 4) : ""
+    print substr($1, 5, 4), tolower(u) }'
+}
+esp_partuuid() { blkid -s PARTUUID -o value "$(findmnt -no SOURCE "$(esp_path)")" 2>/dev/null || true; }
 # Firmware entry "W" → \EFI\W\shimx64.efi, created first in BootOrder (efibootmgr's
-# default) unless it already exists. Limine's own entry stays behind it: under the
-# factory keys the firmware rejects that binary and moves on.
+# default) unless one already points at this ESP. Limine's own entry stays behind it:
+# under the factory keys the firmware rejects that binary and moves on. An entry left
+# by an earlier install on a partition that is gone is removed: kept, it stops the new
+# one being created, and AMI turns it into a hidden VenHw placeholder at boot (found
+# live, ASUS X99 — W then boots only through the EFI/BOOT fallback). One on a partition
+# that still exists may be another W's (another disk) and stays.
 shim_nvram_entry() {
-  local entries; entries="$(efibootmgr 2>/dev/null)" || true
-  grep -qi '\\EFI\\W\\shimx64.efi' <<<"$entries" && return 0
-  local disk part
+  local disk part uuid n u have=""
   read -r disk part < <(esp_location) || { err "cannot locate the ESP partition"; return 1; }
+  uuid="$(esp_partuuid)"; uuid="${uuid,,}"
+  while read -r n u; do
+    if [[ -n "$u" && "$u" == "$uuid" ]]; then have=1
+    elif [[ -z "$u" || ! -e "/dev/disk/by-partuuid/$u" ]]; then efibootmgr -b "$n" -B >/dev/null || true
+    elif [[ -z "$uuid" ]]; then have=1   # ESP unreadable: an existing entry is taken as ours
+    fi
+  done < <(shim_nvram_list)
+  [[ -n "$have" ]] && return 0
   efibootmgr --create --disk "$disk" --part "$part" --loader '\EFI\W\shimx64.efi' --label 'W' >/dev/null
 }
 # "W" first in BootOrder and as BootNext. AMI firmware keeps its own priority list over
@@ -432,8 +449,9 @@ shim_nvram_entry() {
 # the reboot starts Windows and never reaches MokManager. BootNext is a one-shot the
 # firmware honours whatever its list says.
 shim_nvram_first() {
-  local n order
-  n="$(efibootmgr 2>/dev/null | awk 'tolower($0) ~ /\\efi\\w\\shimx64\.efi/ {print substr($1, 5, 4); exit}')" || true
+  local n order uuid
+  uuid="$(esp_partuuid)"
+  n="$(shim_nvram_list | awk -v u="${uuid,,}" 'u == "" || $2 == u {print $1; exit}')" || true
   [[ -n "$n" ]] || return 0
   order="$(efibootmgr 2>/dev/null | sed -n 's/^BootOrder: //p')" || true
   order="$(printf '%s\n' "$n" ${order//,/ } | awk '!seen[toupper($0)]++' | paste -sd,)"
@@ -473,6 +491,20 @@ mok_cert() {
 }
 mok_enrolled() { [[ "$(mokutil --test-key "$1" 2>/dev/null)" == *"already enrolled"* ]]; }
 
+# The no-request way in: shim, refusing the unknown Limine, opens MokManager itself.
+# The ESP is labelled W_EFI by the installer (MokManager lists volumes by label).
+mok_disk_hint() {
+  cat <<'EOF'
+  Next boot shows "Verification failed", then the blue "Shim UEFI key management"
+  menu with a 10-second countdown — press any key, then:
+
+    Enroll key from disk → W_EFI (the system disk) → EFI → W → W-MOK.cer
+    → Continue → Yes → Reboot
+
+  No code is needed. Never choose "Reset MOK": it erases all enrolled keys.
+EOF
+}
+
 # Queue the MOK enrollment for MokManager with a one-time code (mokutil hashes it;
 # the user types it back on the blue screen — physical presence is the whole point).
 mok_queue() {
@@ -491,7 +523,14 @@ mok_queue() {
   # 10-second "press any key" countdown expiring loses them. -1 opens the menu at
   # once; the value is read once, by the next MokManager start.
   mokutil --timeout -1 || err "could not drop MokManager's 10-second countdown"
-  mokutil --import "$cer" --hash-file "$hash"
+  # Some firmware (AMI Aptio IV, e.g. ASUS X99) refuses to create shim's variables
+  # from a running OS (EINVAL) — MokManager writes MokList at boot just fine. No
+  # MokNew then (the installer checks for it): the key goes in from disk, no code.
+  if ! mokutil --import "$cer" --hash-file "$hash"; then
+    rm -f "$hash"
+    err "the firmware refused the MokManager request (it does not accept new variables from the OS)."
+    echo; mok_disk_hint; return 0
+  fi
   rm -f "$hash"
   cat <<EOF
 
@@ -526,7 +565,7 @@ enable_shim() {
     local cer; cer="$(mok_cert)"
     if mok_enrolled "$cer"; then :
     elif [[ -n "${W_SB_NONINTERACTIVE:-}" ]]; then
-      echo "MokManager on the next boot: Enroll key from disk → EFI/W/W-MOK.cer → Continue → Yes → Reboot."
+      mok_disk_hint
     else
       mok_queue "$cer"
     fi

@@ -20,6 +20,12 @@ sys_locale() {
   # passphrase at every boot. Writing it here (before mod_plymouth's mkinitcpio -P)
   # both configures the target and silences sd-vconsole's missing-file warning.
   echo "KEYMAP=${CONF_KEYMAP:-us}" > "$MNT/etc/vconsole.conf"
+  # The VT font of the installer's language: firstboot's dialogs speak it before
+  # w-langpack (apply phase) sets FONT= by locale, and the kernel's built-in font is
+  # Latin-only — Cyrillic would come out as Latin look-alikes.
+  if [[ -n "${MSG[_console_font]:-}" ]]; then
+    echo "FONT=${MSG[_console_font]}" >> "$MNT/etc/vconsole.conf"
+  fi
 }
 
 # Option sources for the keymap/locale wizard steps: one "tag<TAB>desc" row per

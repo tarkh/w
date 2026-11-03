@@ -35,7 +35,35 @@ page has the details — and how to build the image yourself.
    the published image, and the way to get an image for hardware the default one
    does not cover.
 
-2. **Boot it.** The installer starts by itself on the first console. If you leave
+2. **Write it to a USB stick** of 2 GB or more — everything on the stick is
+   erased. Write the image byte for byte onto the whole device: with Secure Boot
+   on, the stick boots only as an exact copy of the image. Ventoy, or copying the
+   image's files onto a formatted stick, does not give one.
+
+   - **Linux** — find the stick in `lsblk`: the whole disk, such as `/dev/sdb`,
+     not a partition. `dd` overwrites whatever device it is given, without asking.
+
+     ```sh
+     sudo dd if=w-*-x86_64.iso of=/dev/sdX bs=4M status=progress oflag=sync
+     ```
+
+   - **Windows** — [Rufus](https://rufus.ie): choose the stick and the ISO, then
+     **START**. Rufus says it writes this image in DD mode — that is the right
+     mode. If Windows then offers to format the disk, press **Cancel**.
+
+   - **macOS** — find the stick in `diskutil list` as `/dev/diskN`, then:
+
+     ```sh
+     diskutil unmountDisk /dev/diskN
+     sudo dd if=w-*-x86_64.iso of=/dev/rdiskN bs=4m
+     diskutil eject /dev/diskN
+     ```
+
+     If macOS says the disk is not readable, choose **Ignore**. Without a
+     terminal, [balenaEtcher](https://etcher.balena.io) writes the image the
+     same way: the ISO, the stick, **Flash**.
+
+3. **Boot it.** The installer starts by itself on the first console. If you leave
    it, bring it back with `bash /root/w/scripts/install.sh`.
 
    Secure Boot can stay on. The first time a machine sees this image, a blue
@@ -43,17 +71,19 @@ page has the details — and how to build the image yourself.
    compare, are in
    [Installing with Secure Boot on](rootfs/usr/share/doc/w/guide/security.md#installing-with-secure-boot-on).
 
-3. **Answer the wizard.** For the disk you choose between erasing it whole and
+4. **Answer the wizard.** For the disk you choose between erasing it whole and
    installing **into its free space**, which leaves every existing partition
    untouched — shrink Windows from Windows first
    ([how](rootfs/usr/share/doc/w/faq.md)). Disk encryption is the default and the
    recommended choice. The wizard confirms once before touching the disk, and
    everything after that point is destructive — read that screen.
 
-4. **Reboot.** The first boot finishes setup (packages, AUR builds, user
+5. **Reboot.** The first boot finishes setup (packages, AUR builds, user
    environment) and logs the whole thing to `/var/log/w/`. With Secure Boot on,
    it starts with one more confirmation in the same blue screen — the installer's
-   last screen shows the code it asks for.
+   last screen shows the code it asks for. Some firmware refuses that request;
+   the last screen then shows the steps to add the key from disk instead, no
+   code ([details](rootfs/usr/share/doc/w/guide/security.md#installing-with-secure-boot-on)).
 
 ## Building your own ISO
 

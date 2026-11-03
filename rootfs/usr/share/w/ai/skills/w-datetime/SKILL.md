@@ -4,11 +4,11 @@ description: >-
   Date, time, timezone and NTP on W Linux: the w-time CLI (set the timezone, the
   system clock and network time sync), the Hub's System panel "Date & Time" tab, and the
   systemd-timesyncd server catalog (layered config, see w-conf). Load this for anything about
-  the timezone, the system clock being wrong, enabling/disabling NTP, or which time
-  servers are used.
+  the timezone, the system clock being wrong (also after switching from Windows),
+  enabling/disabling NTP, the hardware clock (RTC) mode, or which time servers are used.
 sources:
   - path: .claude/library/w-time.md
-    sha256: 66c382f247a7d1e30f0d4f1b20aa924451a7444aa8f6e52a2cca664de3c3f1f7
+    sha256: ce6842156758b832e295de0ea3115627936e376b5e50883ef885ba62009cc35f
 tools:
   - w_time_status
   - w_timezone_set
@@ -49,12 +49,18 @@ the machine cannot change it locally.
   the catalog (add your own as `NTP_<name>="host ..."` in `/etc/w/time.conf` — it
   merges with the vendor entries instead of replacing them — then switch). Rare and
   catalog-bound — done via CLI or the Hub, not an AI tool.
+- **Hardware clock (RTC) mode**: `sudo w-time rtc auto|utc|local` (`w-time rtc` shows
+  it); Hub row "Hardware clock". `auto` (default) = local time while the firmware has a
+  Windows boot entry, UTC otherwise — Windows keeps the RTC in local time, and a
+  mismatch shifts the clock by the zone offset on every switch. If the user set
+  `RealTimeIsUniversal` in Windows, pin `utc`. No AI tool — CLI or Hub.
 
 ## Notes
 
 - The Hub path and the AI path share the same privileged dispatcher / polkit actions
   (`com.w.hub.actuate` / `com.w.ai.actuate`, caps `timezone-set` / `ntp-toggle` /
-  `ntp-servers` in `w-actuate-lib.sh`).
+  `ntp-servers` / `rtc-mode` in `w-actuate-lib.sh`).
+- Clock off by exactly the zone offset after booting Windows: the RTC mode — see above.
 - If the clock is wrong: check `w-time status` — usually NTP is off or timesyncd can't
   reach its servers. Turning NTP on (`w-time ntp on`) fixes most cases; a proxied/offline
   network may need a reachable server set.

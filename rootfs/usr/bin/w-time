@@ -9,6 +9,12 @@
 # restarts timesyncd. Timezone and the NTP on/off flag are live system state read
 # straight from timedatectl — only the server catalog is kept in the conf.
 #
+# The hardware clock (RTC) is the exception: its mode is a conf key, RTC=auto|utc|
+# local, applied by `apply`. Windows keeps the RTC in local time and W never writes
+# into Windows, so `auto` follows it — local time while this machine's firmware has
+# a Windows boot entry (w-boot-otheros, the boot menus' own detector), UTC otherwise.
+# Otherwise every switch between the two moves the clock by the zone's offset.
+#
 # It is the privileged (root) backend for the W Hub "Date & Time" panel, reached
 # via pkexec + the com.w.hub.actuate polkit action (capabilities timezone-set /
 # ntp-toggle / ntp-servers), and for the AI's w_timezone_set / w_ntp_set tools via
@@ -17,10 +23,11 @@
 set -euo pipefail
 
 CONF="/etc/w/time.conf"
+OTHEROS="${W_OTHEROS:-/usr/lib/w/w-boot-otheros}"   # seam for the unit tests
 DROPIN="/etc/systemd/timesyncd.conf.d/10-w-ntp.conf"
 
 # shellcheck source=../lib/w/w-conf-lib.sh
-source /usr/lib/w/w-conf-lib.sh
+source "${W_CONF_LIB:-/usr/lib/w/w-conf-lib.sh}"
 # Split into layers (update-system.md phase 3): the NTP catalog and W's default
 # selection live in /usr/share/w/defaults/time.conf; /etc/w/time.conf holds this
 # machine's deviations, including any NTP_<name> the admin adds — catalogs MERGE
@@ -54,7 +61,10 @@ Commands:
   set-time <"Y-m-d H:M:S">
                          Set the clock manually (root; requires NTP off)
   servers <name>         Switch the NTP server set from the catalog (root)
+  rtc [auto|utc|local]   Show/set the hardware clock mode (setting: root); auto =
+                         local time when Windows is on this machine, else UTC
   apply                  Re-render the timesyncd drop-in from $CONF (after editing)
+                         and apply the hardware clock mode
   help                   Show this help
 
 Catalog & selection: $CONF   Rendered (generated): $DROPIN
@@ -68,6 +78,7 @@ Examples:
   sudo w-time ntp off
   sudo w-time set-time "2026-07-23 14:30:00"
   sudo w-time servers cloudflare
+  sudo w-time rtc utc
 EOF
 }
 
@@ -116,12 +127,36 @@ EOF
   echo "w-time: NTP server set '${sel}' -> applied"
 }
 
+# The RTC mode this machine should have: "local" | "utc".
+rtc_want() {
+  local m; m="$(conf_get RTC auto)"
+  case "$m" in
+    utc|local) echo "$m" ;;
+    *) if [[ -n "$("$OTHEROS" 2>/dev/null)" ]]; then echo local; else echo utc; fi ;;
+  esac
+}
+
+# Only under systemd: in a chroot (install) timedated is absent — the first boot's
+# apply sets the mode before Windows can be started from W's menu. Without
+# --adjust-system-clock: the system clock (NTP-synced) is right, the RTC is rewritten
+# from it.
+rtc_apply() {
+  [[ -d /run/systemd/system ]] || return 0
+  local want cur
+  want="$(rtc_want)"
+  cur="$(timedatectl show -p LocalRTC --value 2>/dev/null)"
+  if [[ "$want" == local && "$cur" == yes || "$want" == utc && "$cur" == no ]]; then return 0; fi
+  if [[ "$want" == local ]]; then timedatectl set-local-rtc 1; else timedatectl set-local-rtc 0; fi
+  echo "w-time: hardware clock (RTC) -> $([[ "$want" == local ]] && echo "local time" || echo UTC)"
+}
+
 cmd_status() {
   echo "== timedatectl =="
   timedatectl
   if [[ -r "$CONF" ]]; then
     echo
     echo "NTP server set : $(conf_get SERVERS '?')"
+    echo "RTC mode       : $(conf_get RTC auto) -> $(rtc_want)"
     echo "                 (layered config; per-value origin: w-conf cat time)"
   fi
 }
@@ -164,6 +199,18 @@ cmd_servers() {
   render
 }
 
+cmd_rtc() {
+  local m="${1:-}"
+  case "$m" in
+    "") echo "$(conf_get RTC auto) -> $(rtc_want)"; return ;;
+    auto|utc|local) ;;
+    *) err "rtc: expected auto|utc|local"; exit 2 ;;
+  esac
+  need_root
+  set_kv RTC "$m"
+  rtc_apply
+}
+
 case "${1:-}" in
   status)         cmd_status ;;
   list-zones)     shift; list_zones "${1:-}" ;;
@@ -171,7 +218,8 @@ case "${1:-}" in
   ntp)            shift; cmd_ntp "$@" ;;
   set-time)       shift; cmd_set_time "$@" ;;
   servers)        shift; cmd_servers "$@" ;;
-  apply)          render ;;
+  rtc)            shift; cmd_rtc "$@" ;;
+  apply)          render; rtc_apply ;;
   help|-h|--help) usage ;;
   "")             usage; exit 2 ;;
   *)              err "unknown command: $1"; usage; exit 2 ;;

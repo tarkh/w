@@ -456,13 +456,17 @@
     "en": "Secure Boot is on. One step is left for you: on the next boot\\n  the blue \"Shim UEFI key management\" menu opens by itself. It\\n  adds W's key to the firmware (without it W does not start)\\n  and removes the installer's fingerprint, which is no longer\\n  needed. Both steps ask for the code below:\\n\\n    1. Enroll MOK → Continue → Yes → type the code\\n    2. Delete MOK → Continue → Yes → the same code (if listed)\\n    3. Reboot",
     "ru": "Secure Boot включён. Остался один шаг: при следующей загрузке\\n  само откроется синее меню «Shim UEFI key management». Оно\\n  добавит в прошивку ключ W (без него W не запустится) и удалит\\n  отпечаток установщика — он больше не нужен. Оба шага\\n  спрашивают код ниже:\\n\\n    1. Enroll MOK → Continue → Yes → введите код\\n    2. Delete MOK → Continue → Yes → тот же код (если есть)\\n    3. Reboot"
   },
+  "done_mok_disk": {
+    "en": "Secure Boot is on. This computer's firmware refused the\\n  installer's request, so add W's key yourself — once, no code.\\n  On the next boot \"Verification failed\" appears, then the blue\\n  \"Shim UEFI key management\" menu. Press any key within 10 s:\\n\\n    1. Enroll key from disk → W_EFI → EFI → W → W-MOK.cer\\n    2. Continue → Yes → Reboot\\n\\n  Missed it? Just restart — the menu comes back.\\n  Never choose \"Reset MOK\" — it erases all keys.",
+    "ru": "Secure Boot включён. Прошивка этого компьютера не приняла\\n  запрос установщика, поэтому ключ W добавьте сами — один раз,\\n  код не нужен. При следующей загрузке появится «Verification\\n  failed», затем синее меню «Shim UEFI key management».\\n  Нажмите любую клавишу в течение 10 секунд:\\n\\n    1. Enroll key from disk → W_EFI → EFI → W → W-MOK.cer\\n    2. Continue → Yes → Reboot\\n\\n  Не успели — просто перезагрузитесь, меню появится снова.\\n  Никогда не выбирайте «Reset MOK» — он стирает все ключи."
+  },
   "done_mok_code": {
     "en": "One-time code:",
     "ru": "Одноразовый код:"
   },
   "done_mok_fallback": {
-    "en": "The code is not shown as you type. Finish within 5 minutes,\\n  or the computer restarts and the request is lost. Never\\n  choose \"Reset MOK\" — it erases all keys.\\n\\n  Request lost? After \"Verification failed\" press any key\\n  within 10 s, then: Enroll key from disk → EFI → W →\\n  W-MOK.cer → Continue → Yes → Reboot (no code needed).",
-    "ru": "Код при вводе не отображается. Уложитесь в 5 минут, иначе\\n  компьютер перезагрузится и запрос пропадёт. Никогда не\\n  выбирайте «Reset MOK» — он стирает все ключи.\\n\\n  Запрос пропал? После «Verification failed» нажмите любую\\n  клавишу в течение 10 с, затем: Enroll key from disk → EFI →\\n  W → W-MOK.cer → Continue → Yes → Reboot (код не нужен)."
+    "en": "The code is not shown as you type. Finish within 5 minutes,\\n  or the computer restarts and the request is lost. Never\\n  choose \"Reset MOK\" — it erases all keys.\\n\\n  Request lost? After \"Verification failed\" press any key\\n  within 10 s, then: Enroll key from disk → W_EFI →\\n  EFI → W → W-MOK.cer → Continue → Yes → Reboot (no code).",
+    "ru": "Код при вводе не отображается. Уложитесь в 5 минут, иначе\\n  компьютер перезагрузится и запрос пропадёт. Никогда не\\n  выбирайте «Reset MOK» — он стирает все ключи.\\n\\n  Запрос пропал? После «Verification failed» нажмите любую\\n  клавишу в течение 10 с, затем: Enroll key from disk → W_EFI →\\n  EFI → W → W-MOK.cer → Continue → Yes → Reboot (без кода)."
   },
   "done_sb_tpm_notice": {
     "en": "After that the disk unlocks by itself (TPM2); the passphrase\\n  is asked only if the boot chain changes.",

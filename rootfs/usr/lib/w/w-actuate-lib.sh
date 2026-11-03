@@ -103,6 +103,10 @@ w_actuate_main() {
       local set="${1:-}"; [[ "$set" =~ ^[A-Za-z0-9_-]+$ ]] || die "invalid server-set name"
       CMD=(w-time servers "$set")
       ;;
+    rtc-mode)
+      local m="${1:-}"
+      case "$m" in auto|utc|local) CMD=(w-time rtc "$m") ;; *) die "rtc mode must be auto, utc or local";; esac
+      ;;
     service-restart)
       local u="${1:-}"
       [[ "$u" =~ ^[A-Za-z0-9:_.@-]+\.(service|socket|timer|device|mount|automount|swap|target|path|slice|scope)$ ]] \

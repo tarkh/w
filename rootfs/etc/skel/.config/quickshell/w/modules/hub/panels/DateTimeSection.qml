@@ -1,7 +1,7 @@
 // W Linux — Hub Date & Time section (the System panel's "Date & Time" tab).
-// The timezone, the NTP on/off switch and the NTP server set, all fronted by the w-time
-// CLI. Timezone drills into a searchable picker (TimezonePicker, like the locale one);
-// NTP mode and the server set are dropdown SelectRows. Manual clock-setting is left to
+// The timezone, the NTP on/off switch, the NTP server set and the hardware clock (RTC)
+// mode, all fronted by the w-time CLI. Timezone drills into a searchable picker (TimezonePicker, like the locale one);
+// NTP mode, the server set and the RTC mode are dropdown SelectRows. Manual clock-setting is left to
 // the `w-time set-time` CLI on purpose (with NTP on it is unnecessary, and a live time
 // editor in a settings popup is fiddly for a rare action).
 //
@@ -9,7 +9,8 @@
 // the zone + NTP flag, `w-conf list time --porcelain` for the server catalog + active
 // set, a 1 s ticker for the displayed local time) and privileged changes are handed up
 // to the Hub via runPrivileged (pkexec → w-hub-actuate → polkit prompt). The polkit
-// path lives in w-actuate-lib.sh as capabilities timezone-set / ntp-toggle / ntp-servers.
+// path lives in w-actuate-lib.sh as capabilities timezone-set / ntp-toggle / ntp-servers /
+// rtc-mode.
 //
 // This was a root-level Hub panel of its own until the menu reorganisation. Date & Time
 // sits under the System screen in every reference settings app (macOS General → Date &
@@ -48,13 +49,14 @@ Column {
     property var menuLayer: null
 
     // ── Remote control surface (roving index lives in SystemPanel) ──────────────────
-    // Field names: "tz" | "ntp" | "servers" — all three always present.
+    // Field names: "tz" | "ntp" | "servers" | "rtc" — all always present.
     property string focusedField: ""
-    readonly property var fields: ["tz", "ntp", "servers"]
+    readonly property var fields: ["tz", "ntp", "servers", "rtc"]
     function rowItem(field) {
         if (field === "tz") return tzRow;
         if (field === "ntp") return ntpRow;
         if (field === "servers") return srvRow;
+        if (field === "rtc") return rtcRow;
         return null;
     }
     function activateField(field) {
@@ -66,6 +68,7 @@ Column {
     // Read once (re-read explicitly after an actuation): a machine-readable KV dump.
     property string timezone: ""
     property string ntp: ""             // "on" | "off" | ""
+    property string rtcNow: ""          // the RTC's live mode: "local" | "utc" | ""
     readonly property bool ntpAvailable: ntp.length > 0
     readonly property var ntpOptions: [
         { id: "on",  label: Strings.t("hub.ntp.on") },
@@ -80,6 +83,7 @@ Column {
                 const t = this.text || "";
                 const tz = t.match(/^Timezone=(\S+)/m);   root.timezone = tz ? tz[1] : "";
                 const n = t.match(/^NTP=(\S+)/m);          root.ntp = n ? (n[1] === "yes" ? "on" : "off") : "";
+                const r = t.match(/^LocalRTC=(\S+)/m);     root.rtcNow = r ? (r[1] === "yes" ? "local" : "utc") : "";
             }
         }
     }
@@ -94,6 +98,9 @@ Column {
     property string serversSel: ""      // active set name (SERVERS=)
     property var serverOptions: []      // [{id,label}] from the NTP_<name> catalog
     property bool serversLocked: false  // fleet policy owns SERVERS (porcelain field 4)
+    property string rtcSel: "auto"      // RTC= auto | utc | local
+    property bool rtcLocked: false
+    readonly property var rtcOptions: ["auto", "utc", "local"].map((id) => ({ id: id, label: Strings.t("hub.rtc." + id) }))
     Process {
         id: timeConf
         running: true
@@ -101,17 +108,20 @@ Column {
         stdout: StdioCollector {
             onStreamFinished: {
                 const opts = [];
-                let sel = "", locked = false;
+                let sel = "", locked = false, rtc = "auto", rtcLocked = false;
                 for (const line of (this.text || "").split("\n")) {
                     const f = line.split("\t");
                     if (f.length < 2) continue;
                     if (f[0] === "SERVERS") { sel = f[1]; locked = f[3] === "locked"; }
+                    if (f[0] === "RTC") { rtc = f[1]; rtcLocked = f[3] === "locked"; }
                     const m = f[0].match(/^NTP_([A-Za-z0-9_-]+)$/);
                     if (m) opts.push({ id: m[1], label: m[1] });
                 }
                 root.serversSel = sel;
                 root.serverOptions = opts;
                 root.serversLocked = locked;
+                root.rtcSel = rtc;
+                root.rtcLocked = rtcLocked;
             }
         }
     }
@@ -175,6 +185,26 @@ Column {
             // watchChanges, a Process has to be re-run.
             root.runPrivileged(["pkexec", "/usr/lib/w/w-hub-actuate", "ntp-servers", id],
                                () => root.reloadTimeConf());
+        })
+    }
+
+    // Hardware clock: auto follows a Windows on this machine (it keeps local time).
+    HubSection { width: parent.width; text: Strings.t("hub.rtc") }
+    SelectRow {
+        id: rtcRow
+        width: parent.width
+        icon: "clock"; glyph: String.fromCodePoint(0xf0150)   // nf-md-clock
+        label: Strings.t("hub.rtc")
+        locked: root.rtcLocked
+        lockedHint: Strings.t("hub.lockedByPolicy")
+        currentId: root.rtcSel
+        options: root.rtcOptions
+        value: Strings.t("hub.rtc." + root.rtcSel)
+               + (root.rtcSel === "auto" && root.rtcNow ? " · " + Strings.t("hub.rtc." + root.rtcNow) : "")
+        focused: root.focusedField === "rtc"
+        onActivated: if (root.menuLayer) root.menuLayer.openMenu(rtcRow, root.rtcOptions, root.rtcSel, (id) => {
+            root.runPrivileged(["pkexec", "/usr/lib/w/w-hub-actuate", "rtc-mode", id],
+                               () => { root.reloadTimeConf(); root.reloadState(); });
         })
     }
 }

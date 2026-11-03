@@ -23,7 +23,10 @@ Commands:
   set-time <"Y-m-d H:M:S">
                          Set the clock manually (root; requires NTP off)
   servers <name>         Switch the NTP server set from the catalog (root)
+  rtc [auto|utc|local]   Show/set the hardware clock mode (setting: root); auto =
+                         local time when Windows is on this machine, else UTC
   apply                  Re-render the timesyncd drop-in from $CONF (after editing)
+                         and apply the hardware clock mode
   help                   Show this help
 
 Catalog & selection: $CONF   Rendered (generated): $DROPIN
@@ -37,6 +40,7 @@ Examples:
   sudo w-time ntp off
   sudo w-time set-time "2026-07-23 14:30:00"
   sudo w-time servers cloudflare
+  sudo w-time rtc utc
 ```
 
 This page is generated from the command's own help text (w-docs-refgen). The
