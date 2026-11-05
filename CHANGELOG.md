@@ -8,6 +8,17 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.26.1
+
+- **No more coloured stripes before the login screen on NVIDIA.** Between the boot
+  splash and the greeter, the screen could show raw video memory for a second or
+  two, most visibly after a cold start. That gap is now black. The fix takes effect
+  on the next boot.
+- **Slightly tighter default layout.** The gap between windows and the screen edge,
+  and between the bar and the sides of the screen, went from 8 to 6 px, in every
+  theme that doesn't set its own values. Bar settings you've customised yourself
+  stay as they are.
+
 ## v0.26.0
 
 - **The clock stays right next to Windows.** Windows keeps the computer's hardware
