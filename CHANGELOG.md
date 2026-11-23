@@ -8,6 +8,13 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.26.2
+
+- **README links now point to the project website, w.tarkh.com.** The Website,
+  Download and Documentation links on the repository page (English and Russian)
+  used the old temporary address. Nothing changes on an installed system; the
+  update only bumps the version number.
+
 ## v0.26.1
 
 - **No more coloured stripes before the login screen on NVIDIA.** Between the boot

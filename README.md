@@ -9,7 +9,7 @@ with a shell written for it, one theme across every application, and a system yo
 can always take back to yesterday. Every install brings fresh Arch packages; the
 configuration underneath is fixed and tested.
 
-**[Website](https://tarkh.github.io/w-website/) · [Download](https://tarkh.github.io/w-website/en/download.html) · [Documentation](https://tarkh.github.io/w-website/en/docs.html)**
+**[Website](https://w.tarkh.com/) · [Download](https://w.tarkh.com/en/download.html) · [Documentation](https://w.tarkh.com/en/docs.html)**
 
 ---
 
@@ -49,7 +49,7 @@ Requirements and every step in detail: [INSTALL.md](INSTALL.md).
 
 ## Learn more
 
-- [Documentation](https://tarkh.github.io/w-website/en/docs.html) — guides, FAQ
+- [Documentation](https://w.tarkh.com/en/docs.html) — guides, FAQ
   and a page for every command. The same pages ship with every W machine:
   <kbd>Super+F1</kbd>.
 - [Recovery](RECOVERY.md) — when a machine will not boot or an update went wrong.

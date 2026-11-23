@@ -9,7 +9,7 @@
 всегда можно вернуть во вчерашний день. Каждая установка приносит свежие пакеты
 Arch, а конфигурация под ними — фиксированная и проверенная.
 
-**[Сайт](https://tarkh.github.io/w-website/ru/) · [Скачать](https://tarkh.github.io/w-website/ru/download.html) · [Документация](https://tarkh.github.io/w-website/ru/docs.html)**
+**[Сайт](https://w.tarkh.com/ru/) · [Скачать](https://w.tarkh.com/ru/download.html) · [Документация](https://w.tarkh.com/ru/docs.html)**
 
 ---
 
@@ -50,7 +50,7 @@ Arch, а конфигурация под ними — фиксированная
 
 ## Подробнее
 
-- [Документация](https://tarkh.github.io/w-website/ru/docs.html) — руководства,
+- [Документация](https://w.tarkh.com/ru/docs.html) — руководства,
   FAQ и страница для каждой команды. Те же страницы есть на каждой машине с W:
   <kbd>Super+F1</kbd>.
 - [Восстановление](RECOVERY.md) — если машина не загружается или обновление
