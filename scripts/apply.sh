@@ -257,6 +257,11 @@ configure_home_snapper() {
 # defect reset the machine mode, the active theme and the NTP selection in the
 # field. Semantics here are seed-if-absent: the vendor file still ships when the
 # destination is missing (fresh install), and is skipped once it exists.
+# Class `rendered` gets the same treatment: w-style output painted from the system
+# theme (greeter core/*.json, Plymouth swatches). rootfs ships `w`-coloured seeds,
+# so copying them back reverted the greeter/splash of every non-`w` system theme on
+# each --rootfs-only update. Their content changes only with the renderer, which
+# routes to --style and re-renders anyway.
 override_excludes() {
   local mdir="$SRC/rootfs/usr/share/w/update" m path class
   [[ -d "$mdir" ]] || return 0
@@ -264,7 +269,7 @@ override_excludes() {
     [[ -f "$m" ]] || continue
     # `|| [[ -n $path ]]` so a final line without a trailing newline is still read.
     while IFS=$'\t' read -r path class || [[ -n "$path" ]]; do
-      [[ "$path" == /* && "$class" == override && -e "$path" ]] || continue
+      [[ "$path" == /* && "$class" =~ ^(override|rendered)$ && -e "$path" ]] || continue
       printf -- '--exclude=%s\n' "$path"
     done < "$m"
   done
@@ -277,7 +282,7 @@ apply_rootfs() {
     local excl=()
     mapfile -t excl < <(override_excludes)
     if (( ${#excl[@]} )); then
-      info "  preserving ${#excl[@]} admin-state path(s) (manifest class 'override')"
+      info "  preserving ${#excl[@]} admin-state/rendered path(s) (manifest class 'override'|'rendered')"
     fi
     rsync -av --chown=root:root --exclude='.gitkeep' \
       --exclude='__pycache__/' --exclude='*.pyc' "${excl[@]}" "$SRC/rootfs/" /

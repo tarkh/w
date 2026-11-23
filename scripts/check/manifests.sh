@@ -3,10 +3,11 @@
 # /usr/share/w/update/<module>.manifest is the single source of truth for
 # deploy (seed-if-absent), w-reset and future drift detection — a path that
 # drifts from rootfs/skel silently breaks all three consumers at once.
-# Format (v2): <path>\t<class>, class ∈ user|managed|override|user-conf. Class
+# Format (v2): <path>\t<class>, class ∈ user|managed|override|rendered|user-conf. Class
 # is ownership semantics only; the source location follows the path SHAPE:
 # home-relative → rootfs/etc/skel/, absolute → rootfs/. Trailing "/" marks a
-# whole managed directory. user/managed sources must exist in the repo;
+# whole managed directory. user/managed/rendered sources must exist in the repo
+# (a rendered row's source is the seed of a w-style output);
 # override is admin-state that may be seeded at runtime only (e.g.
 # /etc/w/update.conf is deliberately NOT in rootfs — apply_rootfs would
 # clobber the edge channel), so its existence is not required. user-conf is a
@@ -29,7 +30,7 @@ chk_manifests() {
         echo "  ${m##*/}:$n: malformed (need <path>\\t<class>): $line"; rc=1; continue
       fi
       case "$cls" in
-        user|managed)
+        user|managed|rendered)
           if [[ "$p" == /* ]]; then src="rootfs$p"; else src="rootfs/etc/skel/$p"; fi
           [[ -e "$src" ]] || { echo "  ${m##*/}:$n: source missing ($src): $p"; rc=1; } ;;
         override) ;;

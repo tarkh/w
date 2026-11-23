@@ -16,6 +16,11 @@
 #     class: user     — seed-if-absent on deploy; reset = restore default.
 #            managed  — overwritten by the module on deploy; reset = restore default.
 #            override — /etc/w admin-state the update preserves; reset = drop to vendor.
+#            rendered — w-style output from the SYSTEM theme (greeter core/*.json,
+#                       Plymouth swatches); rootfs ships only a seed. Update and a
+#                       dir restore keep an existing copy (the seed is `w`-coloured
+#                       and would revert a non-`w` system theme); `w-reset style`
+#                       re-renders them. reset = seed only if absent.
 #            user-conf— ~/.config/w/<subsys>.conf (or another wconf user-layer
 #                       file), the user's OWN deviations written by `wconf_set
 #                       ... user` (Hub, CLI setters). No vendor default exists —
@@ -191,7 +196,14 @@ restore_system() {                     # <abspath> (trailing '/' = dir)
   if [[ "$p" == */ ]]; then
     [[ -d "${src%/}" ]] || { warn "source missing ($src): $p"; return 1; }
     w_backup_path "${p%/}"
-    rsync -a --chown=root:root "${src%/}/" "$p"
+    local excl=() path class
+    # `rendered` rows inside the dir keep their current copy (see the class above).
+    while IFS=$'\t' read -r path class || [[ -n "$path" ]]; do
+      if [[ "$class" == rendered && "$path" == "$p"* && -e "$path" ]]; then
+        excl+=("--exclude=/${path#"$p"}")
+      fi
+    done < "${MANIFEST_PATH:-/dev/null}"
+    rsync -a --chown=root:root "${excl[@]}" "${src%/}/" "$p"
   else
     [[ -f "$src" ]] || { warn "source missing ($src): $p"; return 1; }
     w_backup_path "$p"
@@ -323,6 +335,7 @@ reset_entry() {                        # <path> <class> [file-filter]
       if [[ "$path" == /* ]]; then restore_system "$path" || true
       else restore_home "$path" && HOME_TOUCHED=1 || true; fi ;;
     override) restore_override "$path" || true ;;
+    rendered) [[ -e "$path" ]] || restore_system "$path" || true ;;
     user-conf)
       [[ "$path" == /* ]] && { warn "class 'user-conf' must be home-relative, skipping: $path"; return 0; }
       reset_user_conf "$path" && HOME_TOUCHED=1 ;;

@@ -8,6 +8,21 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.26.3
+
+- **The login screen keeps your system theme across updates.** With a system theme
+  other than `w` (set with `sudo w-theme set <name>`), an update could leave the login
+  screen half-themed: the wallpaper of your theme, but the password box and the rest
+  of the interface in the `w` colours. It happened on updates that changed only shipped
+  files — v0.24.1, v0.26.1 and v0.26.2 among them. The desktop itself was never
+  affected. The same updates also reset the boot splash colours on disk, which showed
+  up after the next kernel update, and the GRUB selection bar. These files are now
+  kept, and `w-reset greeter` / `w-reset plymouth` no longer revert them either.
+  This update re-renders all of them from your system theme, so a login screen
+  that is already wrong is fixed by updating.
+- Known gap: on GRUB (unencrypted) installs the menu text colours still revert to
+  `w` after such an update. `sudo w-style apply all` restores them.
+
 ## v0.26.2
 
 - **README links now point to the project website, w.tarkh.com.** The Website,

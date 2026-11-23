@@ -1,7 +1,19 @@
 # bootloader.manifest — system config owned by mod_grub (GRUB theme + silence hook).
-# Managed system paths (root to reset), restored from the W source. theme.txt is
-# w-style output (900-grub), refreshed by `w-style render_system`. The encrypted
+# Managed system paths (root to reset), restored from the W source. The selection
+# 9-patch PNGs are w-style output (900-grub) recoloured from the SYSTEM theme —
+# class `rendered`, kept over their `w`-coloured seeds. theme.txt is patched in
+# place by the same axis but is also the layout template, so it stays managed (an
+# update reverts its colours until the next `w-style apply all|grub`). The encrypted
 # Limine path (package-limine.md) ships its own bits and is not covered here.
 # Format: <path>\t<class>   (trailing '/' = directory)
 /boot/grub/themes/w/	managed
+/boot/grub/themes/w/select/c.png	rendered
+/boot/grub/themes/w/select/e.png	rendered
+/boot/grub/themes/w/select/n.png	rendered
+/boot/grub/themes/w/select/ne.png	rendered
+/boot/grub/themes/w/select/nw.png	rendered
+/boot/grub/themes/w/select/s.png	rendered
+/boot/grub/themes/w/select/se.png	rendered
+/boot/grub/themes/w/select/sw.png	rendered
+/boot/grub/themes/w/select/w.png	rendered
 /etc/pacman.d/hooks/grub-silence.hook	managed

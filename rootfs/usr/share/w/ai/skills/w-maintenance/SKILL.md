@@ -12,9 +12,9 @@ sources:
   - path: .claude/library/w-conf.md
     sha256: 832e311ba1c9bd50d2ba5ba177e86999612a91cf34843933d028eacf4897ff00
   - path: .claude/library/w-reset.md
-    sha256: dc6b89319dae0e5bc8a9ef4f13f842c7aa7aa17fd7a945477ef4c928769c8868
+    sha256: f82f68cdbfe8a90cffc7be20fa84ae98adeed88b325c529b966887fb61f67e24
   - path: .claude/library/update-system.md
-    sha256: 3f261c56d090db7957ce693dc795f2b7966be0d2299ed51300a3dae702d6ac9b
+    sha256: af98c76ef1323f6d2636ad426a302388171e623f1acca444fc53a41ea890649f
   - path: .claude/library/w-rollback.md
     sha256: 1099b89dead5e78070ffcd430de9775eb954a46b6bc7575d934966e991e31948
 tools:
@@ -256,7 +256,12 @@ marks the update `REQUIRES_REBOOT`, reboot after it finishes.
 An update never changes anyone's theme: `apply.sh` finishes by re-rendering the themed
 files for every account, so a user reporting "the bar/lock screen came back in the
 default theme after updating" is reporting a **failed render**, not a normal reset — see
-the **w-theming** skill for where to look.
+the **w-theming** skill for where to look. The system-scope surfaces painted from the
+**system** theme (login screen colours, boot splash, GRUB selection bar) survive too:
+their files are ownership class `rendered`, which an update and `w-reset <module>` never
+overwrite. Login screen still in the `w` colours under another system theme →
+`sudo w-style apply all` re-renders it (GRUB menu text colours are the known exception:
+they revert on update until that same command).
 
 ### What the remote actually is, and four things not to get wrong
 

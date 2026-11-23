@@ -2,8 +2,10 @@
 # Most rows are managed system paths: reset restores them from the W source
 # (/var/lib/w/src/rootfs, edge) — needs root. The greeter is config-as-code with
 # no user layer (customisation goes through the theme system, not file edits), so
-# it is always safe to force re-deploy. The greeter's rendered theme (colors.json
-# etc.) is refreshed by `w-style render_system` on the next login / --style.
+# it is always safe to force re-deploy. The greeter's theme (core/*.json) is
+# w-style output (900-greeter) painted from the SYSTEM theme — class `rendered`:
+# rootfs ships `w`-coloured seeds, which an update and a reset of this dir must not
+# copy over an existing render. Re-rendered by `w-style apply all|greeter`.
 # The two /etc/w/monitors-greeter.* rows are override: the greeter's monitor
 # layout (`w-monitor greeter`), born at runtime in /etc/w/ (not /etc/greetd/,
 # which this manifest deploys wholesale) precisely so a re-apply never clobbers
@@ -11,6 +13,11 @@
 # just deletes them (`w-monitor greeter reset`), falling back to auto.
 # Format: <path>\t<class>   (trailing '/' = directory)
 /etc/greetd/	managed
+/etc/greetd/quickshell/w/core/colors.json	rendered
+/etc/greetd/quickshell/w/core/motion.json	rendered
+/etc/greetd/quickshell/w/core/font.json	rendered
+/etc/greetd/quickshell/w/core/geometry.json	rendered
+/etc/greetd/quickshell/w/core/effects.json	rendered
 /etc/pam.d/greetd	managed
 /etc/systemd/system/greetd.service.d/override.conf	managed
 /etc/w/monitors-greeter.lua	override

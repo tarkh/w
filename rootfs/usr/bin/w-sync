@@ -649,14 +649,15 @@ pre_snapshot() {
 # block: the contract is "not silently", not "not at all" (update-system.md,
 # "Безопасность": detect drift → warn, do not clobber quietly).
 #
-# Class `override` (admin state — /etc/w/*.conf) is skipped: differing there is
-# the NORMAL case and apply_rootfs preserves those paths anyway.
+# Classes `override` (admin state — /etc/w/*.conf) and `rendered` (w-style output
+# from the system theme) are skipped: differing there is the NORMAL case and
+# apply_rootfs preserves those paths anyway.
 drift_check() { # <old rev> <changed files>
   local old="$1" changed="$2" f target n=0
   local -A override=()
   local path class
   while IFS=$'\t' read -r path class || [[ -n "$path" ]]; do
-    [[ "$path" == /* && "$class" == override ]] && override["$path"]=1
+    [[ "$path" == /* && "$class" =~ ^(override|rendered)$ ]] && override["$path"]=1
   done < <(cat "$REPO"/rootfs/usr/share/w/update/*.manifest 2>/dev/null || true)
 
   while IFS= read -r f; do
