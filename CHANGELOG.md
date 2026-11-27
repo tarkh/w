@@ -8,6 +8,14 @@ missing or empty section fails the release.
 Written for the people running W, not for the people writing it: say what changed
 for them and what they have to do about it, not which files moved.
 
+## v0.27.0
+
+- **Two new system themes: `borg` and `peaks`.** `borg` is a dark green circuit-cube
+  theme, `peaks` a night mountain range under a starry sky in violet. Both come with
+  wallpapers in every resolution and a palette extracted from them; everything else
+  follows the `w` theme. Pick one in the Hub's Appearance panel or with
+  `w-theme set borg` / `w-theme set peaks`. Your current theme is not changed.
+
 ## v0.26.3
 
 - **The login screen keeps your system theme across updates.** With a system theme

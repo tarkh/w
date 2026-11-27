@@ -64,17 +64,19 @@ Authored for W by tarkh, licensed **CC BY-SA 4.0**
 - `rootfs/etc/w/themes/w/logo/W-logo.svg`, `W-logo-256x256.png` — the W mark
 - `rootfs/etc/w/themes/w/wallpaper/*.webp`, `preview.webp` — the default
   wallpaper of theme `w`, in the four shipped resolutions plus its thumbnail
-- `rootfs/etc/w/themes/nebula/wallpaper/*.webp`, `preview.webp` — the wallpaper
-  of theme `nebula`, likewise
+- `rootfs/etc/w/themes/{nebula,borg,peaks}/wallpaper/*.webp`, `preview.webp` —
+  the wallpapers of themes `nebula`, `borg` and `peaks`, likewise
 - `rootfs/usr/share/plymouth/themes/w/*.png` — boot splash bar, bullet, lock
 - `rootfs/boot/grub/themes/w/select/*.png` — GRUB selection frame (9-slice)
 
 Verified as original: none of these match any asset shipped by Plymouth, GRUB or
 Kvantum on a stock Arch system.
 
-Both wallpapers were drawn for W from scratch and carry no upstream image; each
+All wallpapers were drawn for W from scratch and carry no upstream image; each
 theme's `theme.conf` is extracted from its own wallpaper by `w-theme new`, so the
-palettes are derived from W's artwork too. The `w` wallpaper replaces an earlier one that
+palettes are derived from W's artwork too. The `borg` wallpaper is an homage to
+the cube ships of Star Trek's Borg — an original drawing inspired by the idea, not
+a reproduction of any franchise artwork. The `w` wallpaper replaces an earlier one that
 was derived from a downloaded photograph whose licence was never established.
 That one shipped in the pre-release snapshots v0.1.1–v0.1.5 of the throwaway test
 repository and nowhere else; it is gone from this tree, and the production
